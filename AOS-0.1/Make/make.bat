@@ -1,0 +1,1 @@
+gcc kernel.c -o kernel.exe
