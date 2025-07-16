@@ -1,0 +1,4 @@
+gcc -c -o "C:\Users\jmankotia\OneDrive - Nice Systems Ltd\Documents\MyStuff\AOS\AOS-0.1\ProjectDetails\..\Build\kernel.o" "C:\Users\jmankotia\OneDrive - Nice Systems Ltd\Documents\MyStuff\AOS\AOS-0.1\ProjectDetails\..\Kernel\kernel.c"
+nasm -f win32 -o "C:\Users\jmankotia\OneDrive - Nice Systems Ltd\Documents\MyStuff\AOS\AOS-0.1\ProjectDetails\..\Build\boot.o" "C:\Users\jmankotia\OneDrive - Nice Systems Ltd\Documents\MyStuff\AOS\AOS-0.1\ProjectDetails\..\bootloader\HardDisk\boot.asm"
+ld -o "C:\Users\jmankotia\OneDrive - Nice Systems Ltd\Documents\MyStuff\AOS\AOS-0.1\ProjectDetails\..\Build\kernel.bin" "C:\Users\jmankotia\OneDrive - Nice Systems Ltd\Documents\MyStuff\AOS\AOS-0.1\ProjectDetails\..\Build\kernel.o" "C:\Users\jmankotia\OneDrive - Nice Systems Ltd\Documents\MyStuff\AOS\AOS-0.1\ProjectDetails\..\Build\boot.o"
+

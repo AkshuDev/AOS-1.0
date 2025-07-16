@@ -1,0 +1,32 @@
+<projdetails>
+name=AOS++
+author=Pheonix Studios
+date=notused
+cpyright=Copyright (c) 2024 Pheonix Studios
+license=GNU General Public License
+files=3
+execname=kernel.bin
+gccdir=Global Settings
+nasmdir=C:\nasm\
+bochsdir=Global Settings
+miscdir=Global Settings
+</projdetails>
+
+<file1>
+aopen=yes
+fname=..\Kernel\kernel.c
+oname=..\Build\kernel.o
+ftype=c
+</file1>
+<file2>
+aopen=yes
+fname=..\Kernel\kernel.h
+oname=none
+ftype=ch
+</file2>
+<file3>
+aopen=yes
+fname=..\bootloader\HardDisk\boot.asm
+oname=..\Build\boot.o
+ftype=asm
+</file3>
