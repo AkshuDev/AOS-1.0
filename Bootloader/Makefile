@@ -3,8 +3,9 @@ OBJCOPY := objcopy
 LD := ld
 ASM := nasm
 
-CFLAGS := -ffreestanding -fno-stack-protector -fno-pic -nostdlib -m32 -I ../PBFS/PBFS/headers -I ../PBFS/PBFS/PEFI/includes
+CFLAGS := -ffreestanding -fno-stack-protector -fno-pic -nostdlib -m32 -I ../PBFS/PBFS/headers -I ../PBFS/PBFS/PEFI/includes -I ../Headers -w
 LDFLAGS := -m elf_i386 -Ttext 0x1000
+LDENDFLAGS := 
 ASMFLAGS := -f elf32
 ASMFLAGS_BIN := -f bin
 
@@ -52,7 +53,7 @@ $(stage2_bin): $(stage2_elf)
 
 $(stage2_elf): $(stage2_o) $(stage3_o) $(PBFS_DISK_IO_O) $(PBFS_DISK_PARAMS_O)
 	@echo "Linking Stage 2 and Stage 3 AOS Bootloader into elf..."
-	$(LD) $(LDFLAGS) $(stage2_o) $(stage3_o) $(PBFS_DISK_IO_O) $(PBFS_DISK_PARAMS_O) -o $(stage2_elf)
+	$(LD) $(LDFLAGS) $(stage2_o) $(stage3_o) $(PBFS_DISK_IO_O) $(PBFS_DISK_PARAMS_O) -o $(stage2_elf) $(LDENDFLAGS)
 
 $(stage2_o): $(stage2)
 	@echo "Assembling Stage 2 AOS Bootloader..."

@@ -62,4 +62,4 @@ gdt_descriptor:
     dd gdt_start
 
 CODE_SEG equ 0x08
-DATA_SEG equ 0x10 
+DATA_SEG equ 0x10

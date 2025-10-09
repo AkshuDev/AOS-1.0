@@ -17,6 +17,9 @@ start:
     cld ; Clear directional flag
 
     mov [disk], dl ; Get DISK
+    mov ah, 0
+    mov al, dl
+    mov [boot_info], al ; Save it some known place
 
     mov si, disk_read_msg
     call print_string
@@ -51,14 +54,15 @@ print_string:
 disk db 0x80 ; Default 0x80
 disk_read_msg db "Reading and Loading Stage2...", 0xa, 0xd, 0
 disk_err_msg db "Error Reading Disk!", 0xa, 0xd, 0
+boot_info equ 0x8FF0
 
 dap:
     db 0x10 ; size (16 bytes)
     db 0 ; reserved
-    dw 9 ; sectors to read
+    dw 11 ; sectors to read
     dw 0x0000 ; dest offset
     dw 0x0100 ; dest segment
-    dq 4 ; starting lba
+    dq 5 ; starting lba
 
 times 510 - ($ - $$) db 0
 dw 0xAA55 

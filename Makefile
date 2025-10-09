@@ -37,7 +37,7 @@ $(DISK): $(BOOTLOADER_STAGE1) $(BOOTLOADER_STAGE2) $(AOS_KERNEL)
 	@echo "Creating AOS Disk..."
 	$(PBFS_CLI) $(DISK) -bs 512 -tb 4096 -dn AOS_DISK -f
 	$(DD) if=$(BOOTLOADER_STAGE1) of=$(DISK) bs=512 count=1 conv=notrunc
-	$(DD) if=$(BOOTLOADER_STAGE2) of=$(DISK) bs=512 seek=4 conv=notrunc
+	$(DD) if=$(BOOTLOADER_STAGE2) of=$(DISK) bs=512 seek=5 conv=notrunc
 	$(DD) if=$(AOS_KERNEL) of=$(DISK) bs=512 seek=16 conv=notrunc
 	@echo "DONE!"
 

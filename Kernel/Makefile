@@ -1,5 +1,5 @@
 CC := gcc
-CFLAGS := -ffreestanding -m32 -fno-stack-protector -fno-pic -Wall -nostdlib -fno-pie -I ../PBFS/PBFS/headers
+CFLAGS := -ffreestanding -m32 -fno-stack-protector -fno-pic -Wall -nostdlib -fno-pie -I ../PBFS/PBFS/headers -I ../Headers -w
 
 LD := ld
 LDFLAGS := -m elf_i386 -nostdlib --nmagic --omagic -L ../PBFS/PBFS/build-fs -T linker.ld
