@@ -1,5 +1,5 @@
 CC := gcc
-CFLAGS := -ffreestanding -m32 -fno-stack-protector -fno-pic -Wall -nostdlib -fno-pie -I ../PBFS/PBFS/headers -I ../Headers -w
+CFLAGS := -ffreestanding -m32 -fno-stack-protector -fno-pic -Wall -nostdlib -fno-pie -I ../PBFS/PBFS/headers -I ../Headers -I ./ -w
 
 LD := ld
 LDFLAGS := -m elf_i386 -nostdlib --nmagic --omagic -L ../PBFS/PBFS/build-fs -T linker.ld
@@ -11,10 +11,14 @@ BUILD_DIR := build
 BIN_DIR := bin
 SRC_DIR := src
 
-KERNEL := $(SRC_DIR)/aos.c
-KERNEL_O := $(BUILD_DIR)/aos.o
+KERNEL := $(wildcard $(SRC_DIR)/*.c)
+KERNEL_O := $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(KERNEL))
 KERNEL_ELF := $(BUILD_DIR)/aos.elf
 KERNEL_BIN := $(BIN_DIR)/aos.bin
+
+DRIVERS_DIR := drivers
+DRIVERS := $(wildcard $(DRIVERS_DIR)/*.c)
+DRIVERS_O := $(patsubst $(DRIVERS_DIR)/%.c,$(BUILD_DIR)/%.o,$(DRIVERS))
 
 .PHONY: all clean
 
@@ -28,13 +32,17 @@ $(BIN_DIR):
 	@echo "Creating $(BIN_DIR) ..."
 	@mkdir -p $(BIN_DIR)
 
-$(KERNEL_O): $(KERNEL)
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 	@echo "Compiling Kernel...."
-	$(CC) $(CFLAGS) -c $(KERNEL) -o $(KERNEL_O)
+	$(CC) $(CFLAGS) -c $< -o $@
 
-$(KERNEL_ELF): $(KERNEL_O)
+$(BUILD_DIR)/%.o: $(DRIVERS_DIR)/%.c
+	@echo "Compiling Drivers..."
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(KERNEL_ELF): $(KERNEL_O) $(DRIVERS_O)
 	@echo "Linking Kernel..."
-	$(LD) $(LDFLAGS) $(KERNEL_O) $(LDPBFS) -o $(KERNEL_ELF)
+	$(LD) $(LDFLAGS) $(KERNEL_O) $(DRIVERS_O) $(LDPBFS) -o $(KERNEL_ELF)
 
 $(KERNEL_BIN): $(KERNEL_ELF)
 	@echo "Copying Kernel to binary..."

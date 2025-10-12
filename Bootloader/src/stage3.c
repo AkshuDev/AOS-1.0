@@ -96,9 +96,17 @@ void stage3(void) {
         .lba = AOS_SYSINFO_LBA
     };
     pm_write_sectors(&dp, &SystemInfo, boot_drive);
+    pm_print(&cursor, "OS to Load: ");
+    char os_to_load[256];
+    pm_read_line(os_to_load, 256, &cursor);
+    if (str_eq(os_to_load, "aos") != 1) {
+        pm_print(&cursor, "\nOS Kernel not found!\n");
+        for (;;) asm("hlt");
+    }
+    pm_print(&cursor, "\n");
 
     pm_print(&cursor, "Loading AOS...\n");
-    dp.count = 10;
+    dp.count = 30;
     dp.lba = 16;
     
     int out = pm_read_sectors(&dp, AOS_KERNEL_LOC, boot_drive);

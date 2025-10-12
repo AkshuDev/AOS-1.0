@@ -7,6 +7,8 @@
 #define AOS_BOOT_INFO_ADDR 0x8FF0
 #define AOS_BOOT_INFO_LOC ((volatile uint8_t*)AOS_BOOT_INFO_ADDR)
 
+#define AOS_VBA_INFO_ADDR 0x8000
+
 #define AOS_SYSINFO_LBA 4
 #define AOS_SYSINFO_SPAN 1 // block span
 #define AOS_SYSINFO_SIZE 512 // bytes
