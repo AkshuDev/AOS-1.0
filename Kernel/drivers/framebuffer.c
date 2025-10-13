@@ -14,8 +14,8 @@ void fb_init(uint32_t* framebuffer, uint32_t width, uint32_t height, uint32_t pi
     FramebufferInfo.bpp = bpp;
 }
 
-void fb_clear(void) {
-    fb_draw_rect(0, 0, FramebufferInfo.width, FramebufferInfo.height, 0x000000); // black color
+void fb_clear(uint32_t color) {
+    fb_draw_rect(0, 0, FramebufferInfo.width, FramebufferInfo.height, color);
 }
 
 void fb_put_pixel(int x, int y, uint32_t color) {

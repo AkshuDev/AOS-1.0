@@ -61,7 +61,7 @@ int pcie_find_vga(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0) {
     return 0;
 }
 
-uint32_t pcie_get_vbe_framebuffer(void) {
+uint64_t pcie_get_vbe_framebuffer(PCIe_FB* fb) {
     uint8_t bus, slot, func;
     uint32_t bar_value = 0;
 
@@ -89,7 +89,7 @@ uint32_t pcie_get_vbe_framebuffer(void) {
                         if (bar_value & 1) 
                             continue; // I/O space, not memory
 
-                        uint32_t fb_phys = bar_value & ~0xFU; // mask flags
+                        uint64_t fb_phys = (uint64_t)bar_value & ~0xFU; // mask flags
                         if (fb_phys) {
                             // check if this is a framebuffer-like address
                             if (fb_phys >= 0xE0000000) {
@@ -103,5 +103,5 @@ uint32_t pcie_get_vbe_framebuffer(void) {
     }
 
     // Fallback for Bochs/QEMU stdvga
-    return 0xE0000000;
+    return (uint64_t)0xE0000000;
 }

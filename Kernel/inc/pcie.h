@@ -21,7 +21,15 @@ typedef struct {
     uint32_t bar0;
 } pci_device_t;
 
+typedef struct {
+    uint64_t fb_phys;
+    uint32_t fb_w;
+    uint32_t fb_h;
+    uint32_t fb_pitch;
+    uint8_t fb_bpp;
+} PCIe_FB;
+
 uint32_t pci_read(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) __attribute__((used));
 int pci_scan(pci_device_t* dev) __attribute__((used));
 int pcie_find_vga(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0) __attribute__((used));
-uint32_t pcie_get_vbe_framebuffer() __attribute__((used));
+uint64_t pcie_get_vbe_framebuffer(PCIe_FB* fb) __attribute__((used));

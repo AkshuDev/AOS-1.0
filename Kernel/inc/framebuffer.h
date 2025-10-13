@@ -17,7 +17,7 @@ typedef struct {
 } FB_Cursor_t;
 
 void fb_init(uint32_t* framebuffer, uint32_t width, uint32_t height, uint32_t pitch, uint8_t bpp) __attribute__((used));
-void fb_clear(void) __attribute__((used));
+void fb_clear(uint32_t color) __attribute__((used));
 void fb_set_cursor(FB_Cursor_t* cur, uint32_t x, uint32_t y) __attribute__((used));
 void fb_put_pixel(int x, int y, uint32_t color) __attribute__((used));
 void fb_draw_rect(int x, int y, int w, int h, uint32_t color) __attribute__((used));

@@ -20,6 +20,10 @@ DRIVERS_DIR := drivers
 DRIVERS := $(wildcard $(DRIVERS_DIR)/*.c)
 DRIVERS_O := $(patsubst $(DRIVERS_DIR)/%.c,$(BUILD_DIR)/%.o,$(DRIVERS))
 
+MEMORY_DIR := mm
+MEMORY_FILES := $(wildcard $(MEMORY_DIR)/*.c)
+MEMORY_FILES_O := $(patsubst $(MEMORY_DIR)/%.c,$(BUILD_DIR)/%.o,$(MEMORY_FILES))
+
 .PHONY: all clean
 
 all: $(BUILD_DIR) $(BIN_DIR) $(KERNEL_BIN)
@@ -40,9 +44,13 @@ $(BUILD_DIR)/%.o: $(DRIVERS_DIR)/%.c
 	@echo "Compiling Drivers..."
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(KERNEL_ELF): $(KERNEL_O) $(DRIVERS_O)
+$(BUILD_DIR)/%.o: $(MEMORY_DIR)/%.c
+	@echo "Compiling Memory Manager..."
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(KERNEL_ELF): $(KERNEL_O) $(DRIVERS_O) $(MEMORY_FILES_O)
 	@echo "Linking Kernel..."
-	$(LD) $(LDFLAGS) $(KERNEL_O) $(DRIVERS_O) $(LDPBFS) -o $(KERNEL_ELF)
+	$(LD) $(LDFLAGS) $(KERNEL_O) $(MEMORY_FILES_O) $(DRIVERS_O) $(LDPBFS) -o $(KERNEL_ELF)
 
 $(KERNEL_BIN): $(KERNEL_ELF)
 	@echo "Copying Kernel to binary..."
