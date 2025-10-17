@@ -10,8 +10,11 @@
 #define VirtIo_VENDORID 0x1AF4
 
 #define VIRTIO_GPU_CMD_GET_DISPLAY_INFO 0x0100
+#define VIRTIO_GPU_RESP_OK_DISPLAY_INFO 0x1100
 #define VIRTQ_DESC_F_NEXT 1
 #define VIRTQ_DESC_F_WRITE 2
+#define VIRTIO_PCI_DEVICE_STATUS 0x12
+#define VIRTIO_PCI_QUEUE_NOTIFY 0x14
 
 typedef struct gpu_device {
     const char* name;
@@ -49,16 +52,11 @@ struct virtq_desc {
     uint16_t next; // index of next descriptor if F_NEXT
 };
 
-//struct virtqueue {
- //   struct list_head list;
- //   void (*callback)(struct virtqueue *vq);
- //   const char *name;
- //   struct virtio_device *vdev;
- //   unsigned int index;
- //   unsigned int num_free;
- //   unsigned int num_max;
- //   bool reset;
- //   void *priv;
-//};
+struct virtqueue {
+    struct virtq_desc* desc;
+    uint16_t* avail;
+    uint16_t* used;
+    uint16_t size;
+};
 
 uint64_t gpu_get_framebuffer_and_info(PCIe_FB* fb, pcie_device_t* dev, gpu_device_t* gpu) __attribute__((used));

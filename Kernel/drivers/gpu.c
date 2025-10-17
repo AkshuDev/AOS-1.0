@@ -4,6 +4,7 @@
 #include <inc/pcie.h>
 #include <inc/gpu.h>
 #include <inc/io.h>
+#include <inc/mm/avmf.h>
 
 static inline void svga_write(uintptr_t mmio_base, uint32_t index, uint32_t value, uint32_t svga_index_port, uint32_t svga_value_port) {
     *(volatile uint32_t*)(mmio_base + svga_index_port * 4) = index;
@@ -77,31 +78,11 @@ static int virtqueue_used(struct virtqueue* vq) {
 void virtio_init(struct gpu_device* gpu) {
     pcie_device_t* dev = gpu->pcie_device;
     PCIe_FB* fb = gpu->framebuffer;
-
-    volatile struct virtio_gpu_resp_display scanouts[4] = {0};
-    struct virtq_desc desc[2];
-    volatile struct virtio_gpu_ctrl_hdr cmd;
-
-    desc[0].addr = (uint64_t)&cmd;
-    desc[0].len = sizeof(struct virtio_gpu_ctrl_hdr);
-    desc[0].flags = VIRTQ_DESC_F_NEXT; // NEXT
-    desc[0].next = 1;
-    desc[1].addr = (uint64_t)&scanouts;
-    desc[1].len = sizeof(struct virtio_gpu_resp_display);
-    desc[1].flags = VIRTQ_DESC_F_WRITE; // WRITE
-    desc[1].next = 0;
-
-    //virtqueue_add(0);
-
-    cmd.type = VIRTIO_GPU_CMD_GET_DISPLAY_INFO;
-    cmd.flags = 0;
-    cmd.fence_id = 0;
-    cmd.context_id = 0;
-    cmd.padding = 0;
-
-    //virtio_notify((uint32_t)fb->mmio_base, 0);
-    //while (!virtqueue_used(0)) {}
-
+    
+    asm_outb(dev->bar0 + VIRTIO_PCI_DEVICE_STATUS, 0); //reset
+    asm_outb(dev->bar0 + VIRTIO_PCI_DEVICE_STATUS, 1); //acknowledge
+    asm_outb(dev->bar0 + VIRTIO_PCI_DEVICE_STATUS, 3); //driver
+    
     // Pick the first enabled scanout
     uint32_t xres = 1024;
     uint32_t yres = 768;
