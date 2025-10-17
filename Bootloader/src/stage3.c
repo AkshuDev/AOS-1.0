@@ -106,7 +106,7 @@ void stage3(void) {
     pm_print(&cursor, "\n");
 
     pm_print(&cursor, "Loading AOS...\n");
-    dp.count = 35;
+    dp.count = 50;
     dp.lba = 16;
     
     int out = pm_read_sectors(&dp, AOS_KERNEL_LOC, boot_drive);

@@ -5,6 +5,31 @@
 
 #include <inc/io.h>
 
+// Returns n / d
+static uint64_t udiv64(uint64_t n, uint64_t d) {
+    uint64_t q = 0;
+    int i;
+    for (i = 63; i >= 0; i--) {
+        q <<= 1;
+        if ((n >> i) >= d) {
+            n -= d << i;
+            q |= 1;
+        }
+    }
+    return q;
+}
+
+// Returns n % d
+static uint64_t umod64(uint64_t n, uint64_t d) {
+    int i;
+    for (i = 63; i >= 0; i--) {
+        if ((n >> i) >= d) {
+            n -= d << i;
+        }
+    }
+    return n;
+}
+
 void serial_init(void) {
     asm_outb(SERIAL_PORT + 1, 0x00); // Disable interrupts
     asm_outb(SERIAL_PORT + 3, 0x80); // Enable DLAB
@@ -34,11 +59,32 @@ void serial_print(const char* str) {
     }
 }
 
+static void print_integer(uint64_t val, int is_signed, int base, int uppercase) {
+    char buffer[32];
+    int i = 30;
+    buffer[31] = 0;
+    int neg = 0;
+
+    if (is_signed && ((int64_t)val) < 0) {
+        neg = 1;
+        val = -(int64_t)val;
+    }
+
+    // Convert digits
+    do {
+        uint64_t digit = umod64(val, base);
+        buffer[i--] = (digit < 10) ? '0' + digit : (uppercase ? 'A' : 'a') + digit - 10;
+        val = udiv64(val, base);
+    } while (val);
+
+    if (neg) buffer[i--] = '-';
+    serial_print(&buffer[i+1]);
+}
+
 // Serial print with formatting
 void serial_printf(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    char buffer[32];
 
     while (*fmt) {
         if (*fmt == '%') {
@@ -54,27 +100,43 @@ void serial_printf(const char* fmt, ...) {
                     serial_print(s);
                     break;
                 }
-                case 'd': {
+                case 'd': { // signed 32-bit
                     int n = va_arg(args, int);
-                    int i = 30;
-                    buffer[31] = 0;
-                    int neg = 0;
-                    if (n < 0) { n = -n; neg = 1; }
-                    do { buffer[i--] = '0' + (n % 10); n /= 10; } while (n);
-                    if (neg) buffer[i--] = '-';
-                    serial_print(&buffer[i+1]);
+                    print_integer((uint64_t)n, 1, 10, 0);
                     break;
                 }
-                case 'x': {
+                case 'u': { // unsigned 32-bit
                     uint32_t n = va_arg(args, uint32_t);
-                    int i = 30;
-                    buffer[31] = 0;
-                    do {
-                        int digit = n & 0xF;
-                        buffer[i--] = (digit < 10) ? '0'+digit : 'A'+digit-10;
-                        n >>= 4;
-                    } while(n);
-                    serial_print(&buffer[i+1]);
+                    print_integer(n, 0, 10, 0);
+                    break;
+                }
+                case 'l': { // long / 64-bit
+                    fmt++;
+                    switch (*fmt) {
+                        case 'd': { // signed 64-bit
+                            int64_t n = va_arg(args, int64_t);
+                            print_integer((uint64_t)n, 1, 10, 0);
+                            break;
+                        }
+                        case 'u': { // unsigned 64-bit
+                            uint64_t n = va_arg(args, uint64_t);
+                            print_integer(n, 0, 10, 0);
+                            break;
+                        }
+                        case 'x': { // unsigned 64-bit hex
+                            uint64_t n = va_arg(args, uint64_t);
+                            print_integer(n, 0, 16, 1);
+                            break;
+                        }
+                        default:
+                            serial_printc(*fmt);
+                            break;
+                    }
+                    break;
+                }
+                case 'x': { // unsigned 32-bit hex
+                    uint32_t n = va_arg(args, uint32_t);
+                    print_integer(n, 0, 16, 1);
                     break;
                 }
                 default:
@@ -89,3 +151,4 @@ void serial_printf(const char* fmt, ...) {
 
     va_end(args);
 }
+
