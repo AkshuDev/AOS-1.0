@@ -1,6 +1,9 @@
+#pragma once
+
 #include <inttypes.h>
 #include <asm.h>
 #include <inc/pcie.h>
+#include <inc/gpu.h>
 
 #define VIRTIO_PCI_DEVICE_FEATURES 0x00
 #define VIRTIO_PCI_DRIVER_FEATURES 0x04
@@ -118,3 +121,7 @@ struct virtio_gpu_resource_flush {
     uint32_t resource_id;
     uint32_t x, y, width, height;
 } __attribute__((packed));
+
+void virtio_init(struct gpu_device* gpu) __attribute__((used));
+void virtio_flush(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, uint32_t h) __attribute__((used));
+void virtio_set_mode(struct gpu_device* gpu, uint32_t w, uint32_t h, uint32_t bpp) __attribute__((used));

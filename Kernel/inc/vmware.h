@@ -1,3 +1,5 @@
+#pragma once
+
 #include <inttypes.h>
 #include <inc/pcie.h>
 #include <inc/gpu.h>

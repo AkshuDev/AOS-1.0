@@ -46,10 +46,10 @@ void aospp_start() {
 
     serial_printf("Framebuffer Size: %uX%u\n", gpu_framebuffer.w, gpu_framebuffer.h);
 
-    fb_addr = avmf_alloc_region(fb_size, AVMF_FLAG_PRESENT | AVMF_FLAG_WRITABLE);
+    fb_addr = avmf_alloc_region(fb_size, AVMF_FLAG_PRESENT | AVMF_FLAG_WRITEABLE);
     pager_init(0, 0);
 
-    if (avmf_map(fb_addr, fb_physaddr, fb_size, AVMF_FLAG_PRESENT|AVMF_FLAG_WRITABLE) != 0) {
+    if (avmf_map(fb_addr, fb_physaddr, fb_size, AVMF_FLAG_PRESENT|AVMF_FLAG_WRITEABLE) != 0) {
         serial_print("Failed to map framebuffer!\n");
         return;
     }

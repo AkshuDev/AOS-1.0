@@ -18,7 +18,7 @@ typedef struct AVMF_Header {
 } avmf_header_t;
 
 #define AVMF_FLAG_PRESENT (1 << 0)
-#define AVMF_FLAG_WRITABLE (1 << 1)
+#define AVMF_FLAG_WRITEABLE (1 << 1)
 #define AVMF_FLAG_EXECUTABLE (1 << 2)
 #define AVMF_FLAG_USERMODE (1 << 3)
 #define AVMF_FLAG_KERNEL (1 << 4)

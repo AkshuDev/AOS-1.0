@@ -1,3 +1,5 @@
+#pragma once
+
 #include <inttypes.h>
 #include <asm.h>
 #include <inc/pcie.h>
