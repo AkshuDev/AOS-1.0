@@ -68,5 +68,4 @@ void aospp_start() {
     serial_print("Welcome!\n");
 
     fb_print(&fb_cur, "Hello this is AOS++ Shell, More modern using Framebuffer!\n");
-    while(1) asm("hlt");
 }

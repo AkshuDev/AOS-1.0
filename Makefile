@@ -21,7 +21,7 @@ BUILD_DIR := Build
 
 DISK := $(BIN_DIR)/disk.pbfs
 
-.PHONY: all clean
+.PHONY: all clean init run build
 
 all: $(BUILD_DIR) $(BIN_DIR) $(DISK)
 
@@ -52,3 +52,18 @@ $(AOS_KERNEL):
 clean:
 	@echo "Cleaning..."
 	@rm -rf $(BUILD_DIR) $(BIN_DIR)
+
+init:
+	@echo "Initializing..."
+	@chmod +x ./init.sh
+	@chmod +x ./run.sh
+	@chmod +x ./build.sh
+	@./init.sh
+
+run:
+	@echo "Running"
+	@./run.sh
+
+build:
+	@echo "Building..."
+	@./build.sh
