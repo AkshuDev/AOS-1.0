@@ -9,13 +9,6 @@
 #define AMD_VENDORID 0x1002
 #define VirtIo_VENDORID 0x1AF4
 
-#define VIRTIO_GPU_CMD_GET_DISPLAY_INFO 0x0100
-#define VIRTIO_GPU_RESP_OK_DISPLAY_INFO 0x1100
-#define VIRTQ_DESC_F_NEXT 1
-#define VIRTQ_DESC_F_WRITE 2
-#define VIRTIO_PCI_DEVICE_STATUS 0x12
-#define VIRTIO_PCI_QUEUE_NOTIFY 0x14
-
 typedef struct gpu_device {
     const char* name;
 
@@ -28,35 +21,7 @@ typedef struct gpu_device {
     void (*swap_buffers)(struct gpu_device* gpu);
 } gpu_device_t;
 
-struct virtio_gpu_resp_display {
-    uint32_t enabled;
-    uint32_t x; // top-left corner
-    uint32_t y;
-    uint32_t width;
-    uint32_t height;
-    uint32_t format;
-};
-
-struct virtio_gpu_ctrl_hdr {
-    uint32_t type; // command type, e.g., GET_DISPLAY_INFO
-    uint32_t flags; // 0 for host-to-device
-    uint64_t fence_id; // optional
-    uint32_t context_id; // usually 0
-    uint32_t padding;
-};
-
-struct virtq_desc {
-    uint64_t addr; // guest physical address
-    uint32_t len; // length of the buffer
-    uint16_t flags; // VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE
-    uint16_t next; // index of next descriptor if F_NEXT
-};
-
-struct virtqueue {
-    struct virtq_desc* desc;
-    uint16_t* avail;
-    uint16_t* used;
-    uint16_t size;
-};
+void svga_write(uintptr_t mmio_base, uint32_t index, uint32_t value, uint32_t svga_index_port, uint32_t svga_value_port) __attribute__((used));
+uint32_t svga_read(uintptr_t mmio_base, uint32_t index, uint32_t svga_index_port, uint32_t svga_value_port) __attribute__((used));
 
 uint64_t gpu_get_framebuffer_and_info(PCIe_FB* fb, pcie_device_t* dev, gpu_device_t* gpu) __attribute__((used));

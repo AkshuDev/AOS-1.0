@@ -5,119 +5,19 @@
 #include <inc/gpu.h>
 #include <inc/io.h>
 #include <inc/mm/avmf.h>
+#include <inc/mm/pager.h>
 
-static inline void svga_write(uintptr_t mmio_base, uint32_t index, uint32_t value, uint32_t svga_index_port, uint32_t svga_value_port) {
+#include <inc/vmware.h>
+#include <inc/virtio.h>
+
+void svga_write(uintptr_t mmio_base, uint32_t index, uint32_t value, uint32_t svga_index_port, uint32_t svga_value_port) {
     *(volatile uint32_t*)(mmio_base + svga_index_port * 4) = index;
     *(volatile uint32_t*)(mmio_base + svga_value_port * 4) = value;
 }
 
-static inline uint32_t svga_read(uintptr_t mmio_base, uint32_t index, uint32_t svga_index_port, uint32_t svga_value_port) {
+uint32_t svga_read(uintptr_t mmio_base, uint32_t index, uint32_t svga_index_port, uint32_t svga_value_port) {
     *(volatile uint32_t*)(mmio_base + svga_index_port * 4) = index;
     return *(volatile uint32_t*)(mmio_base + svga_value_port * 4);
-}
-
-void vmware_init(struct gpu_device* gpu) {
-    const uint32_t REG_ENABLE = 1;
-    const uint32_t SVGA_ID_2 = 0x90002;
-    const uint32_t INDEX_PORT = 0;
-    const uint32_t VALUE_PORT = 1;
-    const uint32_t REG_ID = 0;
-
-    PCIe_FB* fb = gpu->framebuffer;
-
-    pcie_device_t* dev = gpu->pcie_device;
-    svga_write(fb->mmio_base, REG_ID, SVGA_ID_2, INDEX_PORT, VALUE_PORT);
-    svga_write(fb->mmio_base, REG_ENABLE, 1, INDEX_PORT, VALUE_PORT);
-}
-
-
-void vmware_set_mode(struct gpu_device* gpu, uint32_t w, uint32_t h, uint32_t bpp) {
-    uintptr_t mmio = gpu->framebuffer->mmio_base;
-
-    const uint32_t INDEX_PORT = 0;
-    const uint32_t VALUE_PORT = 1;
-    const uint32_t REG_ID = 0;
-    const uint32_t REG_ENABLE = 1;
-    const uint32_t REG_WIDTH = 2;
-    const uint32_t REG_HEIGHT = 3;
-    const uint32_t REG_BITS_PER_PIXEL = 7;
-    const uint32_t REG_FB_START = 16;
-    const uint32_t REG_FB_SIZE = 18;
-    const uint32_t SVGA_ID_2 = 0x90002;
-
-    svga_write(mmio, REG_ID, SVGA_ID_2, INDEX_PORT, VALUE_PORT);
-    svga_write(mmio, REG_WIDTH, w, INDEX_PORT, VALUE_PORT);
-    svga_write(mmio, REG_HEIGHT, h, INDEX_PORT, VALUE_PORT);
-    svga_write(mmio, REG_BITS_PER_PIXEL, bpp, INDEX_PORT, VALUE_PORT);
-    svga_write(mmio, REG_ENABLE, 1, INDEX_PORT, VALUE_PORT);
-
-    gpu->framebuffer->w = w;
-    gpu->framebuffer->h = h;
-    gpu->framebuffer->bpp = bpp;
-}
-
-// Notify virtio
-static void virtio_notify(uint32_t mmio_base, uint16_t queue_index) {
-    // Write the queue index to the notification offset
-    volatile uint16_t* notify = (volatile uint16_t*)(mmio_base + 0x50);
-    *notify = queue_index;
-}
-
-// Add a descriptor index to the available ring
-static void virtqueue_add(struct virtqueue* vq, uint16_t index) {
-    //uint16_t idx = vq->avail[0] % vq->size;
-    //vq->avail[idx+1] = index;
-    //vq->avail[0]++;  // increment avail index
-}
-
-// Check if the GPU has used a descriptor (simplified)
-static int virtqueue_used(struct virtqueue* vq) {
-    //return vq->used[0] > 0;
-}
-
-void virtio_init(struct gpu_device* gpu) {
-    pcie_device_t* dev = gpu->pcie_device;
-    PCIe_FB* fb = gpu->framebuffer;
-    
-    asm_outb(dev->bar0 + VIRTIO_PCI_DEVICE_STATUS, 0); //reset
-    asm_outb(dev->bar0 + VIRTIO_PCI_DEVICE_STATUS, 1); //acknowledge
-    asm_outb(dev->bar0 + VIRTIO_PCI_DEVICE_STATUS, 3); //driver
-    
-    // Pick the first enabled scanout
-    uint32_t xres = 1024;
-    uint32_t yres = 768;
-
-    int found = 0;
-    for (int i = 0; i < 1000000; i++) {
-        if (scanouts[i % 4].enabled == 1) {
-            fb->w = scanouts[i % 4].width;
-            fb->h = scanouts[i % 4].height;
-            found = 1;
-            break;
-        }
-    }
-
-    serial_printf("XRES: %u YRES: %u\n", xres, yres);
-
-    // Map framebuffer and compute pitch
-    fb->w = xres;
-    fb->h = yres;
-    fb->bpp = 32;
-    fb->pitch = ((fb->w * (fb->bpp / 8) + 63) & ~63); // align to 64 bytes
-    fb->size = fb->pitch * fb->h;
-}
-void virtio_set_mode(struct gpu_device* gpu, uint32_t w, uint32_t h, uint32_t bpp) {
-    pcie_device_t* dev = gpu->pcie_device;
-    PCIe_FB* fb = gpu->framebuffer;
-
-    //volatile struct virtio_gpu_config* config = (volatile struct virtio_gpu_config*)fb->mmio_base;
-    //volatile struct virtio_gpu_display* display = (volatile struct virtio_gpu_display*)config + 1;
-
-    //display->width = w;
-    //display->height = h;
-
-    fb->w = w;
-    fb->h = h;
 }
 
 void get_framebuffer_info_vmware(PCIe_FB* fb, pcie_device_t* device, gpu_device_t* gpu) {
