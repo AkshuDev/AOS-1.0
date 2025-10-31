@@ -110,6 +110,12 @@ void serial_printf(const char* fmt, ...) {
                     print_integer(n, 0, 10, 0);
                     break;
                 }
+                case 'p': { // Pointer
+                    void* ptr = va_arg(args, void*);
+                    serial_print("0x");
+                    print_integer((uintptr_t)ptr, 0, 16, 1);
+                    break;
+                }
                 case 'l': { // long / 64-bit
                     fmt++;
                     switch (*fmt) {
@@ -126,6 +132,16 @@ void serial_printf(const char* fmt, ...) {
                         case 'x': { // unsigned 64-bit hex
                             uint64_t n = va_arg(args, uint64_t);
                             print_integer(n, 0, 16, 1);
+                            break;
+                        }
+                        case 'l': { // unsigned 64-bit hex
+                            fmt++;
+                            if (*fmt == 'x') {
+                                uint64_t n = va_arg(args, uint64_t);
+                                print_integer(n, 0, 16, 1);
+                            } else {
+                                serial_printc(*fmt);
+                            }
                             break;
                         }
                         default:

@@ -14,6 +14,7 @@ _start:
     ; Load gdt_descriptor
     cli
     lgdt [gdt_descriptor]
+    lidt [idtr]
     
     mov eax, cr0
     or eax, 1
@@ -60,6 +61,14 @@ gdt_end:
 gdt_descriptor:
     dw gdt_end - gdt_start - 1
     dd gdt_start
+
+idt_start:
+    dq 0 ; one null entry
+idt_end:
+
+idtr:
+    dw idt_end - idt_start - 1 ; limit = size - 1
+    dd idt_start ; base
 
 CODE_SEG equ 0x08
 DATA_SEG equ 0x10

@@ -58,6 +58,7 @@ void get_framebuffer_info_vmware(PCIe_FB* fb, pcie_device_t* device, gpu_device_
     gpu->init = vmware_init;
     gpu->swap_buffers = NULL;
     gpu->set_mode = vmware_set_mode;
+    gpu->flush = NULL;
 }
 
 void get_framebuffer_info_virtio(PCIe_FB* fb, pcie_device_t* device, gpu_device_t* gpu) {
@@ -83,6 +84,7 @@ void get_framebuffer_info_virtio(PCIe_FB* fb, pcie_device_t* device, gpu_device_
     gpu->init = virtio_init;
     gpu->set_mode = virtio_set_mode;
     gpu->swap_buffers = NULL;
+    gpu->flush = virtio_flush;
 }
 
 uint64_t gpu_get_framebuffer_and_info(PCIe_FB* fb, pcie_device_t* dev, gpu_device_t* gpu) {

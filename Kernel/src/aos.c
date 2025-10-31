@@ -1,7 +1,9 @@
 #include <pbfs_blt_stub.h>
 
 #include <system.h>
+#include <inttypes.h>
 
+#include <inc/kfuncs.h>
 #include <inc/acpi.h>
 #define SHELL_MAX_INPUT 128
 
@@ -12,7 +14,8 @@ static char* help_shell = "Usage: [COMMAND]\n"
     "\treboot: Reboots the system.\n"
     "\tclear: Clears the screen.\n"
     "\tshutdown: Shuts down the system.\n"
-    "\tstart <program>: Starts a Program, Use 'start -help' for more info\n";
+    "\tstart <program>: Starts a Program, Use 'start -help' for more info\n"
+    "\tmemdump <addr> <size>: Prints memory at the specified address for the specified size\n";
 
 static int help_shell_nlines = 8;
 
@@ -92,6 +95,17 @@ void exec_cmd(char* cmd, int lines, PM_Cursor_t* cur) {
         lines = 0;
     } else if (str_n_eq(cmd, "start ", 6) == 1) {
         cmd_start(cmd + 6, lines, cur);
+    } else if (str_n_eq(cmd, "memdump ", 8) == 1) {
+        uintptr_t addr = str_to_uint(cmd + 8);
+        for (int i = 0; i < 16; i++) {
+            pm_printf(cur, "0x%08x: %02x %02x %02x %02x\n", 
+                    addr + i*4,
+                    *((uint8_t*)(addr + i*4)),
+                    *((uint8_t*)(addr + i*4 +1)),
+                    *((uint8_t*)(addr + i*4 +2)),
+                    *((uint8_t*)(addr + i*4 +3)));
+            lines++;
+        }
     } else {
         pm_print(cur, "Unknown command\n");
         lines += 1;

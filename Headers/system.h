@@ -3,6 +3,7 @@
 #define AOS_KERNEL_LOC ((void*)0x100000)
 #define AOS_KERNEL_ADDR 0x100000
 #define AOS_KERNEL_STACK_TOP 0x208000
+#define AOS_KERNEL_SIZE 0x80000 // 512 KB (Placeholder)
 
 #define AOS_BOOT_INFO_ADDR 0x8FF0
 #define AOS_BOOT_INFO_LOC ((volatile uint8_t*)AOS_BOOT_INFO_ADDR)

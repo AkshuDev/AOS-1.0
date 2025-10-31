@@ -33,6 +33,18 @@ uint32_t cpuid_signature(void) {
     return eax;
 }
 
+void enable_a20(void) {
+    asm volatile(
+        "inb $0x92, %%al\n\t"
+        "orb $0x02, %%al\n\t"
+        "outb %%al, $0x92\n\t"
+        :
+        :
+        : "al"
+    );
+}
+
+
 __attribute__((naked, noreturn))
 void stage3_jump_to_kernel(void (*kernel)(void), unsigned int stack_top) {
     __asm__ __volatile__ (
@@ -58,6 +70,7 @@ uint8_t compute_checksum(const uint8_t* data, uint32_t len) {
 
 void stage3(void) __attribute__((used)); 
 void stage3(void) {
+    enable_a20();
     PM_Cursor_t cursor = {
         .x = 0,
         .y = 0,
@@ -89,6 +102,8 @@ void stage3(void) {
     SystemInfo.apic_present = check_apic();
     SystemInfo.tsc_freq_hz = measure_tsc();
     SystemInfo.checksum = compute_checksum((uint8_t*)&SystemInfo, sizeof(SystemInfo) - 1);
+
+    pm_print(&cursor, "SystemInfo initialization complete!\n");
 
     // Place it
     PBFS_DP dp = {

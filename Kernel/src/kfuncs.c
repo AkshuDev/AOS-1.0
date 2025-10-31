@@ -31,3 +31,28 @@ int memcmp(const void* s1, const void* s2, size_t n) {
     }
     return 0;
 }
+
+uint32_t str_to_uint(const char* str) {
+    uint32_t result = 0;
+    if (!str) return 0;
+
+    // Hex prefix?
+    if (str[0] == '0' && (str[1] == 'x' || str[1] == 'X')) {
+        str += 2;
+        while (*str) {
+            char c = *str++;
+            result <<= 4;
+            if (c >= '0' && c <= '9') result += c - '0';
+            else if (c >= 'a' && c <= 'f') result += c - 'a' + 10;
+            else if (c >= 'A' && c <= 'F') result += c - 'A' + 10;
+            else break; // stop at first invalid char
+        }
+    } else {
+        while (*str >= '0' && *str <= '9') {
+            result = result * 10 + (*str - '0');
+            str++;
+        }
+    }
+
+    return result;
+}
