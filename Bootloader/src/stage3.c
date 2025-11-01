@@ -46,15 +46,13 @@ void enable_a20(void) {
 
 
 __attribute__((naked, noreturn))
-void stage3_jump_to_kernel(void (*kernel)(void), unsigned int stack_top) {
+void stage3_jump_to_kernel(void (*kernel)(void), uint64_t stack_top) {
     __asm__ __volatile__ (
-        "movl 4(%esp), %eax\n\t" // eax = kernel address
-        "movl 8(%esp), %ebx\n\t" // ebx = stack top
-        "movl %ebx, %esp\n\t" // set esp
-        "movl %ebx, %ebp\n\t" // set ebp
-        "cli\n\t" // disable interrupts
-        "cld\n\t" // clear direction flag (best practice)
-        "jmp *%eax\n\t" // jump directly to kernel
+        "mov %rsi, %rsp\n\t" // stack_top is 2nd arg (rsi)
+        "mov %rsi, %rbp\n\t"
+        "cli\n\t"
+        "cld\n\t"
+        "jmp *%rdi\n\t" // kernel pointer is 1st arg (rdi)
     );
     __builtin_unreachable();
 }
@@ -121,7 +119,7 @@ void stage3(void) {
     pm_print(&cursor, "\n");
 
     pm_print(&cursor, "Loading AOS...\n");
-    dp.count = 50;
+    dp.count = 60;
     dp.lba = 16;
     
     int out = pm_read_sectors(&dp, AOS_KERNEL_LOC, boot_drive);

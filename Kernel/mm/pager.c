@@ -34,14 +34,9 @@ void pager_map_range(uint64_t virt, uint64_t phys, uint64_t size, uint64_t flags
 void pager_init(uint64_t fb_phys, uint64_t fb_size) {
     kernel_pml4 = alloc_page_table();
 
-    for (uint64_t addr = 0; addr < 0x200000; addr += PAGE_SIZE) {
-        pager_map(addr, addr, PAGE_PRESENT | PAGE_RW);
-    }
-
-    if (fb_phys != 0 && fb_size != 0) {
-        for (uint64_t i = 0; i < fb_size; i += PAGE_SIZE) {
-            pager_map(0xFFFF800000000000 + i, fb_phys + i, PAGE_PRESENT | PAGE_RW);
-        }
+    pager_map_range(0x00000000, 0x00000000, 0x200000, PAGE_PRESENT | PAGE_RW); // Identity Map the first 2MiB (Boot sector)
+    if (fb_phys && fb_size) {
+        pager_map_range(0xFFFF800000000000ULL, fb_phys, fb_size, PAGE_PRESENT | PAGE_RW);
     }
 
     pager_load(kernel_pml4);

@@ -5,6 +5,12 @@
 
 #include <inc/kfuncs.h>
 #include <inc/acpi.h>
+#include <inc/idt.h>
+#include <inc/io.h>
+
+#include <inc/mm/avmf.h>
+#include <inc/mm/pager.h>
+
 #define SHELL_MAX_INPUT 128
 
 static char* help_shell = "Usage: [COMMAND]\n"
@@ -27,6 +33,17 @@ void cmd_start(char* program, int lines, PM_Cursor_t* cur);
 void aospp_start();
 
 void kernel_main(void) {
+    serial_init();
+    // Reserve MMIO region at 0xF0000000, kernel starts at 0x100000
+    avmf_init(AOS_KERNEL_ADDR, 64*1024*1024); // reserve memory 64MB
+    serial_print("AOS++ LOADED!\n");
+    pager_init(0, 0);
+    
+    // Identity map GPU MMIO
+    for (uint64_t offset = 0; offset < 64*1024*1024; offset += PAGE_SIZE) {
+        pager_map(0xF0000000 + offset, 0xF0000000 + offset, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
+    }
+
     // Now safe to use local variables
     PM_Cursor_t cur = {
         .x = 0,

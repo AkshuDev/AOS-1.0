@@ -60,7 +60,7 @@ boot_info equ 0x8FF0
 dap:
     db 0x10 ; size (16 bytes)
     db 0 ; reserved
-    dw 15 ; sectors to read
+    dw 45 ; sectors to read
     dw 0x0000 ; dest offset
     dw 0x0100 ; dest segment
     dq 5 ; starting lba

@@ -9,6 +9,10 @@
 #define PCI_VGA_DISPLAY 0x03
 #define PCI_SUBCLASS_VGA  0x00
 
+#define PCI_CLASS_MASS_STORAGE 0x01
+#define PCI_SUBCLASS_AHCI 0x06
+#define PCI_SUBCLASS_NVme 0x08
+
 #define PCI_BAR0 0x10
 #define PCI_BAR_COUNT 6
 
@@ -34,5 +38,6 @@ typedef struct {
 
 uint32_t pcie_read_bar(uint8_t bus, uint8_t slot, uint8_t func, uint8_t bar_index) __attribute__((used));
 uint32_t pcie_read(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) __attribute__((used));
-int pcie_scan(pcie_device_t* dev) __attribute__((used));
+int pcie_find_nvme(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0) __attribute__((used));
+int pcie_find_sata(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0) __attribute__((used));
 int pcie_find_vga(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0) __attribute__((used));

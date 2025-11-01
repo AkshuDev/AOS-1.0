@@ -1,8 +1,11 @@
 CC := gcc
-CFLAGS := -ffreestanding -m32 -fno-stack-protector -fno-pic -Wall -nostdlib -fno-pie -I ../PBFS/PBFS/headers -I ../Headers -I ./ -w
+CFLAGS := -ffreestanding -m64 -fno-stack-protector -fno-pic -Wall -nostdlib -fno-pie -I ../PBFS/PBFS/headers -I ../Headers -I ./ -w
+
+ASM := nasm
+ASMFLAGS := -f elf64
 
 LD := ld
-LDFLAGS := -m elf_i386 -nostdlib --nmagic --omagic -L ../PBFS/PBFS/build-fs -T linker.ld
+LDFLAGS := -m elf_x86_64 -nostdlib --nmagic --omagic -L ../PBFS/PBFS/build-fs -T linker.ld
 LDPBFS := ../PBFS/PBFS/build-fs/pbfs.a
 
 OBJCOPY := objcopy
@@ -23,6 +26,11 @@ DRIVERS_O := $(patsubst $(DRIVERS_DIR)/%.c,$(BUILD_DIR)/%.o,$(DRIVERS))
 MEMORY_DIR := mm
 MEMORY_FILES := $(wildcard $(MEMORY_DIR)/*.c)
 MEMORY_FILES_O := $(patsubst $(MEMORY_DIR)/%.c,$(BUILD_DIR)/%.o,$(MEMORY_FILES))
+
+ARCH_DIR := src/arch
+ASM_x86_64_DIR := $(ARCH_DIR)/x86_64
+ASM_x86_64_FILES := $(wildcard $(ASM_x86_64_DIR)/*.asm)
+ASM_x86_64_FILES_O := $(patsubst $(ASM_x86_64_DIR)/%.asm,$(BUILD_DIR)/%.o,$(ASM_x86_64_FILES))
 
 .PHONY: all clean
 
@@ -48,9 +56,13 @@ $(BUILD_DIR)/%.o: $(MEMORY_DIR)/%.c
 	@echo "Compiling Memory Manager..."
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(KERNEL_ELF): $(KERNEL_O) $(DRIVERS_O) $(MEMORY_FILES_O)
+$(BUILD_DIR)/%.o: $(ASM_x86_64_DIR)/%.asm
+	@echo "Assembling Assembly files..."
+	$(ASM) $(ASMFLAGS) $< -o $@
+
+$(KERNEL_ELF): $(KERNEL_O) $(DRIVERS_O) $(MEMORY_FILES_O) $(ASM_x86_64_FILES_O)
 	@echo "Linking Kernel..."
-	$(LD) $(LDFLAGS) $(KERNEL_O) $(MEMORY_FILES_O) $(DRIVERS_O) $(LDPBFS) -o $(KERNEL_ELF)
+	$(LD) $(LDFLAGS) $(KERNEL_O) $(MEMORY_FILES_O) $(ASM_x86_64_FILES_O) $(DRIVERS_O) $(LDPBFS) -o $(KERNEL_ELF)
 
 $(KERNEL_BIN): $(KERNEL_ELF)
 	@echo "Copying Kernel to binary..."

@@ -3,10 +3,10 @@ OBJCOPY := objcopy
 LD := ld
 ASM := nasm
 
-CFLAGS := -ffreestanding -fno-stack-protector -fno-pic -nostdlib -m32 -I ../PBFS/PBFS/headers -I ../PBFS/PBFS/PEFI/includes -I ../Headers -w
-LDFLAGS := -m elf_i386 -Ttext 0x1000
+CFLAGS := -ffreestanding -fno-stack-protector -g -fno-pic -nostdlib -m64 -I ../PBFS/PBFS/headers -I ../PBFS/PBFS/PEFI/includes -I ../Headers -w
+LDFLAGS := -m elf_x86_64 -Ttext 0x1000 -g
 LDENDFLAGS := 
-ASMFLAGS := -f elf32
+ASMFLAGS := -f elf64 -g
 ASMFLAGS_BIN := -f bin
 
 BUILD_DIR := build

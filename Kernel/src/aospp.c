@@ -31,18 +31,6 @@ static FB_Cursor_t fb_cur = {
 static struct page_table* kernel_pml4 = (struct page_table*)NULL;
 
 void aospp_start() {
-    serial_init();
-
-    // Reserve MMIO region at 0xF0000000, kernel starts at 0x100000
-    avmf_init(0x100000, 64*1024*1024); // reserve memory
-    pager_init(0, 0); // init paging
-    serial_print("AOS++ LOADED!\n");
-
-    // Identity map GPU MMIO
-    for (uint64_t offset = 0; offset < 64*1024*1024; offset += PAGE_SIZE) {
-        pager_map(0xF0000000 + offset, 0xF0000000 + offset, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
-    }
-
     serial_print("Searching for GPU...\n");
     uint64_t fb_physaddr = gpu_get_framebuffer_and_info(&gpu_framebuffer, &pcie_gpu_device, &gpu_device);
     serial_print("Got Framebuffer!\n");
