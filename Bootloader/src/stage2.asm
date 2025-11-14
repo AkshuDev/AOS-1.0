@@ -119,6 +119,8 @@ init_pm64:
     mov ss, ax
     mov rsp, 0x90000
 
+    mov rax, 0x4C4F4E47
+
     call stage3
 
 hang:

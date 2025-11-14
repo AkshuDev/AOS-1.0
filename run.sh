@@ -22,4 +22,5 @@ qemu-system-x86_64 \
     -vga virtio \
     -serial stdio \
     -d guest_errors,int \
-    -no-shutdown
+    -no-shutdown \
+    -no-reboot
