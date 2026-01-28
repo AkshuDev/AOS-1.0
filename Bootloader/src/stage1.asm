@@ -26,11 +26,17 @@ start:
 
     mov ah, 0x42 ; extended load
     mov dl, [disk]
-    mov si, dap ; Load DAP
+    mov si, dap_s2 ; Load DAP
+    int 0x13
+    jc disk_error
+
+    mov ah, 0x42
+    mov dl, [disk]
+    mov si, dap_s3
     int 0x13
     jc disk_error
     
-    jmp 0x0100:0x0000 ; Jump to stage 2
+    jmp 0x1000:0x0000 ; Jump to stage 2
 
 disk_error:
     mov si, disk_err_msg
@@ -55,15 +61,23 @@ print_string:
 disk db 0x80 ; Default 0x80
 disk_read_msg db "Reading and Loading Stage2...", 0xa, 0xd, 0
 disk_err_msg db "Error Reading Disk!", 0xa, 0xd, 0
-boot_info equ 0x8FF0
+boot_info equ 0x7FF0
 
-dap:
+dap_s2:
     db 0x10 ; size (16 bytes)
     db 0 ; reserved
-    dw 45 ; sectors to read
+    dw 40 ; sectors to read
     dw 0x0000 ; dest offset
-    dw 0x0100 ; dest segment
+    dw 0x1000 ; dest segment
     dq 5 ; starting lba
+
+dap_s3:
+    db 0x10 ; size (16 bytes)
+    db 0 ; reserved
+    dw 35 ; sectors to read
+    dw 0x0000 ; dest offset
+    dw 0x1500 ; dest segment
+    dq 45 ; starting lba
 
 times 510 - ($ - $$) db 0
 dw 0xAA55 

@@ -7,6 +7,7 @@ BOOTLOADER_BIN := $(BOOTLOADER)/bin
 
 BOOTLOADER_STAGE1 := $(BOOTLOADER_BIN)/stage1.bin
 BOOTLOADER_STAGE2 := $(BOOTLOADER_BIN)/stage2.bin
+BOOTLOADER_STAGE3 := $(BOOTLOADER_BIN)/stage3.bin
 
 KERNEL := Kernel
 KERNEL_BUILD := $(KERNEL)/build
@@ -33,15 +34,16 @@ $(BIN_DIR):
 	@echo "Making $(BIN_DIR)"
 	@mkdir -p $(BIN_DIR)
 
-$(DISK): $(BOOTLOADER_STAGE1) $(BOOTLOADER_STAGE2) $(AOS_KERNEL)
+$(DISK): $(BOOTLOADER_STAGE1) $(BOOTLOADER_STAGE2) $(BOOTLOADER_STAGE3) $(AOS_KERNEL)
 	@echo "Creating AOS Disk..."
 	$(PBFS_CLI) $(DISK) -bs 512 -tb 4096 -dn AOS_DISK -f
 	$(DD) if=$(BOOTLOADER_STAGE1) of=$(DISK) bs=512 count=1 conv=notrunc
 	$(DD) if=$(BOOTLOADER_STAGE2) of=$(DISK) bs=512 seek=5 conv=notrunc
-	$(DD) if=$(AOS_KERNEL) of=$(DISK) bs=512 seek=16 conv=notrunc
+	$(DD) if=$(BOOTLOADER_STAGE3) of=$(DISK) bs=512 seek=45 conv=notrunc
+	$(DD) if=$(AOS_KERNEL) of=$(DISK) bs=512 seek=80 conv=notrunc
 	@echo "DONE!"
 
-$(BOOTLOADER_STAGE1) $(BOOTLOADER_STAGE2):
+$(BOOTLOADER_STAGE1) $(BOOTLOADER_STAGE2) $(BOOTLOADER_STAGE3):
 	@echo "Creating AOS Bootloader..."
 	$(MAKE) -C $(BOOTLOADER)
 

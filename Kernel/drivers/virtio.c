@@ -115,7 +115,7 @@ void virtio_init(struct gpu_device* gpu) {
     virtq.size  = GPU_VIRTQUEUE_SIZE;
 
     serial_print("[VIRTIO DRIVER] Allocating...\n");
-    virt_addr_t vq_virt = avmf_map_phys_to_virt(vq_phys, PAGE_SIZE, PAGE_PRESENT | PAGE_RW);
+    virt_addr_t vq_virt = (virt_addr_t)avmf_map_phys_to_virt(vq_phys, PAGE_SIZE, PAGE_PRESENT | PAGE_RW);
     serial_print("[VIRTIO DRIVER] Mapping Page...\n");
     pager_map(vq_virt, vq_phys, PAGE_PRESENT | PAGE_RW);
     serial_print("[VIRTIO DRIVER] Doing work...\n");
@@ -129,7 +129,7 @@ void virtio_init(struct gpu_device* gpu) {
 
     // Allocate buffers
     phys_addr_t big_buff_phys = avmf_alloc_phys_contiguous(0x3000);
-    virt_addr_t big_buff = avmf_map_phys_to_virt(big_buff_phys, 0x3000, PAGE_PRESENT | PAGE_RW);
+    virt_addr_t big_buff = (virt_addr_t)avmf_map_phys_to_virt(big_buff_phys, 0x3000, PAGE_PRESENT | PAGE_RW);
 
     phys_addr_t cmd_phys = big_buff_phys;
     phys_addr_t resp_phys = (phys_addr_t)(big_buff_phys + 0x2000);

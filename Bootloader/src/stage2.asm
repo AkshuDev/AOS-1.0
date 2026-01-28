@@ -1,6 +1,6 @@
 BITS 16
-GLOBAL _start
-EXTERN stage3
+ORG 0x10000
+STAGE3 equ 0x15000
 
 _start:
     ; Set stack in real mode first
@@ -20,12 +20,16 @@ _start:
     xor ax, ax
     mov ds, ax
 
+    mov eax, ds
+    shl eax, 4
+    add eax, gdt_start ; Get physical address of the table
+    mov [gdt_descriptor + 2], eax ; Patch the linear address field in the descriptor
     lgdt [gdt_descriptor]
     
     mov eax, cr0
     or eax, 1
     mov cr0, eax
-    jmp CODE_SEG:init_pm
+    jmp dword CODE_SEG:init_pm
 
 [BITS 32]
 init_pm: 
@@ -38,15 +42,27 @@ init_pm:
     mov ss, ax
     mov esp, 0x9000
 
-    ; debug marker — let emulator show we've entered init_pm
+    ; debug marker
     mov dword [magic_pm], 0x504D504D ; 'PMPM'
 
-    ; ensure paging is off (safe)
+    ; Clear out the uninitialized memory in the page tables
+    mov edi, pml4
+    mov ecx, 4096/4
+    xor eax, eax
+    rep stosd
+    mov edi, pdpt
+    mov ecx, 4096/4
+    rep stosd
+    mov edi, pd0
+    mov ecx, 4096/4
+    rep stosd
+
+    ; ensure paging is off
     mov eax, cr0
     and eax, ~(1 << 31)
     mov cr0, eax
 
-    ; Enable PAE in CR4 (must set before enabling paging)
+    ; Enable PAE
     mov eax, cr4
     or eax, (1 << 5)
     mov cr4, eax
@@ -55,55 +71,54 @@ init_pm:
     mov eax, cr4
     mov [cr4_rb], eax
 
-    lea eax, [pdpt]          ; runtime linear address of pdpt (linear==physical now)
-    or eax, 3                ; Present | RW
+    lea eax, [pdpt] ; runtime linear address of pdpt (linear==physical now)
+    or eax, 3 ; Present | RW
     mov dword [pml4], eax
-    mov dword [pml4 + 4], 0  ; high dword = 0
+    mov dword [pml4 + 4], 0 ; high dword = 0
 
-    ; --- Build PDPT[0] -> PD0 ---
+    ; Build PDPT[0] -> PD0
     lea eax, [pd0]
     or eax, 3
     mov dword [pdpt], eax
     mov dword [pdpt + 4], 0
 
-    ; --- Fill PD0 with 2 MiB identity mappings (PD entries) ---
+    ; Fill PD0 with 2 MiB identity mappings (PD entries)
     ; PD entry format (64-bit): base (bits 51:12) | flags (low bits)
     ; For 2 MiB pages we use flag 0x83 : Present (1) | RW (2) | PS (0x80)
     mov edi, pd0 ; edi -> PD0 base
     xor ebx, ebx ; ebx = physical base (0, 2MB, 4MB, ...)
-    mov ecx, 512 ; 512 entries * 2MiB = 1GiB (you can reduce if you want)
+    mov ecx, 512 ; 512 entries * 2MiB = 1GiB
 .fill_pd_loop:
     mov eax, ebx
     or eax, 0x83 ; set Present|RW|PS
     mov [edi], eax ; low 32 bits
     add edi, 4
-    mov dword [edi], 0 ; high 32 bits = 0 (we map <4GB)
+    mov dword [edi], 0 ; high 32 bits = 0 (map <4GB)
     add edi, 4
     add ebx, 0x200000 ; next 2MiB
     loop .fill_pd_loop
 
-    ; --- Load CR3 with physical address of PML4 (LEA gives runtime linear addr) ---
+    ; Load CR3 with physical address of PML4
     lea eax, [pml4]
     mov cr3, eax
 
-    ; readback CR3 into debug var (optional)
+    ; readback CR3 into debug var
     mov eax, cr3
     mov [cr3_rb+4], eax
 
-    ; --- Enable LME (EFER) before setting PG (you already do this) ---
+    ; Enable LME (EFER)
     mov ecx, 0xC0000080
     rdmsr
     or eax, (1 << 8) ; set LME
     wrmsr
 
-    ; --- Enable paging (CR0.PG) after CR3 and EFER are set ---
+    ; Load 64-bit GDT runtime
+    lgdt [gdt64_descriptor]
+
+    ; Enable paging
     mov eax, cr0
     or eax, (1 << 31)
     mov cr0, eax
-
-    ; --- Load 64-bit GDT runtime (safe) ---
-    
-    lgdt [gdt64_descriptor]
 
     jmp CODE_SEG64:init_pm64
 
@@ -113,15 +128,33 @@ init_pm64:
     mov dword [magic_pm64], 0x4C4F4E47 ; 'LONG'
 
     ; set up segments
-    mov ax, 0x10
+    mov ax, DATA_SEG64
+    mov fs, ax
+    mov gs, ax
     mov ds, ax
     mov es, ax
     mov ss, ax
     mov rsp, 0x90000
+    and rsp, -16
+    mov rbp, rsp
 
-    mov rax, 0x4C4F4E47
+    xor rax, rax
+    xor rcx, rcx
+    xor rdx, rdx
+    xor rbx, rbx
+    xor rsi, rsi
+    xor rdi, rdi
+    xor r8, r8
+    xor r9, r9
+    xor r10, r10
+    xor r11, r11
+    xor r12, r12
+    xor r13, r13
+    xor r14, r14
+    xor r15, r15
 
-    call stage3
+    mov rax, STAGE3
+    jmp rax
 
 hang:
     hlt
@@ -157,8 +190,8 @@ gdt_descriptor:
 
 gdt64:
     dq 0x0000000000000000
-    dq 0x00AF9A000000FFFF   ; 0x08 64-bit code
-    dq 0x00AF92000000FFFF   ; 0x10 data
+    dq 0x00AF9A000000FFFF
+    dq 0x00AF92000000FFFF
 gdt64_descriptor:
     dw gdt64_end - gdt64 - 1
     dq gdt64
@@ -177,17 +210,18 @@ DATA_SEG64 equ 0x10
 ALIGN 16
 farptr64: times 6 db 0
 
-cr4_rb:      dd 0
-cr3_rb:      dd 0
-efer_rb_lo:  dd 0
-efer_rb_hi:  dd 0
+cr4_rb: dd 0
+cr3_rb: dd 0
+efer_rb_lo: dd 0
+efer_rb_hi: dd 0
 
-magic_pm:    dd 0
-magic_pm64:  dd 0
+magic_pm: dd 0
+magic_pm64: dd 0
 
+section .pagetables
 ALIGN 4096
-pml4:    times 512 dq 0   ; reserve full page for clarity
+pml4: resb 4096 ; reserve full page for clarity
 ALIGN 4096
-pdpt:    times 512 dq 0
+pdpt: resb 4096
 ALIGN 4096
-pd0:     times 512 dq 0
+pd0: resb 4096

@@ -34,8 +34,9 @@ void aospp_start();
 
 void kernel_main(void) {
     serial_init();
+    idt_init();
     // Reserve MMIO region at 0xF0000000, kernel starts at 0x100000
-    avmf_init(AOS_KERNEL_ADDR, 64*1024*1024); // reserve memory 64MB
+    avmf_init(0x1000, 16*1024*1024); // reserve memory 16MB
     serial_print("AOS++ LOADED!\n");
     pager_init(0, 0);
     

@@ -3,10 +3,10 @@ OBJCOPY := objcopy
 LD := ld
 ASM := nasm
 
-CFLAGS := -ffreestanding -fno-stack-protector -g -fno-pic -nostdlib -m64 -I ../PBFS/PBFS/headers -I ../PBFS/PBFS/PEFI/includes -I ../Headers -w
-LDFLAGS := -m elf_x86_64 -Ttext 0x1000 -g
+CFLAGS := -ffreestanding -mno-red-zone -mno-sse -O0 -fno-stack-protector -g -fno-pic -nostdlib -m64 -I ../PBFS/PBFS/headers -I ../PBFS/PBFS/PEFI/includes -I ../Headers -w
+LDFLAGS := -m elf_x86_64 -T linker.ld -g
 LDENDFLAGS := 
-ASMFLAGS := -f elf64 -g
+ASMFLAGS := -f elf32 -g
 ASMFLAGS_BIN := -f bin
 
 BUILD_DIR := build
@@ -23,17 +23,17 @@ stage1 := $(SRC_DIR)/stage1.asm
 stage2 := $(SRC_DIR)/stage2.asm
 stage3 := $(SRC_DIR)/stage3.c
 
-stage2_o := $(BUILD_DIR)/stage2.o
 stage3_o := $(BUILD_DIR)/stage3.o
 
-stage2_elf := $(BUILD_DIR)/stage2.elf
+stage3_elf := $(BUILD_DIR)/stage3.elf
 
 stage1_bin := $(BIN_DIR)/stage1.bin
-stage2_bin := $(BIN_DIR)/stage2.bin # stage 3 and stage2 are linked together
+stage2_bin := $(BIN_DIR)/stage2.bin
+stage3_bin := $(BIN_DIR)/stage3.bin
 
 .PHONY: all clean
 
-all: $(BUILD_DIR) $(BIN_DIR) $(stage1_bin) $(stage2_bin)
+all: $(BUILD_DIR) $(BIN_DIR) $(stage1_bin) $(stage2_bin) $(stage3_bin)
 
 $(BUILD_DIR):
 	@echo "Creating $(BUILD_DIR) ..."
@@ -47,17 +47,17 @@ $(stage1_bin): $(stage1)
 	@echo "Assembling Stage 1 AOS Bootloader..."
 	$(ASM) $(ASMFLAGS_BIN) $(stage1) -o $(stage1_bin)
 
-$(stage2_bin): $(stage2_elf) 
-	@echo "Copying Stage 2 + Stage 3 AOS Bootloader into binary..."
-	$(OBJCOPY) -O binary $(stage2_elf) $(stage2_bin)
+$(stage3_bin): $(stage3_elf)
+	@echo "Copying Stage 3 AOS Bootloader into binary..."
+	$(OBJCOPY) -O binary $(stage3_elf) $(stage3_bin)
 
-$(stage2_elf): $(stage2_o) $(stage3_o) $(PBFS_DISK_IO_O) $(PBFS_DISK_PARAMS_O)
-	@echo "Linking Stage 2 and Stage 3 AOS Bootloader into elf..."
-	$(LD) $(LDFLAGS) $(stage2_o) $(stage3_o) $(PBFS_DISK_IO_O) $(PBFS_DISK_PARAMS_O) -o $(stage2_elf) $(LDENDFLAGS)
+$(stage3_elf): $(stage3_o)
+	@echo "Linking Stage 3 AOS Bootloader into elf..."
+	$(LD) $(LDFLAGS) $(stage3_o) -o $(stage3_elf) $(LDENDFLAGS)
 
-$(stage2_o): $(stage2)
-	@echo "Assembling Stage 2 AOS Bootloader..."
-	$(ASM) $(ASMFLAGS) $(stage2) -o $(stage2_o)
+$(stage2_bin): $(stage2)
+	@echo "Assembling Stage 2 AOS Bootloader into binary..."
+	$(ASM) $(ASMFLAGS_BIN) $(stage2) -o $(stage2_bin)
 
 $(stage3_o): $(stage3)
 	@echo "Compiling Stage 3 AOS Bootloader..."

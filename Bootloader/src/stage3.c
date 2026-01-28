@@ -66,7 +66,7 @@ uint8_t compute_checksum(const uint8_t* data, uint32_t len) {
     return (uint8_t)(sum & 0xFF);
 }
 
-void stage3(void) __attribute__((used)); 
+void stage3(void) __attribute__((section(".entry"), used)); 
 void stage3(void) {
     enable_a20();
     PM_Cursor_t cursor = {
@@ -120,7 +120,7 @@ void stage3(void) {
 
     pm_print(&cursor, "Loading AOS...\n");
     dp.count = 60;
-    dp.lba = 16;
+    dp.lba = 80;
     
     int out = pm_read_sectors(&dp, AOS_KERNEL_LOC, boot_drive);
     if (out != 0) {

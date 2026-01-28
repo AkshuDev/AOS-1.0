@@ -33,6 +33,7 @@ void* avmf_map_phys_to_virt(uint64_t phys, uint64_t size, int flags) __attribute
 uint64_t avmf_alloc_phys_contiguous(uint64_t size) __attribute__((used));
 void avmf_init(uint64_t base_virt, uint64_t region_size) __attribute__((used));
 uint64_t avmf_alloc_region(uint64_t size, uint32_t flags) __attribute__((used));
-int avmf_map(uint64_t virt, uint64_t phys, uint64_t size, uint32_t flags) __attribute__((used));
+int avmf_map(uint64_t virt, uint64_t phys, uint32_t flags) __attribute__((used));
+int avmf_map_identity_virt(uint64_t virt, uint64_t phys, uint32_t flags) __attribute__((used));
 avmf_header_t* avmf_find(uint64_t virt);
 void avmf__debug__print_map() __attribute__((used));
