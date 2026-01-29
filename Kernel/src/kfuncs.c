@@ -32,6 +32,26 @@ int memcmp(const void* s1, const void* s2, size_t n) {
     return 0;
 }
 
+int strcmp(char* s1, char* s2) {
+    while (*s1 && (*s1 == *s2)) {
+        s1++;
+        s2++;
+    }
+    return *(const unsigned char*)s1 - *(const unsigned char*)s2;
+}
+
+int strncmp(char* s1, char* s2, size_t n) {
+    while (n && *s1 && (*s1 == *s2)) {
+        s1++;
+        s2++;
+        n--;
+    }
+    if (n == 0) {
+        return 0;
+    }
+    return *(const unsigned char*)s1 - *(const unsigned char*)s2;
+}
+
 uint32_t str_to_uint(const char* str) {
     uint32_t result = 0;
     if (!str) return 0;

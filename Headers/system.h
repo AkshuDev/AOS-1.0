@@ -1,5 +1,7 @@
 #pragma once
 
+#include <inttypes.h>
+
 #define AOS_KERNEL_LOC ((void *)0x100000)
 #define AOS_KERNEL_ADDR 0x100000
 #define AOS_KERNEL_STACK_TOP 0x208000

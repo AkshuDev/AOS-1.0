@@ -1,5 +1,3 @@
-#include <pbfs_blt_stub.h>
-
 #include <system.h>
 #include <inttypes.h>
 
@@ -28,8 +26,8 @@ static int help_shell_nlines = 8;
 // Define a static stack array
 void kernel_main(void) __attribute__((used, noinline, section(".start"), noreturn));
 void aos_shell_pm(void);
-void exec_cmd(char* cmd, int lines, PM_Cursor_t* cur);
-void cmd_start(char* program, int lines, PM_Cursor_t* cur);
+void exec_cmd(char* cmd, int lines, struct VMemDesign* vmem_design);
+void cmd_start(char* program, int lines, struct VMemDesign* vmem_design);
 void aospp_start();
 
 void kernel_main(void) {
@@ -46,77 +44,79 @@ void kernel_main(void) {
     }
 
     // Now safe to use local variables
-    PM_Cursor_t cur = {
+    struct VMemDesign vmem_design = {
         .x = 0,
         .y = 0,
-        .fg = PM_COLOR_WHITE,
-        .bg = PM_COLOR_BLACK
+        .fg = VMEM_COLOR_WHITE,
+        .bg = VMEM_COLOR_BLACK,
+        .serial_out = 1
     };
 
-    pm_set_cursor(&cur, 0, 0);
-    pm_clear_screen(&cur);
-    pm_print(&cur, "Welcome To AOS!\n\n");
+    vmem_set_cursor(0, 0);
+    vmem_clear_screen(&vmem_design);
+    vmem_print(&vmem_design, "Welcome To AOS!\n\n");
     aos_shell_pm();
     for (;;) asm("hlt");
 }
 
 void aos_shell_pm(void) {
-    PM_Cursor_t cur = {
+    struct VMemDesign vmem_design = {
         .x = 0,
         .y = 0,
-        .fg = PM_COLOR_WHITE,
-        .bg = PM_COLOR_BLACK
+        .fg = VMEM_COLOR_WHITE,
+        .bg = VMEM_COLOR_BLACK,
+        .serial_out = 1
     };
     
     char input[SHELL_MAX_INPUT];
     int lines = 0;
 
-    pm_set_cursor(&cur, 0, 0);
-    pm_clear_screen(&cur);
-    pm_print(&cur, "Welcome to AOS Shell!\n\n");
+    vmem_set_cursor(0, 0);
+    vmem_clear_screen(&vmem_design);
+    vmem_print(&vmem_design, "Welcome to AOS Shell!\n\n");
     lines += 2;
     // Read sysinfo
     uint8_t boot_drive = *AOS_BOOT_INFO_LOC;
     aos_sysinfo_t SystemInfo;
-    PBFS_DP dp = {
+    struct ATA_DP dp = {
         .count = AOS_SYSINFO_SPAN,
         .lba = AOS_SYSINFO_LBA
     };
-    pm_read_sectors(&dp, &SystemInfo, boot_drive);
-    pm_print(&cur, "SystemInfo:\n");
-    pm_printf(&cur, "Boot Drive: 0x%x\nBoot Mode: 0x%x\n", SystemInfo.boot_drive, SystemInfo.boot_mode);
-    pm_printf(&cur, "CPU Vendor: %s\n", (int)SystemInfo.cpu_vendor);
-    pm_printf(&cur, "Total Memory: %u KiB\n\n", SystemInfo.total_memory_kib);
+    ata_read_sectors(&dp, &SystemInfo, boot_drive);
+    vmem_print(&vmem_design, "SystemInfo:\n");
+    vmem_printf(&vmem_design, "Boot Drive: 0x%llx (%llu)\nBoot Mode: 0x%llx (%llu)\n", (uint64_t)SystemInfo.boot_drive, (uint64_t)SystemInfo.boot_drive, (uint64_t)SystemInfo.boot_mode, (uint64_t)SystemInfo.boot_mode);
+    vmem_printf(&vmem_design, "CPU Vendor: %s\n", (uintptr_t)&SystemInfo.cpu_vendor);
+    vmem_printf(&vmem_design, "Total Memory: %llu KiB\n\n", (uint64_t)SystemInfo.total_memory_kib);
     lines += 8;
 
     while (1) {
-        pm_print(&cur, "AOS: / $> "); // In AOS / means root and ~ means HOME_DIR like linux
-        pm_read_line(input, SHELL_MAX_INPUT, &cur);
+        vmem_print(&vmem_design, "AOS: / $> "); // In AOS / means root and ~ means HOME_DIR like linux
+        ps2_read_line(input, SHELL_MAX_INPUT, &vmem_design);
 
-        exec_cmd(input, lines, &cur);
+        exec_cmd(input, lines, &vmem_design);
     }
 }
 
-void exec_cmd(char* cmd, int lines, PM_Cursor_t* cur) {
-    if (str_eq(cmd, "help") == 1) {
-        pm_print(cur, help_shell);
+void exec_cmd(char* cmd, int lines, struct VMemDesign* vmem_design) {
+    if (strcmp(cmd, "help") == 0) {
+        vmem_print(vmem_design, help_shell);
         lines += help_shell_nlines;
-    } else if (str_n_eq(cmd, "echo ", 5) == 1) {
-        pm_print(cur, cmd + 5);
-        pm_print(cur, "\n");
+    } else if (strncmp(cmd, "echo ", 5) == 0) {
+        vmem_print(vmem_design, cmd + 5);
+        vmem_print(vmem_design, "\n");
         lines += 1;
-    } else if (str_eq(cmd, "reboot") == 1) {
-        pm_print(cur, "Rebooting...\n");
+    } else if (strcmp(cmd, "reboot") == 0) {
+        vmem_print(vmem_design, "Rebooting...\n");
         acpi_reboot();
-    } else if (str_eq(cmd, "clear") == 1) {
-        pm_clear_screen(cur);
+    } else if (strcmp(cmd, "clear") == 0) {
+        vmem_clear_screen(vmem_design);
         lines = 0;
-    } else if (str_n_eq(cmd, "start ", 6) == 1) {
-        cmd_start(cmd + 6, lines, cur);
-    } else if (str_n_eq(cmd, "memdump ", 8) == 1) {
+    } else if (strncmp(cmd, "start ", 6) == 0) {
+        cmd_start(cmd + 6, lines, vmem_design);
+    } else if (strncmp(cmd, "memdump ", 8) == 1) {
         uintptr_t addr = str_to_uint(cmd + 8);
         for (int i = 0; i < 16; i++) {
-            pm_printf(cur, "0x%08x: %02x %02x %02x %02x\n", 
+            vmem_printf(vmem_design, "0x%08x: %02x %02x %02x %02x\n", 
                     addr + i*4,
                     *((uint8_t*)(addr + i*4)),
                     *((uint8_t*)(addr + i*4 +1)),
@@ -125,27 +125,27 @@ void exec_cmd(char* cmd, int lines, PM_Cursor_t* cur) {
             lines++;
         }
     } else {
-        pm_print(cur, "Unknown command\n");
+        vmem_print(vmem_design, "Unknown command\n");
         lines += 1;
     }
     lines += 1;
-    if (lines > VIDEO_HEIGHT) {
-        pm_clear_screen(cur);
+    if (lines > 25) {
+        vmem_clear_screen(vmem_design);
         lines = 0;
     }
 }
 
-void cmd_start(char* program, int lines, PM_Cursor_t* cur) {
-    if (str_eq(program, "aospp") == 1 || str_eq(program, "aos++") == 1) {
-        pm_print(cur, "Starting AOS++\n");
+void cmd_start(char* program, int lines, struct VMemDesign* vmem_design) {
+    if (strcmp(program, "aospp") == 0 || strcmp(program, "aos++") == 0) {
+        vmem_print(vmem_design, "Starting AOS++\n");
         lines += 1;
         aospp_start();
-        pm_print(cur, "AOS++ Failed to load!\n");
+        vmem_print(vmem_design, "AOS++ Failed to load!\n");
         lines += 1;
     } else {
-        pm_print(cur, "Unknown Program: ");
-        pm_print(cur, program);
-        pm_print(cur, "\n");
+        vmem_print(vmem_design, "Unknown Program: ");
+        vmem_print(vmem_design, program);
+        vmem_print(vmem_design, "\n");
         lines += 1;
     }
 }

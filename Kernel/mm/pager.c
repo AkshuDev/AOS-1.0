@@ -8,7 +8,9 @@ static struct page_table* kernel_pml4;
 static struct page_table* alloc_page_table(void) {
     uint64_t virt = avmf_alloc_region(PAGE_SIZE, AVMF_FLAG_PRESENT);
     uint64_t phys = avmf_virt_to_phys(virt);
-    struct page_table* tbl = (struct page_table*)virt;
+
+    avmf_map_identity_virt(phys, phys, AVMF_FLAG_PRESENT);
+    struct page_table* tbl = (struct page_table*)phys;
 
     if (!virt) {
         serial_print("[PAGER] No virtual address?\n");
@@ -34,9 +36,6 @@ void pager_map_range(uint64_t virt, uint64_t phys, uint64_t size, uint64_t flags
 void pager_init(uint64_t fb_phys, uint64_t fb_size) {
     kernel_pml4 = alloc_page_table();
 
-    for (uint64_t offset = 0; offset < 0x1600000; offset += PAGE_SIZE) {
-        avmf_map_identity_virt(offset, offset, AVMF_FLAG_PRESENT);
-    }
     pager_map_range(0x0, 0x0, 0x1600000, PAGE_PRESENT | PAGE_RW); // Identity Map the first 16MiB (2MB)
     if (fb_phys && fb_size) {
         pager_map_range(0xFFFFFFFF40000000, fb_phys, fb_size, PAGE_PRESENT | PAGE_RW);
