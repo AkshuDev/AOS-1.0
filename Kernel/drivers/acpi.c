@@ -6,6 +6,12 @@
 
 #define EBDA_SEG_PTR 0x40E
 
+static struct acpi_mcfg* mcfg_table = NULL;
+
+struct acpi_mcfg* acpi_get_mcfg() {
+    return mcfg_table;
+}
+
 static uint8_t acpi_checksum(void* table, uint32_t len) {
     uint8_t sum = 0;
     uint8_t* p = (uint8_t*)table;
@@ -55,6 +61,10 @@ static void acpi_parse_rsdt(struct acpi_rsdp_descriptor* rsdp) {
 
     for (int i = 0; i < entries; i++) {
         struct acpi_sdt_header* sdt_hdr = (struct acpi_sdt_header*)(uintptr_t)rsdt->entries[i];
+        if (memcmp(sdt_hdr->signature, "MCFG", 4) == 0) {
+            mcfg_table = (struct acpi_mcfg*)sdt_hdr;
+            serial_printf("[ACPI] Found MCFG at %p\n", mcfg_table);
+        }
     }
 }
 

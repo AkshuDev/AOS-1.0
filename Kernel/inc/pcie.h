@@ -16,6 +16,8 @@
 #define PCI_BAR0 0x10
 #define PCI_BAR_COUNT 6
 
+#define PCIE_VIRT_BASE 0xFFFFC00000000000ULL
+
 typedef struct {
     uint16_t vendor_id;
     uint16_t device_id;
@@ -36,6 +38,7 @@ typedef struct {
     uint32_t size;
 } PCIe_FB;
 
+uint8_t pcie_init() __attribute__((used));
 uint32_t pcie_read_bar(uint8_t bus, uint8_t slot, uint8_t func, uint8_t bar_index) __attribute__((used));
 uint32_t pcie_read(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) __attribute__((used));
 int pcie_find_nvme(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0) __attribute__((used));

@@ -113,7 +113,7 @@ static void serial_print_ex_integer(uint64_t val, int base, int width, int zero_
 
     if (neg) serial_printc('-');
     while (i > 0) {
-        serial_printc(buf[i--]);
+        serial_printc(buf[--i]);
     }
 }
 
@@ -235,12 +235,14 @@ void vmem_printc(struct VMemDesign* design, char c) {
         design->x = 0;
         uint16_t y = design->y + 1;
         vmem_set_cursor(design->x, y);
+        design->y = y;
         if (design->serial_out == 1) serial_printc(c);
         return;
     }
     vmem[design->y * VMEM_MAX_COLS + design->x] = ((uint16_t)attr << 8) | c;
     uint16_t x = design->x + 1;
     vmem_set_cursor(x, design->y);
+    design->x = x;
     if (design->serial_out == 1) serial_printc(c);
 }
 
@@ -300,7 +302,7 @@ static void vmem_print_ex_integer(struct VMemDesign* design, uint64_t val, int b
 
     if (neg) vmem_printc(design, '-');
     while (i > 0) {
-        vmem_printc(design, buf[i--]);
+        vmem_printc(design, buf[--i]);
     }
 }
 

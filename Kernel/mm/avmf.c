@@ -10,6 +10,8 @@
 #define __log(msg, ...) // stubbed
 #define PAGE_SIZE 0x1000
 
+#define AVMF_STATIC_SIZE 2048
+
 static avmf_header_t* avmf_head;
 static avmf_header_t* last_found;
 
@@ -97,9 +99,9 @@ uint64_t avmf_alloc_region(uint64_t size, uint32_t flags) {
 
     avmf_header_t* node = (avmf_header_t*)NULL;
 
-    static avmf_header_t static_headers[128];
+    static avmf_header_t static_headers[AVMF_STATIC_SIZE];
     static int header_index = 0;
-    if (header_index >= 128) return 0;
+    if (header_index >= AVMF_STATIC_SIZE) return 0;
     node = &static_headers[header_index++];
     
     node->virt_addr = addr;

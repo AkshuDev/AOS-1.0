@@ -33,7 +33,6 @@ static struct page_table* kernel_pml4 = (struct page_table*)NULL;
 void aospp_start() {
     serial_print("Searching for GPU...\n");
     uint64_t fb_physaddr = gpu_get_framebuffer_and_info(&gpu_framebuffer, &pcie_gpu_device, &gpu_device);
-    serial_print("Got Framebuffer!\n");
 
     if (fb_physaddr == 0) {
         serial_print("Failed to get framebuffer\n");

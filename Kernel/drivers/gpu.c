@@ -89,7 +89,7 @@ void get_framebuffer_info_virtio(PCIe_FB* fb, pcie_device_t* device, gpu_device_
 
 uint64_t gpu_get_framebuffer_and_info(PCIe_FB* fb, pcie_device_t* dev, gpu_device_t* gpu) {
     uint8_t bus, slot, func;
-    uint32_t bar_value = 0;
+    uint64_t bar_value = 0;
 
     for (bus = 0; bus < PCI_MAX_BUS; bus++) {
         for (slot = 0; slot < PCI_MAX_SLOT; slot++) {
@@ -108,14 +108,25 @@ uint64_t gpu_get_framebuffer_and_info(PCIe_FB* fb, pcie_device_t* dev, gpu_devic
                 if (class_code == PCI_CLASS_DISPLAY || class_code == PCI_VGA_DISPLAY) {
                     // Found a Display controller
                     for (int bar = 0; bar < PCI_BAR_COUNT; bar++) {
-                        bar_value = pcie_read_bar(bus, slot, func, bar);
-                        if (bar_value == 0xFFFFFFFF || bar_value == 0)
+                        // uint32_t cmd_reg = pcie_read(bus, slot, func, 0x04); // Enable the device
+                        // pcie_write(bus, slot, func, 0x04, cmd_reg | 0x07);
+
+                        uint32_t bar_low = pcie_read_bar(bus, slot, func, bar);
+                        if ((bar_low & 0x06) == 0x04) {
+                            uint32_t bar_high = pcie_read_bar(bus, slot, func, bar + 1);
+                            bar_value = ((uint64_t)bar_high << 32) | ((uint64_t)bar_low);
+                            bar++;
+                        } else {
+                            bar_value = (uint64_t)bar_low;
+                        }
+
+                        if (bar_value == 0xFFFFFFFF || bar_value == 0 || bar_value == 0xFFFFFFFFFFFFFFFF)
                             continue; // skip invalid
 
-                        if (bar_value & 1) 
+                        if (bar_value & 1)
                             continue; // I/O space, not memory
 
-                        uint64_t fb_phys = (uint64_t)bar_value & ~0xFU; // mask flags
+                        uint64_t fb_phys = bar_value & ~0x0FULL; // mask flags
                         if (fb_phys) {
                             // check if this is a framebuffer-like address
                             if (fb_phys >= 0xE0000000) {
@@ -145,14 +156,5 @@ uint64_t gpu_get_framebuffer_and_info(PCIe_FB* fb, pcie_device_t* dev, gpu_devic
         }
     }
 
-    fb->phys = 0xE0000000;
-    fb->mmio_base = 0;
-    fb->w = 640;
-    fb->h = 480;
-    fb->bpp = 32;
-    fb->pitch = fb->w * 4;
-    fb->size = fb->h * fb->pitch;
-
-    // Fallback for Bochs/QEMU stdvga
-    return (uint64_t)0xE0000000;
+    return 0;
 }

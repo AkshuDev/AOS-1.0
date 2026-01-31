@@ -3,6 +3,8 @@
 #include <inc/mm/avmf.h>
 #include <inc/io.h>
 
+#define PAGE_HUGE (1 << 7)
+
 static struct page_table* kernel_pml4;
 
 static struct page_table* alloc_page_table(void) {
@@ -28,8 +30,19 @@ static inline void load_cr3(uint64_t pml4_phys) {
 }
 
 void pager_map_range(uint64_t virt, uint64_t phys, uint64_t size, uint64_t flags) {
-    for (uint64_t offset = 0; offset < size; offset += PAGE_SIZE) {
-        pager_map(virt + offset, phys + offset, flags);
+    uint64_t offset = 0;
+    while (offset < size) {
+        uint64_t remaining = size - offset;
+        uint64_t cur_virt = virt + offset;
+        uint64_t cur_phys = phys + offset;
+
+        if (remaining >= 0x200000 && (cur_virt % 0x200000 == 0) && (cur_phys % 0x200000 == 0)) {
+            pager_map(cur_virt, cur_phys, flags | PAGE_HUGE);
+            offset += 0x200000;
+        } else {
+            pager_map(cur_virt, cur_phys, flags);
+            offset += PAGE_SIZE;
+        }
     }
 }
 
@@ -68,16 +81,21 @@ struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags)
     } else {
         pd = (struct page_table*)avmf_phys_to_virt(pdpt->entries[idx_pdpt] & ~0xFFFULL);
     }
-    if (!(pd->entries[idx_pd] & PAGE_PRESENT)) {
-        pt = alloc_page_table();
-        uint64_t pt_phys = avmf_virt_to_phys((uint64_t)pt);
-        pd->entries[idx_pd] = pt_phys | PAGE_PRESENT | PAGE_RW;
+    
+    if (flags & PAGE_HUGE) {
+        pd->entries[idx_pd] = (phys & ~0x1FFFFFULL) | (flags & 0xFFFULL) | PAGE_PRESENT;
     } else {
-        pt = (struct page_table*)avmf_phys_to_virt(pd->entries[idx_pd] & ~0xFFFULL);
-    }
+        if (!(pd->entries[idx_pd] & PAGE_PRESENT)) {
+            pt = alloc_page_table();
+            uint64_t pt_phys = avmf_virt_to_phys((uint64_t)pt);
+            pd->entries[idx_pd] = pt_phys | PAGE_PRESENT | PAGE_RW;
+        } else {
+            pt = (struct page_table*)avmf_phys_to_virt(pd->entries[idx_pd] & ~0xFFFULL);
+        }
 
-    // Map the physical range
-    pt->entries[idx_pt] = (phys & ~0xFFFULL) | (flags & 0xFFFULL);
+        // Map the physical range
+        pt->entries[idx_pt] = (phys & ~0xFFFULL) | (flags & 0xFFFULL) | PAGE_PRESENT;
+    }
     return pml4;
 }
 

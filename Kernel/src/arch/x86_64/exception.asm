@@ -7,21 +7,11 @@ extern aos_system_exception ; C handler
 %macro AOS_SYSTEM_EXCEPTION_ASM_MACRO 1
 global aos_system_exception_asm_%1
 aos_system_exception_asm_%1:
-    %if !(%1 == 8 || (%1 >= 10 && %1 <= 14) || %1 == 17 || %1 == 21 || %1 == 29 || %1 == 30)
-        push 0 ; Push dummy error code
+    %if !(%1 == 8 || (%1 >= 10 && %1 <= 14) || %1 == 17 || %1 == 21)
+        push 0 ; Error Code
     %endif
     push %1 ; Push the int no.
-    jmp aos_system_exception_asm_common
-%endmacro
-
-section .text
-%assign i 0
-%rep 32
-    AOS_SYSTEM_EXCEPTION_ASM_MACRO i
-    %assign i i+1
-%endrep
-
-aos_system_exception_asm_common:
+    
     push rax
     push rcx
     push rdx
@@ -59,4 +49,14 @@ aos_system_exception_asm_common:
     pop rax
 
     add rsp, 16
+
     iretq
+%endmacro
+
+section .text
+%assign i 0
+%rep 32
+    AOS_SYSTEM_EXCEPTION_ASM_MACRO i
+    %assign i i+1
+%endrep
+

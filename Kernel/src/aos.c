@@ -5,6 +5,7 @@
 #include <inc/acpi.h>
 #include <inc/idt.h>
 #include <inc/io.h>
+#include <inc/pcie.h>
 
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
@@ -26,21 +27,23 @@ static int help_shell_nlines = 8;
 // Define a static stack array
 void kernel_main(void) __attribute__((used, noinline, section(".start"), noreturn));
 void aos_shell_pm(void);
-void exec_cmd(char* cmd, int lines, struct VMemDesign* vmem_design);
-void cmd_start(char* program, int lines, struct VMemDesign* vmem_design);
+void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design);
+static void cmd_print_help(struct VMemDesign* vmem_design, int* lines);
+void cmd_start(char* program, int* lines, struct VMemDesign* vmem_design);
 void aospp_start();
 
 void kernel_main(void) {
     serial_init();
     idt_init();
     // Reserve MMIO region at 0xF0000000, kernel starts at 0x100000
-    avmf_init(0x1000, 16*1024*1024); // reserve memory 16MB
+    avmf_init(0x1000, 512*1024*1024); // reserve memory 512MB
     serial_print("AOS++ LOADED!\n");
     pager_init(0, 0);
-    
-    // Identity map GPU MMIO
-    for (uint64_t offset = 0; offset < 64*1024*1024; offset += PAGE_SIZE) {
-        pager_map(0xF0000000 + offset, 0xF0000000 + offset, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
+
+    acpi_init();
+    if (!pcie_init()) {
+        serial_print("[AOS] PCIe Initialization failed! Shutting Down!\n");
+        for (;;) asm("hlt");
     }
 
     // Now safe to use local variables
@@ -93,24 +96,24 @@ void aos_shell_pm(void) {
         vmem_print(&vmem_design, "AOS: / $> "); // In AOS / means root and ~ means HOME_DIR like linux
         ps2_read_line(input, SHELL_MAX_INPUT, &vmem_design);
 
-        exec_cmd(input, lines, &vmem_design);
+        exec_cmd(input, &lines, &vmem_design);
     }
 }
 
-void exec_cmd(char* cmd, int lines, struct VMemDesign* vmem_design) {
+void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
     if (strcmp(cmd, "help") == 0) {
         vmem_print(vmem_design, help_shell);
-        lines += help_shell_nlines;
+        *lines += help_shell_nlines;
     } else if (strncmp(cmd, "echo ", 5) == 0) {
         vmem_print(vmem_design, cmd + 5);
         vmem_print(vmem_design, "\n");
-        lines += 1;
+        *lines += 1;
     } else if (strcmp(cmd, "reboot") == 0) {
         vmem_print(vmem_design, "Rebooting...\n");
         acpi_reboot();
     } else if (strcmp(cmd, "clear") == 0) {
         vmem_clear_screen(vmem_design);
-        lines = 0;
+        *lines = 0;
     } else if (strncmp(cmd, "start ", 6) == 0) {
         cmd_start(cmd + 6, lines, vmem_design);
     } else if (strncmp(cmd, "memdump ", 8) == 1) {
@@ -122,31 +125,43 @@ void exec_cmd(char* cmd, int lines, struct VMemDesign* vmem_design) {
                     *((uint8_t*)(addr + i*4 +1)),
                     *((uint8_t*)(addr + i*4 +2)),
                     *((uint8_t*)(addr + i*4 +3)));
-            lines++;
+            *lines++;
         }
     } else {
         vmem_print(vmem_design, "Unknown command\n");
-        lines += 1;
+        *lines += 1;
     }
-    lines += 1;
-    if (lines > 25) {
+    *lines += 1;
+    if (*lines > 25) {
         vmem_clear_screen(vmem_design);
-        lines = 0;
+        *lines = 0;
     }
 }
 
-void cmd_start(char* program, int lines, struct VMemDesign* vmem_design) {
-    if (strcmp(program, "aospp") == 0 || strcmp(program, "aos++") == 0) {
+void cmd_print_help(struct VMemDesign* vmem_design, int* lines) {
+    const char* help = "Usage: start <program | -[OPTIONS]>\n"
+        "OPTIONS:\n"
+        "\thelp: Prints this help message\n"
+        "Available Programs:\n"
+        "\taos++/aospp: AfterGreat Operating System ++ (Enters GUI Mode)\n";
+    vmem_print(vmem_design, help);
+    *lines += 6;
+}
+
+void cmd_start(char* program, int* lines, struct VMemDesign* vmem_design) {
+    if (strcmp(program, "-help") == 0) {
+        cmd_print_help(vmem_design, lines);
+    } else if (strcmp(program, "aospp") == 0 || strcmp(program, "aos++") == 0) {
         vmem_print(vmem_design, "Starting AOS++\n");
-        lines += 1;
+        *lines += 1;
         aospp_start();
         vmem_print(vmem_design, "AOS++ Failed to load!\n");
-        lines += 1;
+        *lines += 1;
     } else {
         vmem_print(vmem_design, "Unknown Program: ");
         vmem_print(vmem_design, program);
         vmem_print(vmem_design, "\n");
-        lines += 1;
+        *lines += 1;
     }
 }
 

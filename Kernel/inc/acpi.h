@@ -103,5 +103,20 @@ struct acpi_fadt {
     struct acpi_generic_address_structure x_gpe1_blk;
 } __attribute__((packed));
 
+struct acpi_mcfg_entry {
+    uint64_t base_addr;
+    uint16_t pcie_segment;
+    uint8_t start_bus;
+    uint8_t end_bus;
+    uint32_t reserved;
+} __attribute__((packed));
+
+struct acpi_mcfg {
+    struct acpi_sdt_header header;
+    uint64_t reserved;
+    struct acpi_mcfg_entry entries[];
+} __attribute__((packed));
+
 void acpi_init() __attribute__((used));
+struct acpi_mcfg* acpi_get_mcfg() __attribute__((used));
 void acpi_reboot() __attribute__((used, noreturn));
