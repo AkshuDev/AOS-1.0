@@ -1,8 +1,10 @@
 #include <asm.h>
 #include <inttypes.h>
+#include <system.h>
 
 #include <inc/pcie.h>
 #include <inc/acpi.h>
+#include <inc/io.h>
 
 #include <inc/mm/pager.h>
 
@@ -11,8 +13,10 @@ static int mcfg_num_segs = 0;
 
 uint8_t pcie_init() {
     mcfg_table = acpi_get_mcfg();
-    if (mcfg_table == NULL)
+    if (mcfg_table == NULL) {
+        serial_print("[PCIE] Did not get MCFG Table!\n");
         return 0;
+    }
     mcfg_num_segs = (mcfg_table->header.length - sizeof(struct acpi_mcfg) - 8) / sizeof(struct acpi_mcfg_entry);
     for (int i = 0; i < mcfg_num_segs; i++) {
         struct acpi_mcfg_entry* e = &mcfg_table->entries[i];
@@ -46,7 +50,7 @@ uint32_t pcie_read(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
         int eidx = get_segment(bus);
         if (eidx >= 0 && eidx < mcfg_num_segs) {
             struct acpi_mcfg_entry* e = &mcfg_table->entries[eidx];
-            uint64_t virt_addr = (uint64_t)(PCIE_VIRT_BASE + ((uint64_t)e->pcie_segment << 28) + (((uint64_t)bus - e->start_bus) << 20) + ((uint64_t)slot << 15) + ((uint64_t)func << 12) | (offset));
+            uint64_t virt_addr = (uint64_t)(PCIE_VIRT_BASE + ((uint64_t)e->pcie_segment << 28) + (((uint64_t)bus - e->start_bus) << 20) + ((uint64_t)slot << 15) + ((uint64_t)func << 12) + (offset));
             return *(volatile uint32_t*)(virt_addr);
         }
     }
@@ -92,7 +96,7 @@ int pcie_find_nvme(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0) {
                 uint8_t class = (class_data >> 24) & 0xFF;
                 uint8_t subclass = (class_data >> 16) & 0xFF;
                 
-                if (class == PCI_CLASS_MASS_STORAGE && subclass == PCI_SUBCLASS_NVme) { // NVMe
+                if (class == PCI_CLASS_MASS_STORAGE && subclass == PCI_SUBCLASS_NVMe) { // NVMe
                     *bus = b;
                     *slot = s;
                     *func = f;

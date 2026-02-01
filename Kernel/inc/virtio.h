@@ -31,7 +31,6 @@
 
 #define VIRTIO_GPU_FLAG_FENCE (1 << 0)
 
-#define GPU_VIRTQUEUE_SIZE 256
 #define VIRTIO_GPU_QUEUE_INDEX 0
 
 #define VIRTIO_STATUS_ACKNOWLEDGE 0x01
@@ -69,7 +68,7 @@ struct virtq_desc {
 struct virtq_avail {
     uint16_t flags;
     uint16_t idx;
-    uint16_t ring[GPU_VIRTQUEUE_SIZE];
+    uint16_t ring[];
 };
 
 struct virtq_used_elem {
@@ -80,15 +79,16 @@ struct virtq_used_elem {
 struct virtq_used {
     uint16_t flags;
     uint16_t idx;
-    struct virtq_used_elem ring[GPU_VIRTQUEUE_SIZE];
+    struct virtq_used_elem ring[];
 };
 
 struct virtqueue {
     struct virtq_desc* desc;
     struct virtq_avail* avail;
     struct virtq_used* used;
-    uint32_t size;
-    uint32_t index;
+    uint16_t queue_size;
+    uint16_t free_head;
+    uint16_t last_used_idx;
 };
 
 struct virtio_gpu_resource_create_2d {
@@ -132,6 +132,33 @@ struct virtio_gpu_resource_flush {
     struct virtio_gpu_ctrl_hdr hdr;
     uint32_t resource_id;
     uint32_t x, y, width, height;
+} __attribute__((packed));
+
+struct virtio_cap {
+    uint8_t bar;
+    uint8_t cap_ptr;
+    uint32_t offset;
+    uint32_t length;
+} __attribute__((packed));
+
+struct virtio_common_cfg {
+    uint32_t device_feature_select;
+    uint32_t device_feature;
+    uint32_t driver_feature_select;
+    uint32_t driver_feature;
+    uint16_t msix_config;
+    uint16_t num_queues;
+    uint8_t device_status;
+    uint8_t config_generation;
+
+    uint16_t queue_select;
+    uint16_t queue_size;
+    uint16_t queue_msix_vector;
+    uint16_t queue_enable;
+    uint16_t queue_notify_off;
+    uint64_t queue_desc;
+    uint64_t queue_avail;
+    uint64_t queue_used;
 } __attribute__((packed));
 
 void virtio_init(struct gpu_device* gpu) __attribute__((used));

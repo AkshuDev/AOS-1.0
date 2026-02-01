@@ -47,13 +47,10 @@ void aospp_start() {
     fb_size = gpu_framebuffer.size;
 
     // Map framebuffer to high-half virtual address
-    fb_addr = 0xFFFF800010000000ULL;
-    for (uint64_t i = 0; i < fb_size; i += PAGE_SIZE) {
-        pager_map(fb_addr + i, fb_physaddr + i, PAGE_PRESENT | PAGE_RW);
-    }
+    fb_addr = AOS_KERNEL_SPACE_BASE;
+    pager_map_range(fb_addr, fb_physaddr, fb_size, PAGE_PRESENT | PAGE_RW);
 
-    fb_init((uint32_t*)fb_addr, gpu_framebuffer.w, gpu_framebuffer.h,
-            gpu_framebuffer.pitch, 32);
+    fb_init((uint32_t*)fb_addr, gpu_framebuffer.w, gpu_framebuffer.h, gpu_framebuffer.pitch, 32);
 
     fb_clear(0x00FF00);
     if (gpu_device.flush != NULL) GPU_FLUSH;

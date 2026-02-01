@@ -1,5 +1,6 @@
 #include <inttypes.h>
 #include <asm.h>
+#include <system.h>
 
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
@@ -17,240 +18,145 @@ static struct virtqueue virtq;
 
 static struct virtio_gpu_ctrl_hdr* cmd_buf;
 static struct virtio_gpu_resp_display_info* resp_buf;
+static uintptr_t notify_base;
+static uint32_t notify_multiplier;
 
-static inline void mmio_write32(uint32_t addr, uint32_t val) {
+static volatile struct virtio_common_cfg* common_cfg;
+
+static void mmio_write64(uint64_t addr, uint64_t val) {
+    *(volatile uint64_t*)addr = val;
+}
+static uint64_t mmio_read64(uint64_t addr) {
+    return *(volatile uint64_t*)addr;
+}
+static void mmio_write32(uint64_t addr, uint32_t val) {
     *(volatile uint32_t*)addr = val;
 }
-static inline uint32_t mmio_read32(uint32_t addr) {
+static uint32_t mmio_read32(uint64_t addr) {
     return *(volatile uint32_t*)addr;
 }
-static inline void mmio_write16(uint32_t addr, uint16_t val) {
+static void mmio_write16(uint64_t addr, uint16_t val) {
     *(volatile uint16_t*)addr = val;
 }
-static inline uint16_t mmio_read16(uint32_t addr) {
+static uint16_t mmio_read16(uint64_t addr) {
     return *(volatile uint16_t*)addr;
 }
-static inline void mmio_write8(uint32_t addr, uint8_t val) {
+static void mmio_write8(uint64_t addr, uint8_t val) {
     *(volatile uint8_t*)addr = val;
 }
-static inline uint8_t mmio_read8(uint32_t addr) {
+static uint8_t mmio_read8(uint64_t addr) {
     return *(volatile uint8_t*)addr;
 }
 
+static struct virtio_cap get_cap(uint8_t b, uint8_t s, uint8_t f, uint8_t target_type) {
+    struct virtio_cap cap = {0};
+    uint8_t cap_ptr = pcie_read(b, s, f, 0x34) & 0xFF;
+    while (cap_ptr != 0) {
+        uint32_t cap_hdr = pcie_read(b, s, f, cap_ptr);
+        uint8_t cap_id = cap_hdr & 0xFF;
 
-void virtio_flush(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
-    PCIe_FB* fb = gpu->framebuffer;
-    uint32_t bar0 = gpu->pcie_device->bar0 & ~0xF;
-
-    struct virtio_gpu_resource_flush* flush = (void*)cmd_buf;
-    memset(flush, 0, sizeof(*flush));
-    flush->hdr.type = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
-    flush->resource_id = 1;
-    flush->x = x; 
-    flush->y = y;
-    flush->width = w;
-    flush->height = h;
-
-    virtq.desc[0].addr = (uintptr_t)flush;
-    virtq.desc[0].len = sizeof(*flush);
-    virtq.desc[0].flags = 0;
-    virtq.desc[0].next = 1;
-
-    virtq.desc[1].addr = (uintptr_t)resp_buf;
-    virtq.desc[1].len = sizeof(*resp_buf);
-    virtq.desc[1].flags = 2;
-    virtq.desc[1].next = 0;
-
-    virtq.avail->ring[virtq.avail->idx % virtq.size] = 0;
-    virtq.avail->idx++;
-
-    *(volatile uint16_t*)(bar0 + VIRTIO_PCI_QUEUE_NOTIFY) = 0;
-
-    uint16_t idx_before = virtq.used->idx;
-    for (volatile int timeout = 0; timeout < 100000000; timeout++) {
-        if (virtq.used->idx != idx_before)
-            break;
+        if (cap_id == 0x09) { // Vendor Specific
+            uint8_t type = (pcie_read(b, s, f, cap_ptr + 3) >> 24) & 0xFF;
+            if (type == target_type) {
+                cap.cap_ptr = cap_ptr;
+                cap.bar = (pcie_read(b, s, f, cap_ptr + 4) >> 0) & 0xFF;
+                cap.offset = pcie_read(b, s, f, cap_ptr + 8);
+                cap.length = pcie_read(b, s, f, cap_ptr + 12);
+                return cap;
+            }
+        }
+        cap_ptr = (cap_hdr >> 8) & 0xFF;
     }
-    if (virtq.used->idx == idx_before) serial_print("[VIRTIO DRIVER] Flush timed out\n");
-    serial_print("[VIRTIO DRIVER] Flushed!\n");
+    return cap;
 }
 
-// Total hours wasted on virtio: 14.5
+static void setup_queue(gpu_device_t* gpu, uint16_t q_idx) {
+    common_cfg->queue_select = q_idx;
+    uint16_t size = common_cfg->queue_size;
+    size_t desc_t_size = size * sizeof(struct virtq_desc);
+    size_t avail_r_size = 6 + (2 * size);
+    size_t used_r_size = 6 + (8 * size);
+
+    uintptr_t phys = avmf_alloc_phys_contiguous(desc_t_size + avail_r_size + used_r_size);
+    void* mem = (void*)avmf_map_phys_to_virt( AVMF_FLAG_PRESENT | AVMF_FLAG_WRITEABLE);
+
+    virtq.desc = (struct virtq_desc*)mem;
+    virtq.avail = (struct virtq_avail*)((uintptr_t)mem + desc_t_size);
+    virtq.used = (struct virtq_used*)ALIGN_UP((uintptr_t)virtq.avail + avail_r_size, 4096);
+    virtq.queue_size = size;
+
+    common_cfg->queue_desc = phys;
+    common_cfg->queue_avail = phys + desc_t_size;
+    common_cfg->queue_used = avmf_virt_to_phys((uintptr_t)virtq.used);
+    common_cfg->queue_enable = 1;
+}
+
+void virtio_flush(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
+    struct virtio_gpu_resource_flush* f = (struct virtio_gpu_resource_flush*)cmd_buf;
+    f->hdr.type = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
+    f->x = x;
+    f->y = y;
+    f->width = w;
+    f->height = h;
+    f->resource_id = 1;
+
+    uint16_t head = virtq.free_head;
+    // Map to physical address so the GPU can see it
+    virtq.desc[head].addr = avmf_virt_to_phys((uintptr_t)f);
+    virtq.desc[head].len = sizeof(*f);
+    virtq.desc[head].flags = 0; 
+
+    virtq.avail->ring[virtq.avail->idx % virtq.queue_size] = head;
+
+    // Memory fence to ensure the device sees the ring update before the notification
+    __asm__ volatile("" : : : "memory"); 
+ 
+    virtq.avail->idx++;
+
+    // Calculate notification address for Queue 0
+    common_cfg->queue_select = 0;
+    uintptr_t db = notify_base + (common_cfg->queue_notify_off * notify_multiplier);
+    mmio_write32(db, 0);
+}
+
+// Total hours wasted on virtio: 17 (LET ME COOK)
 void virtio_init(struct gpu_device* gpu) {
     pcie_device_t* dev = gpu->pcie_device;
     PCIe_FB* fb = gpu->framebuffer;
-    uint32_t bar0 = dev->bar0 & ~0xF;
+    uintptr_t bar0 = dev->bar0 & ~0xF;
 
     serial_print("[VIRTIO DRIVER] Initializing...\n");
 
-    // Reset
-    mmio_write8(bar0 + VIRTIO_PCI_DEVICE_STATUS, 0x00);
+    struct virtio_cap common_cap = get_cap(dev->bus, dev->slot, dev->func, 1);
+    uint32_t bar_val = pcie_read_bar(dev->bus, dev->slot, dev->func, common_cap.bar);
+    uintptr_t bar_phys = bar_val & ~0xF;
+    uintptr_t common_cfg_phys = bar_phys + common_cap.offset;
+    common_cfg = (volatile struct virtio_common_cfg*)(common_cfg_phys + AOS_DIRECT_MAP_BASE);
 
-    // Acknowledge & Driver
-    mmio_write8(bar0 + VIRTIO_PCI_DEVICE_STATUS, VIRTIO_STATUS_ACKNOWLEDGE);
-    mmio_write8(bar0 + VIRTIO_PCI_DEVICE_STATUS, mmio_read8(bar0 + VIRTIO_PCI_DEVICE_STATUS) | VIRTIO_STATUS_DRIVER);
+    struct virtio_cap notify_cap = get_cap(dev->bus, dev->slot, dev->func, 2);
+    uint32_t n_bar_val = pcie_read_bar(dev->bus, dev->slot, dev->func, notify_cap.bar);
+    notify_base = (n_bar_val & ~0xF) + notify_cap.offset + AOS_DIRECT_MAP_BASE;
+    notify_multiplier = pcie_read(dev->bus, dev->slot, dev->func, notify_cap.cap_ptr + 16);
 
-    // Feature negotiation
-    uint32_t host_features = mmio_read32(bar0 + VIRTIO_PCI_HOST_FEATURES);
-    uint32_t guest_features = host_features & VIRTIO_FEATURE_MASK;
-    mmio_write32(bar0 + VIRTIO_PCI_GUEST_FEATURES, guest_features);
-    mmio_write8(bar0 + VIRTIO_PCI_DEVICE_STATUS, mmio_read8(bar0 + VIRTIO_PCI_DEVICE_STATUS) | VIRTIO_STATUS_FEATURES_OK);
+    // RESET
+    common_cfg->device_status = 0;
+    common_cfg->device_status |= VIRTIO_STATUS_ACKNOWLEDGE;
+    common_cfg->device_status |= VIRTIO_STATUS_DRIVER;
 
-    if (!(mmio_read8(bar0 + VIRTIO_PCI_DEVICE_STATUS) & VIRTIO_STATUS_FEATURES_OK)) {
-        serial_print("[VIRTIO DRIVER] Feature negotiation failed\n");
+    // Features
+    common_cfg->device_feature_select = 0;
+    uint32_t features = common_cfg->device_feature;
+    common_cfg->device_feature_select = 0;
+    common_cfg->driver_feature = features;
+
+    common_cfg->device_status |= VIRTIO_STATUS_FEATURES_OK;
+    if (!(common_cfg->device_status & VIRTIO_STATUS_FEATURES_OK)) {
+        serial_print("[VIRTIO] Failed to negotiate features!\n");
         return;
     }
 
-    // Queue setup
-    mmio_write16(bar0 + VIRTIO_PCI_QUEUE_SEL, 0);
-    mmio_write16(bar0 + VIRTIO_PCI_QUEUE_NUM, GPU_VIRTQUEUE_SIZE);
-
-    memset(&virtq, 0, sizeof(virtq));
-    phys_addr_t vq_phys = avmf_alloc_phys_contiguous(PAGE_SIZE);
-    if (vq_phys & 0xFFF) serial_print("[VIRTIO DRIVER] Virtqueue not aligned!\n");
-
-    virtq.desc  = (struct virtq_desc*)vq_buf;
-    virtq.avail = (struct virtq_avail*)((uint8_t*)virtq.desc + sizeof(struct virtq_desc) * GPU_VIRTQUEUE_SIZE);
-    virtq.used  = (struct virtq_used*)ALIGN_UP((uintptr_t)virtq.avail + sizeof(uint16_t) * (2 + GPU_VIRTQUEUE_SIZE), 4);
-    virtq.size  = GPU_VIRTQUEUE_SIZE;
-
-    serial_print("[VIRTIO DRIVER] Allocating...\n");
-    virt_addr_t vq_virt = (virt_addr_t)avmf_map_phys_to_virt(vq_phys, PAGE_SIZE, PAGE_PRESENT | PAGE_RW);
-    serial_print("[VIRTIO DRIVER] Mapping Page...\n");
-    pager_map(vq_virt, vq_phys, PAGE_PRESENT | PAGE_RW);
-    serial_print("[VIRTIO DRIVER] Doing work...\n");
-    mmio_write32(bar0 + VIRTIO_PCI_QUEUE_PFN, vq_phys >> 12);
-
-    // DRIVER_OK    
-    __asm__ volatile("sfence" ::: "memory");
-    mmio_write8(bar0 + VIRTIO_PCI_DEVICE_STATUS, mmio_read8(bar0 + VIRTIO_PCI_DEVICE_STATUS) | VIRTIO_STATUS_DRIVER_OK);
-
-    serial_print("[VIRTIO DRIVER] VirtQueue Ready!\n");
-
-    // Allocate buffers
-    phys_addr_t big_buff_phys = avmf_alloc_phys_contiguous(0x3000);
-    virt_addr_t big_buff = (virt_addr_t)avmf_map_phys_to_virt(big_buff_phys, 0x3000, PAGE_PRESENT | PAGE_RW);
-
-    phys_addr_t cmd_phys = big_buff_phys;
-    phys_addr_t resp_phys = (phys_addr_t)(big_buff_phys + 0x2000);
-    cmd_buf = (struct virtio_gpu_ctrl_hdr*)big_buff;
-    
-    serial_print("[VIRTIO DRIVER] mapped physical memory for cmd_buf!\n");
-    serial_printf("[VIRTIO GPU] cmd_buf: virt=%p phys=%llx\n", (void*)cmd_buf, cmd_phys);
-    memset(cmd_buf, 0, 0x2000);
-    
-    resp_buf = (struct virtio_gpu_resp_display_info*)(big_buff + 0x2000);
-    memset(resp_buf, 0, 0x1000);
-    
-    serial_print("[VIRTIO DRIVER] mapped physical memory for resp_buf!\n");
-    serial_printf("[VIRTIO GPU] resp_buf: virt=%p phys=%llx\n", (void*)resp_buf, resp_phys);
-
-    serial_print("[VIRTIO DRIVER] Getting Display Info...\n");
-
-    // Get display info
-    cmd_buf->type = VIRTIO_GPU_CMD_GET_DISPLAY_INFO;
-
-    virtq.desc[0].addr = (uintptr_t)cmd_phys;
-    virtq.desc[0].len = sizeof(*cmd_buf);
-    virtq.desc[0].flags = 0;
-    virtq.desc[0].next = 1;
-
-    virtq.desc[1].addr = (uintptr_t)resp_phys;
-    virtq.desc[1].len = sizeof(*resp_buf);
-    virtq.desc[1].flags = 2;
-    virtq.desc[1].next = 0;
-
-    virtq.avail->ring[0] = 0;
-    virtq.avail->idx++;
-
-    *(volatile uint16_t*)(bar0 + VIRTIO_PCI_QUEUE_NOTIFY) = 0;
-
-    uint16_t idx_before = virtq.used->idx;
-    for (volatile int timeout = 0; timeout < 100000000; timeout++) {
-        if (virtq.used->idx != idx_before)
-            break;
-    }
-    if (virtq.used->idx == idx_before)
-        serial_print("[VIRTIO DRIVER] GET_DISPLAY_INFO timed out\n");
-
-    // Set framebuffer parameters
-    if (resp_buf->displays[0].enabled) {
-        fb->w = resp_buf->displays[0].width;
-        fb->h = resp_buf->displays[0].height;
-    } else {
-        fb->w = 800;
-        fb->h = 600;
-    }
-    fb->bpp = 32;
-    fb->pitch = fb->w * 4;
-    fb->size = fb->pitch * fb->h;
-
-    serial_print("[VIRTIO DRIVER] Display info OK\n");
-
-    // Create resource
-    struct virtio_gpu_resource_create_2d* create = (void*)cmd_buf;
-    memset(create, 0, sizeof(*create));
-    create->hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_2D;
-    create->resource_id = 1;
-    create->format = 1; // B8G8R8A8_UNORM
-    create->width = fb->w;
-    create->height = fb->h;
-
-    virtq.desc[0].addr = (uintptr_t)cmd_phys;
-    virtq.desc[0].len = sizeof(*create);
-    virtq.desc[0].flags = 0;
-    virtq.desc[0].next = 1;
-
-    virtq.desc[1].addr = (uintptr_t)resp_phys;
-    virtq.desc[1].len = sizeof(*resp_buf);
-    virtq.desc[1].flags = 2;
-
-    virtq.avail->ring[virtq.avail->idx % GPU_VIRTQUEUE_SIZE] = 0;
-    virtq.avail->idx++;
-
-    *(volatile uint16_t*)(bar0 + VIRTIO_PCI_QUEUE_NOTIFY) = 0;
-
-    idx_before = virtq.used->idx;
-    for (volatile int timeout = 0; timeout < 100000000; timeout++) {
-        if (virtq.used->idx != idx_before)
-            break;
-    }
-    if (virtq.used->idx == idx_before)
-        serial_print("[VIRTIO DRIVER] create_2d timed out\n");
-    
-    serial_print("[VIRTIO DRIVER] Resources Created!\n[VIRTIO DRIVER] Attaching Framebuffer memory...\n");
-
-    // Attach framebuffer memory
-    struct virtio_gpu_resource_attach_backing* attach = (void*)cmd_buf;
-    memset(attach, 0, sizeof(*attach) + sizeof(struct virtio_gpu_mem_entry));
-    attach->hdr.type = VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING;
-    attach->resource_id = 1;
-    attach->nr_entries = 1;
-    attach->entries[0].addr = (uint64_t)(uintptr_t)fb->phys;
-    attach->entries[0].length = fb->size;
-
-    virtq.desc[0].addr = (uintptr_t)attach;
-    virtq.desc[0].len = sizeof(*attach) + sizeof(struct virtio_gpu_mem_entry);
-    virtq.desc[0].flags = 0;
-    virtq.desc[0].next = 1;
-
-    virtq.avail->ring[virtq.avail->idx % GPU_VIRTQUEUE_SIZE] = 0;
-    virtq.avail->idx++;
-
-    *(volatile uint16_t*)(bar0 + VIRTIO_PCI_QUEUE_NOTIFY) = 0;
-
-    idx_before = virtq.used->idx;
-    for (volatile int timeout = 0; timeout < 100000000; timeout++) {
-        if (virtq.used->idx != idx_before)
-            break;
-    }
-    if (virtq.used->idx == idx_before)
-        serial_print("[VIRTIO DRIVER] attach_backing timed out\n");
-
-    serial_print("[VIRTIO DRIVER] Done!\n[VIRTIO DRIVER] Flushing...\n");
-
-    virtio_flush(gpu, 0, 0, fb->w, fb->h);
-    serial_print("[VIRTIO DRIVER] Initialization done!\n");
+    // setup Queue
+    setup_queue(gpu, 0);
 }
 
 void virtio_set_mode(struct gpu_device* gpu, uint32_t w, uint32_t h, uint32_t bpp) {

@@ -1,8 +1,15 @@
 #include <inttypes.h>
 #include <asm.h>
+#include <system.h>
 
 #include <stddef.h>
 
+#include <inc/kfuncs.h>
+#include <inc/mm/pager.h>
+
+#define ALIGN_UP(x, align) (((x) + ((align) - 1)) & ~((align) - 1))
+
+// Memory and Stuff
 void* memset(void* s, int c, size_t n) {
     uint8_t* p = s;
     while (n--) {
@@ -76,3 +83,70 @@ uint32_t str_to_uint(const char* str) {
 
     return result;
 }
+
+// Allocators
+struct malloc_hdr {
+    char signature[4]; // 'AOSM'
+    uint64_t size;
+    uint64_t phys;
+    uint8_t is_free;
+    struct malloc_hdr* next;
+    struct malloc_hdr* prev;
+} __attribute__((packed));
+
+static struct malloc_hdr* heap_user_start = NULL;
+static struct malloc_hdr* heap_user_end = NULL;
+static struct malloc_hdr* heap_kernel_start = NULL;
+static struct malloc_hdr* heap_kernel_end = NULL;
+static struct malloc_hdr* heap_driver_start = NULL;
+static struct malloc_hdr* heap_driver_end = NULL;
+static struct malloc_hdr* heap_sensitive_start = NULL;
+static struct malloc_hdr* heap_sensitive_end = NULL;
+static uintptr_t heap_user_break = AOS_USER_SPACE_BASE;
+static uintptr_t heap_kernel_break = AOS_KERNEL_SPACE_BASE;
+static uintptr_t heap_driver_break = AOS_DRIVER_SPACE_BASE;
+static uintptr_t heap_sensitive_break = AOS_SENSITIVE_SPACE_BASE;
+
+static void link_alloc(struct malloc_hdr* hdr, MemoryAllocType type) {
+    struct malloc_hdr** end = &heap_user_end;
+    switch (type) {
+        case MALLOC_TYPE_USER:
+            break;
+        case MALLOC_TYPE_KERNEL:
+            end = &heap_kernel_end; break;
+        case MALLOC_TYPE_DRIVER:
+            end = &heap_driver_end; break;
+        case MALLOC_TYPE_SENSITIVE:
+            end = &heap_sensitive_end; break;
+        default: return;
+    }
+    struct malloc_hdr* cur = *end;
+    while (cur->next) {
+        cur = cur->next;
+    }
+    hdr->next = NULL;
+    hdr->prev = cur;
+    cur->next = hdr;
+    *end = hdr;
+}
+
+void* memory_ralloc(size_t size, uint64_t phys, MemoryAllocType type) { // RAW Alloc
+    // TODO: Make
+    return NULL;
+}
+
+void* memory_aalloc(size_t size, uint64_t phys, size_t alignment, MemoryAllocType type) { // ALIGNED Alloc
+    size_t total_size = size + alignment + sizeof(void*);
+    void* raw = memory_ralloc(total_size, phys, type);
+    if (!raw) return NULL;
+
+    uintptr_t addr = (uintptr_t)raw + sizeof(void*);
+    uintptr_t aligned = (addr + (alignment - 1)) & ~(alignment - 1);
+
+    return (void*)aligned;
+}
+
+void* memory_alloc(size_t size, uint64_t phys, MemoryAllocType type) { // Alloc (Aligned to ^2)
+    return memory_aalloc(size, phys, 2, type);
+}
+

@@ -38,10 +38,10 @@ void kernel_main(void) {
     // Reserve MMIO region at 0xF0000000, kernel starts at 0x100000
     avmf_init(0x1000, 512*1024*1024); // reserve memory 512MB
     serial_print("AOS++ LOADED!\n");
-    pager_init(0, 0);
+    pager_init();
 
     acpi_init();
-    if (!pcie_init()) {
+    if (pcie_init() == 0) {
         serial_print("[AOS] PCIe Initialization failed! Shutting Down!\n");
         for (;;) asm("hlt");
     }

@@ -11,7 +11,7 @@
 
 #define PCI_CLASS_MASS_STORAGE 0x01
 #define PCI_SUBCLASS_AHCI 0x06
-#define PCI_SUBCLASS_NVme 0x08
+#define PCI_SUBCLASS_NVMe 0x08
 
 #define PCI_BAR0 0x10
 #define PCI_BAR_COUNT 6
@@ -25,7 +25,7 @@ typedef struct {
     uint8_t subclass;
     uint8_t prog_if;
     uint8_t bus, slot, func;
-    uint32_t bar0;
+    uint64_t bar0;
 } pcie_device_t;
 
 typedef struct {

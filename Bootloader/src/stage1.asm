@@ -21,6 +21,34 @@ start:
     mov al, dl
     mov [boot_info], al ; Save it some known place
 
+    ; Get EBX and STORE it
+    mov ax, 0
+    mov es, ax
+    mov di, ebx_struct_addr
+    xor ebx, ebx
+    xor bp, bp
+
+.next_entry:
+    mov eax, 0xE820
+    mov edx, 0x534D4150 ; 'SMAP'
+    mov ecx, 24
+    int 0x15
+
+    jc .done_entry
+    cmp eax, 0x534D4150 ; 'SMAP'
+    jne .done_entry
+
+    test ecx, ecx
+    jz .skip_entry
+
+    add di, 24
+    inc bp
+.skip_entry:
+    test ebx, ebx
+    jnz .next_entry
+.done_entry:
+    mov [ebx_info], bp
+
     mov si, disk_read_msg
     call print_string
 
@@ -62,6 +90,8 @@ disk db 0x80 ; Default 0x80
 disk_read_msg db "Reading and Loading Stage2...", 0xa, 0xd, 0
 disk_err_msg db "Error Reading Disk!", 0xa, 0xd, 0
 boot_info equ 0x7FF0
+ebx_info equ 0x8000
+ebx_struct_addr equ 0x8004
 
 dap_s2:
     db 0x10 ; size (16 bytes)

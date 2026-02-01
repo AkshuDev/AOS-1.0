@@ -10,7 +10,7 @@ struct acpi_rsdp_descriptor {
     uint32_t rsdt_address; // 32-bit physical address of RSDT
 } __attribute__((packed));
 
-struct acpi_rsdp_descriptor_20 {
+struct acpi_rsdp_descriptor_v2 {
     struct acpi_rsdp_descriptor rsdp_descriptor;
     uint32_t length;
     uint64_t xsdt_address;
@@ -33,6 +33,11 @@ struct acpi_sdt_header {
 struct acpi_rsdt {
     struct acpi_sdt_header header;
     uint32_t entries[];
+} __attribute__((packed));
+
+struct acpi_xsdt {
+    struct acpi_sdt_header header;
+    uint64_t entries[];
 } __attribute__((packed));
 
 struct acpi_generic_address_structure {
