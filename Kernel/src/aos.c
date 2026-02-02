@@ -36,9 +36,8 @@ void kernel_main(void) {
     serial_init();
     idt_init();
     // Reserve MMIO region at 0xF0000000, kernel starts at 0x100000
-    avmf_init(0x1000, 512*1024*1024); // reserve memory 512MB
     serial_print("AOS++ LOADED!\n");
-    pager_init();
+    pager_init(); // Inits AVMF Too
 
     acpi_init();
     if (pcie_init() == 0) {

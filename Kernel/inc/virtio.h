@@ -40,6 +40,10 @@
 #define VIRTIO_STATUS_DEVICE_NEEDS_RESET 0x40
 #define VIRTIO_STATUS_FAILED 0x80
 
+#define VIRTQ_DESC_F_NEXT 1
+#define VIRTQ_DESC_F_WRITE 2
+#define VIRTQ_DESC_F_INDIRECT 4
+
 struct virtio_gpu_ctrl_hdr {
     uint32_t type;
     uint32_t flags;

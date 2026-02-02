@@ -32,12 +32,7 @@ static struct page_table* kernel_pml4 = (struct page_table*)NULL;
 
 void aospp_start() {
     serial_print("Searching for GPU...\n");
-    uint64_t fb_physaddr = gpu_get_framebuffer_and_info(&gpu_framebuffer, &pcie_gpu_device, &gpu_device);
-
-    if (fb_physaddr == 0) {
-        serial_print("Failed to get framebuffer\n");
-        return;
-    }
+    uint64_t fb_physaddr = gpu_get_framebuffer_and_info(&gpu_framebuffer, &pcie_gpu_device, &gpu_device); // FB is useless, we query device directly, this is for legacy
 
     serial_print("Initializing GPU Driver...\n");
     if (gpu_device.init != NULL) gpu_device.init(&gpu_device);
@@ -46,9 +41,8 @@ void aospp_start() {
 
     fb_size = gpu_framebuffer.size;
 
-    // Map framebuffer to high-half virtual address
-    fb_addr = AOS_KERNEL_SPACE_BASE;
-    pager_map_range(fb_addr, fb_physaddr, fb_size, PAGE_PRESENT | PAGE_RW);
+    // Map framebuffer
+    fb_addr = avmf_alloc(fb_size, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &fb_physaddr);
 
     fb_init((uint32_t*)fb_addr, gpu_framebuffer.w, gpu_framebuffer.h, gpu_framebuffer.pitch, 32);
 
