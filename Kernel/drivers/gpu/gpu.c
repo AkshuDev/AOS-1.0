@@ -1,14 +1,14 @@
 #include <inttypes.h>
 #include <asm.h>
 
-#include <inc/pcie.h>
-#include <inc/gpu.h>
-#include <inc/io.h>
+#include <inc/core/pcie.h>
+#include <inc/drivers/core/gpu.h>
+#include <inc/drivers/io/io.h>
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
 
-#include <inc/vmware.h>
-#include <inc/virtio.h>
+#include <inc/drivers/gpu/vmware.h>
+#include <inc/drivers/gpu/virtio.h>
 
 void svga_write(uintptr_t mmio_base, uint32_t index, uint32_t value, uint32_t svga_index_port, uint32_t svga_value_port) {
     *(volatile uint32_t*)(mmio_base + svga_index_port * 4) = index;
@@ -55,9 +55,9 @@ void get_framebuffer_info_vmware(PCIe_FB* fb, pcie_device_t* device, gpu_device_
     gpu->name = "VMware SVGA II";
     gpu->pcie_device = device;
     gpu->framebuffer = fb;
-    gpu->init = vmware_init;
+    gpu->init = NULL;
     gpu->swap_buffers = NULL;
-    gpu->set_mode = vmware_set_mode;
+    gpu->set_mode = NULL;
     gpu->flush = NULL;
 }
 
@@ -82,6 +82,7 @@ void get_framebuffer_info_virtio(PCIe_FB* fb, pcie_device_t* device, gpu_device_
     gpu->pcie_device = device;
     gpu->framebuffer = fb;
     gpu->init = virtio_init;
+    gpu->init_resources = virtio_init_resources;
     gpu->set_mode = virtio_set_mode;
     gpu->swap_buffers = NULL;
     gpu->flush = virtio_flush;

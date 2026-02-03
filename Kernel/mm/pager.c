@@ -2,7 +2,7 @@
 #include <system.h>
 #include <inc/mm/pager.h>
 #include <inc/mm/avmf.h>
-#include <inc/io.h>
+#include <inc/drivers/io/io.h>
 
 #define E820_TYPE_RAM 1
 #define E820_TYPE_RESERVED 2
@@ -34,7 +34,7 @@ static inline void* pager_phys_to_virt(uint64_t phys) {
     return (void*)(phys + AOS_DIRECT_MAP_BASE);
 }
 
-static struct page_table* alloc_page_table(void) {
+static struct page_table* alloc_page_table(uint64_t* phys_out) {
     uint64_t phys = avmf_alloc_phys_contiguous(PAGE_SIZE);
     uint64_t virt = avmf_alloc_virt(PAGE_SIZE, MALLOC_TYPE_SENSITIVE);
 
@@ -44,11 +44,14 @@ static struct page_table* alloc_page_table(void) {
     };
     avmf_alloc_region(virt, phys, PAGE_SIZE, AVMF_FLAG_PRESENT | AVMF_FLAG_WRITEABLE);
 
-    struct page_table* tbl = (struct page_table*)phys;
+    volatile struct page_table* tbl = NULL;
+    tbl = (volatile struct page_table*)phys;
  
     for (int i = 0; i < 512; i++) {
         tbl->entries[i] = 0;
     }
+
+    *phys_out = phys;
     
     return tbl;
 }
@@ -108,7 +111,8 @@ void pager_init(void) {
     avmf_init((uint64_t*)base_phys, (uint64_t*)limit_phys, phys_idx);
     serial_print("[PAGER] Initialized AVMF\n");
 
-    kernel_pml4 = alloc_page_table();
+    uint64_t kernel_pml4_phys = 0;
+    kernel_pml4 = alloc_page_table(&kernel_pml4_phys);
     serial_print("[PAGER] Allocated Virtual Memory for Page Tables\n");
     pager_map_range(AOS_DIRECT_MAP_BASE, 0x0, max_phys_addr, PAGE_PRESENT | PAGE_RW);
     serial_print("[PAGER] Mapped Direct Map\n");
@@ -133,25 +137,15 @@ struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags)
     struct page_table* pdpt, *pd, *pt;
 
     if (!(pml4->entries[idx_pml4] & PAGE_PRESENT)) {
-        pdpt = alloc_page_table();
-        uint64_t pdpt_phys = (uint64_t)pdpt; // As pager init is done during bootloader page map which is a simple identity map, doing avmf_virt_to_phys will fail, and this is much simpler
-        if (pager_ready) {
-            pdpt_phys = avmf_virt_to_phys((uint64_t)pdpt);
-            if (!pdpt_phys)
-                pdpt_phys = (uint64_t)pdpt;
-        }
+        uint64_t pdpt_phys = 0;
+        pdpt = alloc_page_table(&pdpt_phys);
         pml4->entries[idx_pml4] = pdpt_phys | PAGE_PRESENT | PAGE_RW;
     } else {
         pdpt = (struct page_table*)pager_phys_to_virt(pml4->entries[idx_pml4] & ~0xFFFULL);
     }
     if (!(pdpt->entries[idx_pdpt] & PAGE_PRESENT)) {
-        pd = alloc_page_table();
-        uint64_t pd_phys = (uint64_t)pd;
-        if (pager_ready) {
-            pd_phys = avmf_virt_to_phys((uint64_t)pd);
-            if (!pd_phys)
-                pd_phys = (uint64_t)pd;
-        }
+        uint64_t pd_phys = 0;
+        pd = alloc_page_table(&pd_phys);
         pdpt->entries[idx_pdpt] = pd_phys | PAGE_PRESENT | PAGE_RW;
     } else {
         pd = (struct page_table*)pager_phys_to_virt(pdpt->entries[idx_pdpt] & ~0xFFFULL);
@@ -161,13 +155,8 @@ struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags)
         pd->entries[idx_pd] = (phys & ~0x1FFFFFULL) | (flags & 0xFFFULL) | PAGE_PRESENT;
     } else {
         if (!(pd->entries[idx_pd] & PAGE_PRESENT)) {
-            pt = alloc_page_table();
-            uint64_t pt_phys = (uint64_t)pt;
-            if (pager_ready) {
-                pt_phys = avmf_virt_to_phys((uint64_t)pt);
-                if (!pt_phys)
-                    pt_phys = (uint64_t)pt;
-                }
+            uint64_t pt_phys = 0;
+            pt = alloc_page_table(&pt_phys);
             pd->entries[idx_pd] = pt_phys | PAGE_PRESENT | PAGE_RW;
         } else {
             pt = (struct page_table*)pager_phys_to_virt(pd->entries[idx_pd] & ~0xFFFULL);

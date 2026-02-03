@@ -1,11 +1,11 @@
 #include <system.h>
 #include <inttypes.h>
 
-#include <inc/kfuncs.h>
-#include <inc/acpi.h>
-#include <inc/idt.h>
-#include <inc/io.h>
-#include <inc/pcie.h>
+#include <inc/core/kfuncs.h>
+#include <inc/core/acpi.h>
+#include <inc/core/idt.h>
+#include <inc/drivers/io/io.h>
+#include <inc/core/pcie.h>
 
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>

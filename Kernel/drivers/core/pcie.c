@@ -2,9 +2,9 @@
 #include <inttypes.h>
 #include <system.h>
 
-#include <inc/pcie.h>
-#include <inc/acpi.h>
-#include <inc/io.h>
+#include <inc/core/pcie.h>
+#include <inc/core/acpi.h>
+#include <inc/drivers/io/io.h>
 
 #include <inc/mm/pager.h>
 

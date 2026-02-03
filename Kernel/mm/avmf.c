@@ -3,7 +3,7 @@
 
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
-#include <inc/io.h>
+#include <inc/drivers/io/io.h>
 
 #include <stddef.h>
 

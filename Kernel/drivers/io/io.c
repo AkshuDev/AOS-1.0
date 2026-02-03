@@ -3,7 +3,7 @@
 
 #include <stdarg.h>
 
-#include <inc/io.h>
+#include <inc/drivers/io/io.h>
 
 #define SERIAL_PORT 0x3F8
 

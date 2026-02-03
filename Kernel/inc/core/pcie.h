@@ -30,6 +30,7 @@ typedef struct {
 
 typedef struct {
     uint64_t phys;
+    uint64_t virt;
     uint64_t mmio_base;
     uint32_t w;
     uint32_t h;

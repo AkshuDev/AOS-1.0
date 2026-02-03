@@ -1,7 +1,7 @@
 #include <inttypes.h>
 #include <asm.h>
 
-#include <inc/framebuffer.h>
+#include <inc/drivers/core/framebuffer.h>
 
 extern uint8_t font8x16[256][16];
 static FB_Info_t FramebufferInfo;

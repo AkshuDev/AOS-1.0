@@ -1,9 +1,9 @@
 #include <asm.h>
 #include <system.h>
 
-#include <inc/acpi.h>
-#include <inc/kfuncs.h>
-#include <inc/io.h>
+#include <inc/core/acpi.h>
+#include <inc/core/kfuncs.h>
+#include <inc/drivers/io/io.h>
 
 #define EBDA_SEG_PTR 0x40E
 

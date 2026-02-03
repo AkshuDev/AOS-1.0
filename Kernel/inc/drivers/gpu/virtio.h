@@ -2,28 +2,62 @@
 
 #include <inttypes.h>
 #include <asm.h>
-#include <inc/pcie.h>
-#include <inc/gpu.h>
+#include <inc/core/pcie.h>
+#include <inc/drivers/core/gpu.h>
 
-#define VIRTIO_PCI_DEVICE_FEATURES 0x00
-#define VIRTIO_PCI_DRIVER_FEATURES 0x04
-#define VIRTIO_PCI_HOST_FEATURES 0x00
-#define VIRTIO_PCI_GUEST_FEATURES 0x04
-#define VIRTIO_PCI_QUEUE_PFN 0x08
-#define VIRTIO_PCI_QUEUE_NUM 0x0C
-#define VIRTIO_PCI_QUEUE_SEL 0x0E
-#define VIRTIO_PCI_QUEUE_NOTIFY 0x10
-#define VIRTIO_PCI_QUEUE_READY 0x44
-#define VIRTIO_PCI_DEVICE_STATUS 0x12
-#define VIRTIO_PCI_ISR 0x13
-#define VIRTIO_PCI_CONFIG 0x14
+// Credits: https://github.com/torvalds/linux/blob/master/include/uapi/linux/virtio_gpu.h (For the enum structure)
+enum virtio_gpu_ctrl_type {
+	VIRTIO_GPU_UNDEFINED = 0,
 
-#define VIRTIO_GPU_CMD_GET_DISPLAY_INFO 0x0100
-#define VIRTIO_GPU_CMD_RESOURCE_CREATE_2D 0x0101
-#define VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING 0x0102
-#define VIRTIO_GPU_CMD_SET_SCANOUT 0x0103
-#define VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D 0x0105
-#define VIRTIO_GPU_CMD_RESOURCE_FLUSH 0x0106
+	/* 2d commands */
+	VIRTIO_GPU_CMD_GET_DISPLAY_INFO = 0x0100,
+	VIRTIO_GPU_CMD_RESOURCE_CREATE_2D,
+	VIRTIO_GPU_CMD_RESOURCE_UNREF,
+	VIRTIO_GPU_CMD_SET_SCANOUT,
+	VIRTIO_GPU_CMD_RESOURCE_FLUSH,
+	VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D,
+	VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING,
+	VIRTIO_GPU_CMD_RESOURCE_DETACH_BACKING,
+	VIRTIO_GPU_CMD_GET_CAPSET_INFO,
+	VIRTIO_GPU_CMD_GET_CAPSET,
+	VIRTIO_GPU_CMD_GET_EDID,
+	VIRTIO_GPU_CMD_RESOURCE_ASSIGN_UUID,
+	VIRTIO_GPU_CMD_RESOURCE_CREATE_BLOB,
+	VIRTIO_GPU_CMD_SET_SCANOUT_BLOB,
+
+	/* 3d commands */
+	VIRTIO_GPU_CMD_CTX_CREATE = 0x0200,
+	VIRTIO_GPU_CMD_CTX_DESTROY,
+	VIRTIO_GPU_CMD_CTX_ATTACH_RESOURCE,
+	VIRTIO_GPU_CMD_CTX_DETACH_RESOURCE,
+	VIRTIO_GPU_CMD_RESOURCE_CREATE_3D,
+	VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D,
+	VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D,
+	VIRTIO_GPU_CMD_SUBMIT_3D,
+	VIRTIO_GPU_CMD_RESOURCE_MAP_BLOB,
+	VIRTIO_GPU_CMD_RESOURCE_UNMAP_BLOB,
+
+	/* cursor commands */
+	VIRTIO_GPU_CMD_UPDATE_CURSOR = 0x0300,
+	VIRTIO_GPU_CMD_MOVE_CURSOR,
+
+	/* success responses */
+	VIRTIO_GPU_RESP_OK_NODATA = 0x1100,
+	VIRTIO_GPU_RESP_OK_DISPLAY_INFO,
+	VIRTIO_GPU_RESP_OK_CAPSET_INFO,
+	VIRTIO_GPU_RESP_OK_CAPSET,
+	VIRTIO_GPU_RESP_OK_EDID,
+	VIRTIO_GPU_RESP_OK_RESOURCE_UUID,
+	VIRTIO_GPU_RESP_OK_MAP_INFO,
+
+	/* error responses */
+	VIRTIO_GPU_RESP_ERR_UNSPEC = 0x1200,
+	VIRTIO_GPU_RESP_ERR_OUT_OF_MEMORY,
+	VIRTIO_GPU_RESP_ERR_INVALID_SCANOUT_ID,
+	VIRTIO_GPU_RESP_ERR_INVALID_RESOURCE_ID,
+	VIRTIO_GPU_RESP_ERR_INVALID_CONTEXT_ID,
+	VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER,
+};
 
 #define VIRTIO_GPU_RESP_OK_NODATA 0x1100
 
@@ -44,22 +78,31 @@
 #define VIRTQ_DESC_F_WRITE 2
 #define VIRTQ_DESC_F_INDIRECT 4
 
+#define VIRTIO_GPU_MAX_SCANOUTS 16
+
+struct virtio_rect {
+    uint32_t x;
+    uint32_t y;
+    uint32_t width;
+    uint32_t height;
+} __attribute__((packed));
+
 struct virtio_gpu_ctrl_hdr {
     uint32_t type;
     uint32_t flags;
     uint64_t fence_id;
     uint32_t ctx_id;
-    uint32_t padding;
+    uint8_t ring_idx;
+    uint8_t padding[3];
 } __attribute__((packed));
 
 struct virtio_gpu_resp_display_info {
     struct virtio_gpu_ctrl_hdr hdr;
     struct virtio_gpu_display_one {
+        struct virtio_rect r;
         uint32_t enabled;
-        uint32_t width;
-        uint32_t height;
         uint32_t flags;
-    } displays[16];
+    } displays[VIRTIO_GPU_MAX_SCANOUTS];
 } __attribute__((packed));
 
 struct virtq_desc {
@@ -95,6 +138,12 @@ struct virtqueue {
     uint16_t last_used_idx;
 };
 
+struct virtio_gpu_resource_unref {
+    struct virtio_gpu_ctrl_hdr hdr;
+    uint32_t resource_id;
+    uint32_t padding;
+} __attribute__((packed));
+
 struct virtio_gpu_resource_create_2d {
     struct virtio_gpu_ctrl_hdr hdr;
     uint32_t resource_id;
@@ -113,29 +162,34 @@ struct virtio_gpu_resource_attach_backing {
     struct virtio_gpu_ctrl_hdr hdr;
     uint32_t resource_id;
     uint32_t nr_entries;
-    struct virtio_gpu_mem_entry entries[1]; // can be >1
 } __attribute__((packed));
+
+struct virtio_gpu_resource_detach_backing {
+    struct virtio_gpu_ctrl_hdr hdr;
+    uint32_t resource_id;
+    uint32_t padding;
+} __attribute__((used));
 
 struct virtio_gpu_set_scanout {
     struct virtio_gpu_ctrl_hdr hdr;
+    struct virtio_rect r;
     uint32_t scanout_id;
     uint32_t resource_id;
-    uint32_t x, y;
-    uint32_t width, height;
 } __attribute__((packed));
 
 struct virtio_gpu_transfer_to_host_2d {
     struct virtio_gpu_ctrl_hdr hdr;
-    uint32_t resource_id;
-    uint32_t rect_x, rect_y;
-    uint32_t rect_w, rect_h;
+    struct virtio_rect r;
     uint64_t offset;
+    uint32_t resource_id;
+    uint32_t padding;
 } __attribute__((packed));
 
 struct virtio_gpu_resource_flush {
     struct virtio_gpu_ctrl_hdr hdr;
+    struct virtio_rect r;
     uint32_t resource_id;
-    uint32_t x, y, width, height;
+    uint32_t padding;
 } __attribute__((packed));
 
 struct virtio_cap {
@@ -166,5 +220,6 @@ struct virtio_common_cfg {
 } __attribute__((packed));
 
 void virtio_init(struct gpu_device* gpu) __attribute__((used));
+void virtio_init_resources(struct gpu_device* gpu) __attribute__((used));
 void virtio_flush(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, uint32_t h) __attribute__((used));
 void virtio_set_mode(struct gpu_device* gpu, uint32_t w, uint32_t h, uint32_t bpp) __attribute__((used));

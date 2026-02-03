@@ -4,7 +4,7 @@
 
 #include <stddef.h>
 
-#include <inc/kfuncs.h>
+#include <inc/core/kfuncs.h>
 #include <inc/mm/pager.h>
 
 #define ALIGN_UP(x, align) (((x) + ((align) - 1)) & ~((align) - 1))

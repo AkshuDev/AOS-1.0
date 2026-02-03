@@ -20,7 +20,7 @@ KERNEL_ELF := $(BUILD_DIR)/aos.elf
 KERNEL_BIN := $(BIN_DIR)/aos.bin
 
 DRIVERS_DIR := drivers
-DRIVERS := $(wildcard $(DRIVERS_DIR)/*.c)
+DRIVERS := $(shell find $(DRIVERS_DIR)/ -name '*.c')
 DRIVERS_O := $(patsubst $(DRIVERS_DIR)/%.c,$(BUILD_DIR)/%.o,$(DRIVERS))
 
 MEMORY_DIR := mm
@@ -50,6 +50,7 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 
 $(BUILD_DIR)/%.o: $(DRIVERS_DIR)/%.c
 	@echo "Compiling Drivers..."
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/%.o: $(MEMORY_DIR)/%.c

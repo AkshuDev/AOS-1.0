@@ -5,10 +5,10 @@
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
 
-#include <inc/virtio.h>
-#include <inc/io.h>
-#include <inc/gpu.h>
-#include <inc/pcie.h>
+#include <inc/drivers/gpu/virtio.h>
+#include <inc/drivers/io/io.h>
+#include <inc/drivers/core/gpu.h>
+#include <inc/core/pcie.h>
 
 #define ALIGN_UP(x, align) (((x) + ((align) - 1)) & ~((align) - 1))
 
@@ -131,34 +131,31 @@ static void setup_queue(gpu_device_t* gpu, uint16_t q_idx) {
 
 void virtio_flush(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
     serial_print("[VIRTIO] Flushing...\n");
+    struct virtio_gpu_transfer_to_host_2d* t = (struct virtio_gpu_transfer_to_host_2d*)cmd_buf;
+    t->hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D;
+    t->r.x = x;
+    t->r.y = y;
+    t->r.width = w;
+    t->r.height = h;
+    t->offset = 0;
+    t->padding = 0;
+    t->resource_id = 1;
+    virtio_submit_sync(t, cmd_buf_phys, sizeof(*t), resp_buf, resp_buf_phys, sizeof(struct virtio_gpu_ctrl_hdr));
+
     struct virtio_gpu_resource_flush* f = (struct virtio_gpu_resource_flush*)cmd_buf;
     f->hdr.type = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
-    f->x = x;
-    f->y = y;
-    f->width = w;
-    f->height = h;
+    f->r.x = x;
+    f->r.y = y;
+    f->r.width = w;
+    f->r.height = h;
     f->resource_id = 1;
+    f->padding = 0;
 
-    uint16_t head = virtq.free_head;
-    // Map to physical address so the GPU can see it
-    virtq.desc[head].addr = avmf_virt_to_phys((uintptr_t)f);
-    virtq.desc[head].len = sizeof(*f);
-    virtq.desc[head].flags = 0; 
-
-    virtq.avail->ring[virtq.avail->idx % virtq.queue_size] = head;
-
-    // Memory fence to ensure the device sees the ring update before the notification
-    __asm__ volatile("" : : : "memory"); 
- 
-    virtq.avail->idx++;
-
-    // Calculate notification address for Queue 0
-    common_cfg->queue_select = 0;
-    uintptr_t db = notify_base + (common_cfg->queue_notify_off * notify_multiplier);
-    mmio_write32(db, 0);
+    virtio_submit_sync(f, cmd_buf_phys, sizeof(*f), resp_buf, resp_buf_phys, sizeof(struct virtio_gpu_ctrl_hdr));
+    serial_print("[VIRTIO] Flushed!\n");
 }
 
-// Total hours wasted on virtio: 17 (LET ME COOK)
+// Total hours wasted on virtio: 18 (I DID COOK)
 void virtio_init(struct gpu_device* gpu) {
     pcie_device_t* dev = gpu->pcie_device;
     PCIe_FB* fb = gpu->framebuffer;
@@ -179,6 +176,7 @@ void virtio_init(struct gpu_device* gpu) {
 
     // RESET
     common_cfg->device_status = 0;
+    while (common_cfg->device_status != 0) { __asm__ volatile("pause"); }
     common_cfg->device_status |= VIRTIO_STATUS_ACKNOWLEDGE;
     common_cfg->device_status |= VIRTIO_STATUS_DRIVER;
 
@@ -208,17 +206,30 @@ void virtio_init(struct gpu_device* gpu) {
     // Get fb info
     struct virtio_gpu_ctrl_hdr* get_info = (struct virtio_gpu_ctrl_hdr*)cmd_buf;
     get_info->type = VIRTIO_GPU_CMD_GET_DISPLAY_INFO;
-    virtio_submit_sync(get_info, cmd_buf_phys, sizeof(*get_info), resp_buf, resp_buf_phys, sizeof(*resp_buf));
+    virtio_submit_sync(get_info, cmd_buf_phys, sizeof(*get_info), resp_buf, resp_buf_phys, sizeof(struct virtio_gpu_resp_display_info));
     struct virtio_gpu_resp_display_info* display = (struct virtio_gpu_resp_display_info*)resp_buf;
     if (display->displays[0].enabled) {
-        gpu->framebuffer->w = display->displays[0].width;
-        gpu->framebuffer->h = display->displays[0].height;
+        gpu->framebuffer->w = display->displays[0].r.width;
+        gpu->framebuffer->h = display->displays[0].r.height;
     } else {
         // Fallback if the device doesn't have a preference
         gpu->framebuffer->w = 1024;
         gpu->framebuffer->h = 768;
     }
-    
+    gpu->framebuffer->bpp = 32;
+    gpu->framebuffer->pitch = gpu->framebuffer->w * (gpu->framebuffer->bpp / 8);
+    gpu->framebuffer->size = gpu->framebuffer->pitch * gpu->framebuffer->h;
+
+    serial_print("[VIRTIO] Initialization completed!\n");
+}
+
+void virtio_init_resources(struct gpu_device* gpu) {
+    pcie_device_t* dev = gpu->pcie_device;
+    PCIe_FB* fb = gpu->framebuffer;
+    uintptr_t bar0 = dev->bar0 & ~0xF;
+
+    serial_print("[VIRTIO DRIVER] Initializing Resources...\n");
+
     // make resources
     struct virtio_gpu_resource_create_2d* create = (struct virtio_gpu_resource_create_2d*)cmd_buf;
     create->hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_2D;
@@ -226,26 +237,28 @@ void virtio_init(struct gpu_device* gpu) {
     create->format = 1; // B8G8R8A8_UNORM
     create->width = fb->w;
     create->height = fb->h;
-    virtio_submit_sync(create, cmd_buf_phys, sizeof(*create), resp_buf, resp_buf_phys, sizeof(*resp_buf));
+    virtio_submit_sync(create, cmd_buf_phys, sizeof(*create), resp_buf, resp_buf_phys, sizeof(struct virtio_gpu_ctrl_hdr));
 
     struct virtio_gpu_resource_attach_backing* attach = (struct virtio_gpu_resource_attach_backing*)cmd_buf;
+    attach->hdr.type = VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING;
     attach->resource_id = 1;
     attach->nr_entries = 1;
     struct virtio_gpu_mem_entry* entry = (struct virtio_gpu_mem_entry*)((uintptr_t)attach + sizeof(*attach));
     entry->addr = fb->phys;
     entry->length = fb->size;
-    virtio_submit_sync(attach, cmd_buf_phys, sizeof(*attach) + sizeof(*entry), resp_buf, resp_buf_phys, sizeof(*resp_buf));
+    virtio_submit_sync(attach, cmd_buf_phys, sizeof(*attach) + sizeof(*entry), resp_buf, resp_buf_phys, sizeof(struct virtio_gpu_ctrl_hdr));
 
     struct virtio_gpu_set_scanout* scanout = (struct virtio_gpu_set_scanout*)cmd_buf;
+    scanout->hdr.type = VIRTIO_GPU_CMD_SET_SCANOUT;
     scanout->scanout_id = 0;
     scanout->resource_id = 1;
-    scanout->x = 0;
-    scanout->y = 0;
-    scanout->width = fb->w;
-    scanout->height = fb->h;
-    virtio_submit_sync(scanout, cmd_buf_phys, sizeof(*scanout), resp_buf, resp_buf_phys, sizeof(*resp_buf));
+    scanout->r.x = 0;
+    scanout->r.y = 0;
+    scanout->r.width = fb->w;
+    scanout->r.height = fb->h;
+    virtio_submit_sync(scanout, cmd_buf_phys, sizeof(*scanout), resp_buf, resp_buf_phys, sizeof(struct virtio_gpu_ctrl_hdr));
 
-    serial_print("[VIRTIO] Initialization completed!\n");
+    serial_print("[VIRTIO] Initialization of resources completed!\n");
 }
 
 void virtio_set_mode(struct gpu_device* gpu, uint32_t w, uint32_t h, uint32_t bpp) {

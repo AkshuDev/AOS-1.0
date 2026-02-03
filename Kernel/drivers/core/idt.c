@@ -1,8 +1,8 @@
 #include <inttypes.h>
 #include <asm.h>
 
-#include <inc/idt.h>
-#include <inc/kexceptions.h>
+#include <inc/core/idt.h>
+#include <inc/core/kexceptions.h>
 
 extern void aos_system_exception_asm_0(void);
 extern void aos_system_exception_asm_1(void);

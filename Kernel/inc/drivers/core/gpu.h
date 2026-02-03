@@ -2,7 +2,7 @@
 
 #include <inttypes.h>
 #include <asm.h>
-#include <inc/pcie.h>
+#include <inc/core/pcie.h>
 
 #define Bochs_VENDORID 0x1234
 #define VMware_VENDORID 0x15AD
@@ -19,6 +19,7 @@ typedef struct gpu_device {
 
     // Function pointers
     void (*init)(struct gpu_device* gpu);
+    void (*init_resources)(struct gpu_device* gpu);
     void (*set_mode)(struct gpu_device* gpu, uint32_t width, uint32_t height, uint32_t bpp);
     void (*swap_buffers)(struct gpu_device* gpu);
     void (*flush)(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, uint32_t h);

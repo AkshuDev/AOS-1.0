@@ -1,9 +1,9 @@
-#include <inc/kexceptions.h>
+#include <inc/core/kexceptions.h>
 
 #include <inttypes.h>
 #include <asm.h>
 
-#include <inc/io.h>
+#include <inc/drivers/io/io.h>
 
 static const char *exception_names[] = {
     "Divide-by-Zero (#DE)",
