@@ -80,6 +80,13 @@ enum virtio_gpu_ctrl_type {
 
 #define VIRTIO_GPU_MAX_SCANOUTS 16
 
+#define VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM 1
+#define VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM 2
+#define VIRTIO_GPU_FORMAT_A8R8G8B8_UNORM 3
+#define VIRTIO_GPU_FORMAT_X8R8G8B8_UNORM 4
+#define VIRTIO_GPU_FORMAT_R8G8B8A8_UNORM 67
+#define VIRTIO_GPU_FORMAT_A8B8G8R8_UNORM 121
+
 struct virtio_rect {
     uint32_t x;
     uint32_t y;
@@ -220,6 +227,6 @@ struct virtio_common_cfg {
 } __attribute__((packed));
 
 void virtio_init(struct gpu_device* gpu) __attribute__((used));
-void virtio_init_resources(struct gpu_device* gpu) __attribute__((used));
-void virtio_flush(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, uint32_t h) __attribute__((used));
+void virtio_init_resources(struct gpu_device* gpu, int resource_id) __attribute__((used));
+void virtio_flush(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, uint32_t h, int resource_id) __attribute__((used));
 void virtio_set_mode(struct gpu_device* gpu, uint32_t w, uint32_t h, uint32_t bpp) __attribute__((used));

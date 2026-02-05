@@ -129,17 +129,18 @@ static void setup_queue(gpu_device_t* gpu, uint16_t q_idx) {
     common_cfg->queue_enable = 1;
 }
 
-void virtio_flush(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
+void virtio_flush(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, uint32_t h, int resource_id) {
     serial_print("[VIRTIO] Flushing...\n");
+    uint64_t offset = (uint64_t)y * gpu->framebuffer->pitch + (uint64_t)x * (gpu->framebuffer->bpp / 8);
     struct virtio_gpu_transfer_to_host_2d* t = (struct virtio_gpu_transfer_to_host_2d*)cmd_buf;
     t->hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D;
     t->r.x = x;
     t->r.y = y;
     t->r.width = w;
     t->r.height = h;
-    t->offset = 0;
+    t->offset = offset;
     t->padding = 0;
-    t->resource_id = 1;
+    t->resource_id = resource_id;
     virtio_submit_sync(t, cmd_buf_phys, sizeof(*t), resp_buf, resp_buf_phys, sizeof(struct virtio_gpu_ctrl_hdr));
 
     struct virtio_gpu_resource_flush* f = (struct virtio_gpu_resource_flush*)cmd_buf;
@@ -148,7 +149,7 @@ void virtio_flush(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, ui
     f->r.y = y;
     f->r.width = w;
     f->r.height = h;
-    f->resource_id = 1;
+    f->resource_id = resource_id;
     f->padding = 0;
 
     virtio_submit_sync(f, cmd_buf_phys, sizeof(*f), resp_buf, resp_buf_phys, sizeof(struct virtio_gpu_ctrl_hdr));
@@ -223,7 +224,7 @@ void virtio_init(struct gpu_device* gpu) {
     serial_print("[VIRTIO] Initialization completed!\n");
 }
 
-void virtio_init_resources(struct gpu_device* gpu) {
+void virtio_init_resources(struct gpu_device* gpu, int id) {
     pcie_device_t* dev = gpu->pcie_device;
     PCIe_FB* fb = gpu->framebuffer;
     uintptr_t bar0 = dev->bar0 & ~0xF;
@@ -233,15 +234,15 @@ void virtio_init_resources(struct gpu_device* gpu) {
     // make resources
     struct virtio_gpu_resource_create_2d* create = (struct virtio_gpu_resource_create_2d*)cmd_buf;
     create->hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_2D;
-    create->resource_id = 1;
-    create->format = 1; // B8G8R8A8_UNORM
+    create->resource_id = id;
+    create->format = VIRTIO_GPU_FORMAT_A8B8G8R8_UNORM;
     create->width = fb->w;
     create->height = fb->h;
     virtio_submit_sync(create, cmd_buf_phys, sizeof(*create), resp_buf, resp_buf_phys, sizeof(struct virtio_gpu_ctrl_hdr));
 
     struct virtio_gpu_resource_attach_backing* attach = (struct virtio_gpu_resource_attach_backing*)cmd_buf;
     attach->hdr.type = VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING;
-    attach->resource_id = 1;
+    attach->resource_id = id;
     attach->nr_entries = 1;
     struct virtio_gpu_mem_entry* entry = (struct virtio_gpu_mem_entry*)((uintptr_t)attach + sizeof(*attach));
     entry->addr = fb->phys;
@@ -251,7 +252,7 @@ void virtio_init_resources(struct gpu_device* gpu) {
     struct virtio_gpu_set_scanout* scanout = (struct virtio_gpu_set_scanout*)cmd_buf;
     scanout->hdr.type = VIRTIO_GPU_CMD_SET_SCANOUT;
     scanout->scanout_id = 0;
-    scanout->resource_id = 1;
+    scanout->resource_id = id;
     scanout->r.x = 0;
     scanout->r.y = 0;
     scanout->r.width = fb->w;
