@@ -14,8 +14,8 @@ static int mcfg_num_segs = 0;
 uint8_t pcie_init() {
     mcfg_table = acpi_get_mcfg();
     if (mcfg_table == NULL) {
-        serial_print("[PCIE] Did not get MCFG Table!\n");
-        return 0;
+        serial_print("[PCIE] Did not get MCFG Table! Using PCI\n");
+        return 1;
     }
     mcfg_num_segs = (mcfg_table->header.length - sizeof(struct acpi_mcfg) - 8) / sizeof(struct acpi_mcfg_entry);
     for (int i = 0; i < mcfg_num_segs; i++) {

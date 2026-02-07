@@ -72,6 +72,8 @@ void pyrion_viewport(struct pyrion_ctx* ctx, struct pyrion_rect* viewport) {
     ctx->fb_cursor.y = 0;
     ctx->fb_cursor.fg_color = 0x000000FF;
     ctx->fb_cursor.bg_color = viewport->color;
+
+    ctx->viewport = *viewport;
 }
 
 void pyrion_flush(struct pyrion_ctx* ctx) {
@@ -92,7 +94,6 @@ void pyrion_flush(struct pyrion_ctx* ctx) {
     uint8_t* src = (uint8_t*)ctx->fb_info.addr;
     uint8_t* dest = (uint8_t*)(gdevice->framebuffer->virt);
     dest += (viewport->y * gdisplay_info.pitch) + (viewport->x * bpp);
-    
     for (uint32_t i = 0; i < viewport->height; i++) {
         memcpy(dest, src, viewport->width * bpp);
         src += ctx->fb_info.pitch;
