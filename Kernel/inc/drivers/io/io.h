@@ -49,4 +49,5 @@ void vmem_printf(struct VMemDesign* design, const char* fmt, ...) __attribute__(
 int ata_read_sectors(struct ATA_DP* dp, void* buffer, uint8_t drive) __attribute__((used));
 int ata_write_sectors(struct ATA_DP* dp, const void* buffer, uint8_t drive) __attribute__((used));
 
+int8_t ps2_read_scan(void) __attribute__((used));
 void ps2_read_line(char* buf, int max_len, struct VMemDesign* design) __attribute__((used));

@@ -130,7 +130,6 @@ static void setup_queue(gpu_device_t* gpu, uint16_t q_idx) {
 }
 
 void virtio_flush(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, uint32_t h, int resource_id) {
-    serial_print("[VIRTIO] Flushing...\n");
     uint64_t offset = (uint64_t)y * gpu->framebuffer->pitch + (uint64_t)x * (gpu->framebuffer->bpp / 8);
     struct virtio_gpu_transfer_to_host_2d* t = (struct virtio_gpu_transfer_to_host_2d*)cmd_buf;
     t->hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D;
@@ -153,7 +152,6 @@ void virtio_flush(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, ui
     f->padding = 0;
 
     virtio_submit_sync(f, cmd_buf_phys, sizeof(*f), resp_buf, resp_buf_phys, sizeof(struct virtio_gpu_ctrl_hdr));
-    serial_print("[VIRTIO] Flushed!\n");
 }
 
 // Total hours wasted on virtio: 18 (I DID COOK)

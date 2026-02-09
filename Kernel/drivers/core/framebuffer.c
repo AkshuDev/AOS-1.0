@@ -25,6 +25,35 @@ void fb_draw_rect(FB_Info_t* fb, int x, int y, int w, int h, uint32_t color) {
 
 void fb_printc(FB_Info_t* fb, FB_Cursor_t* cur, char c) {
     if (c < 0 || c > 255) return;
+    if (cur->x < 0) cur->x = 0;
+    if (cur->y < 0) cur->y = 0;
+
+    switch (c) {
+        case '\n':
+            cur->x = 0;
+            cur->y += 16;
+            if (cur->y + 16 > fb->height) cur->y = 0;
+            return;
+        case '\b':
+            if (cur->x == 0 && cur->y != 0) {
+                cur->x = fb->width;
+                cur->y -= 16;
+            } else if (cur->x == 0 && cur->y == 0) {
+                return;
+            } else {
+                cur->x -= 8;
+            }
+            for (int row = 0; row < 16; row++) {
+                uint8_t line = font8x16[' '][row];
+                for (int col = 0; col < 8; col++) {
+                    uint32_t color = (line & (1 << (7 - col))) ? cur->fg_color : cur->bg_color;
+                    fb_put_pixel(fb, cur->x + col, cur->y + row, color);
+                }
+            }
+            return;
+        default:
+            break;
+    }
 
     for (int row = 0; row < 16; row++) {
         uint8_t line = font8x16[(uint8_t)c][row];
@@ -47,13 +76,7 @@ void fb_printc(FB_Info_t* fb, FB_Cursor_t* cur, char c) {
 
 void fb_print(FB_Info_t* fb, FB_Cursor_t* cur, const char* str) {
     while (*str) {
-        if (*str == '\n') {
-            cur->x = 0;
-            cur->y += 16;
-            if (cur->y + 16 > fb->height) cur->y = 0;
-        } else {
-            fb_printc(fb, cur, *str);
-        }
+        fb_printc(fb, cur, *str);
         str++;
     }
 }

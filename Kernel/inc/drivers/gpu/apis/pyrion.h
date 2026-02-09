@@ -54,4 +54,5 @@ void pyrion_clear(struct pyrion_ctx* ctx, uint32_t color) __attribute__((used));
 void pyrion_pixel(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t color) __attribute__((used));
 void pyrion_flush(struct pyrion_ctx* ctx); __attribute__((used));
 void pyrion_viewport(struct pyrion_ctx* ctx, struct pyrion_rect* viewport) __attribute__((used));
+void pyrion_set_cursor(struct pyrion_ctx* ctx, uint32_t x, uint32_t y) __attribute__((used));
 

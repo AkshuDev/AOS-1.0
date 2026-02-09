@@ -128,6 +128,13 @@ void pyrion_clear(struct pyrion_ctx* ctx, uint32_t color) {
     fb_clear(&ctx->fb_info, color);
 }
 
+void pyrion_set_cursor(struct pyrion_ctx* ctx, uint32_t x, uint32_t y) {
+    if (ctx == NULL) return;
+    if (x > ctx->viewport.width || x < 0 || y > ctx->viewport.height || y < 0) return;
+    ctx->fb_cursor.x = x;
+    ctx->fb_cursor.y = y;
+}
+
 void pyrion_conf(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t fg, uint32_t bg) {
     if (ctx == NULL) return;
     ctx->fb_cursor.fg_color = fg;
