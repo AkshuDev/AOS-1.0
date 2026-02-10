@@ -50,6 +50,10 @@ void set_idt_entry(int num, uint64_t offset, uint16_t selector, uint8_t type_att
     idt[num].ist = 0;
 }
 
+void idt_load_local(void) {
+    asm volatile("lidt %0" : : "m"(idt_ptr));
+}
+
 void idt_init(void) {
     idt_ptr.limit = sizeof(idt_entry_t) * IDT_SIZE - 1;
     idt_ptr.base = (uint64_t)&idt;

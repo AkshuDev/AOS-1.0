@@ -6,11 +6,30 @@
 #include <inc/drivers/io/io.h>
 
 #define EBDA_SEG_PTR 0x40E
+#define MADT_TYPE_LAPIC 0
 
 static struct acpi_mcfg* mcfg_table = NULL;
+static struct acpi_madt* madt_table = NULL;
+static uint8_t apic_ids[256];
+static uint64_t apic_id_count = 0;
 
 struct acpi_mcfg* acpi_get_mcfg() {
     return mcfg_table;
+}
+
+struct acpi_madt* acpi_get_madt() {
+    return madt_table;
+}
+
+uint64_t acpi_get_lapic_base() {
+    return (uint64_t)madt_table->lapic_addr;
+}
+
+void acpi_get_apic_info(uint8_t* apic_ids_out, uint64_t* apic_id_count_out) {
+    for (uint64_t i = 0; i < apic_id_count; i++) {
+        apic_ids_out[i] = apic_ids[i];
+    }
+    *apic_id_count_out = apic_id_count;
 }
 
 static uint8_t acpi_checksum(void* table, uint32_t len) {
@@ -56,6 +75,25 @@ static struct acpi_rsdp_descriptor* acpi_find_rsdp(void) {
     return NULL;
 }
 
+static void acpi_parse_madt(struct acpi_madt* madt) {
+    uint8_t* ptr = (uint8_t*)madt + sizeof(struct acpi_madt);
+    uint8_t* end = (uint8_t*)madt + madt->header.length;
+
+    while (ptr < end) {
+        uint8_t type = ptr[0];
+        uint8_t len = ptr[1];
+        if (type == MADT_TYPE_LAPIC) {
+            struct acpi_madt_lapic_entry* lapic = (struct acpi_madt_lapic_entry*)ptr;
+            if (lapic->flags & 1) {
+                serial_printf("[ACPI : SMP] Core Found: APIC ID %d\n", lapic->apic_id);
+                apic_ids[apic_id_count++] = lapic->apic_id;
+            }
+        }
+        ptr += len;
+    }
+    serial_printf("[ACPI : SMP] Total APIC IDs: %d\n", apic_id_count);
+}
+
 static void acpi_parse_rsdt(struct acpi_rsdp_descriptor* rsdp) {
     serial_printf("[ACPI] RSDP Revision - %d\n", (uint32_t)rsdp->revision);
     if (rsdp->revision >= 2) { // 64-bit version
@@ -78,6 +116,10 @@ static void acpi_parse_rsdt(struct acpi_rsdp_descriptor* rsdp) {
             if (memcmp(sdt_hdr->signature, "MCFG", 4) == 0) {
                 mcfg_table = (struct acpi_mcfg*)sdt_hdr;
                 serial_printf("[ACPI] Found MCFG at %p\n", mcfg_table);
+            } else if (memcmp(sdt_hdr->signature, "APIC", 4) == 0) {
+                madt_table = (struct acpi_madt*)sdt_hdr;
+                serial_printf("[ACPI] Found MADT at %p\n\tParsing...\n", madt_table);
+                acpi_parse_madt(madt_table);
             }
         }
         return;
@@ -100,6 +142,10 @@ static void acpi_parse_rsdt(struct acpi_rsdp_descriptor* rsdp) {
         if (memcmp(sdt_hdr->signature, "MCFG", 4) == 0) {
             mcfg_table = (struct acpi_mcfg*)sdt_hdr;
             serial_printf("[ACPI] Found MCFG at %p\n", mcfg_table);
+        } else if (memcmp(sdt_hdr->signature, "APIC", 4) == 0) {
+            madt_table = (struct acpi_madt*)sdt_hdr;
+            serial_printf("[ACPI] Found MADT at %p\n\tParsing...\n", madt_table);
+            acpi_parse_madt(madt_table);
         }
     }
 }

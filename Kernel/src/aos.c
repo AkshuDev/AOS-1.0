@@ -6,6 +6,7 @@
 #include <inc/core/idt.h>
 #include <inc/drivers/io/io.h>
 #include <inc/core/pcie.h>
+#include <inc/core/smp.h>
 
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
@@ -44,6 +45,8 @@ void kernel_main(void) {
         serial_print("[AOS] PCIe Initialization failed! Shutting Down!\n");
         for (;;) asm("hlt");
     }
+
+    smp_init();
 
     // Now safe to use local variables
     struct VMemDesign vmem_design = {
