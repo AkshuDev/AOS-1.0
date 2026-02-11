@@ -10,6 +10,7 @@
 #include <inc/drivers/core/gpu.h>
 #include <inc/drivers/gpu/apis/pyrion.h>
 #include <inc/core/vshell.h>
+#include <inc/core/smp.h>
 
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
@@ -21,6 +22,11 @@ static pcie_device_t pcie_gpu_device = {0};
 static gpu_device_t gpu_device = {0};
 static PCIe_FB gpu_framebuffer = {0};
 static struct pyrion_ctx* display_ctx = NULL;
+
+void aos_start_vshell(void) {
+    start_vshell(display_ctx);
+    smp_yield();
+}
 
 void aospp_start(void) {
     serial_print("Searching for GPU...\n");
@@ -39,6 +45,8 @@ void aospp_start(void) {
     display_ctx = pyrion_create_ctx();
     if (display_ctx == NULL) return;
 
-    start_vshell(display_ctx);
+    smp_push_task(1, aos_start_vshell);
+
+    for (;;) asm("hlt");
 }
 

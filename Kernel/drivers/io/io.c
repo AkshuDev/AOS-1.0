@@ -3,9 +3,16 @@
 
 #include <stdarg.h>
 
+#include <inc/core/kfuncs.h>
 #include <inc/drivers/io/io.h>
 
 #define SERIAL_PORT 0x3F8
+
+static spinlock_t serial_lock;
+static spinlock_t ata_lock;
+static spinlock_t vmem_lock;
+static spinlock_t vmem_cur_lock;
+static spinlock_t ps2_lock;
 
 // Returns n / d
 static uint64_t udiv64(uint64_t n, uint64_t d) {
@@ -33,6 +40,8 @@ static uint64_t umod64(uint64_t n, uint64_t d) {
 }
 
 void serial_init(void) {
+    spin_lock(&serial_lock);
+
     asm_outb(SERIAL_PORT + 1, 0x00); // Disable interrupts
     asm_outb(SERIAL_PORT + 3, 0x80); // Enable DLAB
     asm_outb(SERIAL_PORT + 0, 0x03); // Set baud rate divisor to 3 (38400)
@@ -40,6 +49,8 @@ void serial_init(void) {
     asm_outb(SERIAL_PORT + 3, 0x03); // 8 bits, no parity, one stop bit
     asm_outb(SERIAL_PORT + 2, 0xC7); // FIFO: enable, clear, 14-byte threshold
     asm_outb(SERIAL_PORT + 4, 0x0B); // IRQs enabled, RTS/DSR set
+
+    spin_unlock(&serial_lock);
 }
 
 // Check if transmit buffer is empty
@@ -49,8 +60,10 @@ int serial_is_transmit_empty(void) {
 
 // Print a single character
 void serial_printc(char c) {
+    spin_lock(&serial_lock);
     while (!serial_is_transmit_empty());
     asm_outb(SERIAL_PORT, c);
+    spin_unlock(&serial_lock);
 }
 
 // Print a null-terminated string
@@ -208,41 +221,58 @@ void serial_printf(const char* fmt, ...) {
 #define VMEM_MAX_ROWS 25
 
 void vmem_set_cursor(uint16_t x, uint16_t y) {
+    spin_lock(&vmem_cur_lock);
+
     uint16_t pos = y * VMEM_MAX_COLS + x;
     asm_outb(0x3D4, 0x0E);
     asm_outb(0x3D5, (pos >> 8) & 0xFF);
     asm_outb(0x3D4, 0x0F);
     asm_outb(0x3D5, pos & 0xFF);
+
+    spin_unlock(&vmem_cur_lock);
 }
 
 void vmem_disable_cursor(void) {
+    spin_lock(&vmem_cur_lock);
+
     asm_outb(0x3D4, 0x0A);
     asm_outb(0x3D5, 0x20);
+
+    spin_unlock(&vmem_cur_lock);
 }
 
 void vmem_clear_screen(struct VMemDesign* design) {
+    spin_lock(&vmem_lock);
+
     volatile uint16_t* vmem = (volatile uint16_t*)VMEM;
     uint16_t attr = (design->bg << 4) | design->fg;
     for (uint16_t i = 0; i < VMEM_MAX_COLS*VMEM_MAX_ROWS; i++) vmem[i] = attr << 8;
     design->x = 0;
     design->y = 0;
+
+    spin_unlock(&vmem_lock);
 }
 
 void vmem_printc(struct VMemDesign* design, char c) {
+    spin_lock(&vmem_lock);
+
     volatile uint16_t* vmem = (volatile uint16_t*)VMEM;
     uint16_t attr = (design->bg << 4) | design->fg;
     if (c == '\n') {
         design->x = 0;
         uint16_t y = design->y + 1;
-        vmem_set_cursor(design->x, y);
         design->y = y;
+        spin_unlock(&vmem_lock);
+        vmem_set_cursor(design->x, y);
         if (design->serial_out == 1) serial_printc(c);
         return;
     }
     vmem[design->y * VMEM_MAX_COLS + design->x] = ((uint16_t)attr << 8) | c;
     uint16_t x = design->x + 1;
-    vmem_set_cursor(x, design->y);
     design->x = x;
+
+    spin_unlock(&vmem_lock);
+    vmem_set_cursor(x, design->y);
     if (design->serial_out == 1) serial_printc(c);
 }
 
@@ -443,7 +473,6 @@ static const ata_bus_t ata_buses[2] = {
     { ATA_SECONDARY_IO, ATA_SECONDARY_CTRL }
 };
 
-// Wait for ATA (PRIVATE DO NOT USE UNLESS YOU KNOW WHAT YOU ARE DOING)
 static inline void _ata_wait_ready(uint16_t io_base) {
     uint8_t status;
     int timeout = 100000; // ~100ms depending on CPU speed
@@ -456,6 +485,8 @@ static inline void _ata_wait_ready(uint16_t io_base) {
 }
 
 int ata_read_sectors(struct ATA_DP* dp, void* buffer, uint8_t drive) {
+    spin_lock(&ata_lock);
+
     uint8_t bus = ((drive - 0x80) >> 1) & 1;
     uint8_t device = (drive & 1); // 0=master,1=slave
     uint16_t io = ata_buses[bus].io_base;
@@ -497,11 +528,14 @@ int ata_read_sectors(struct ATA_DP* dp, void* buffer, uint8_t drive) {
         // Read 256 words (512 bytes) into the buffer.
         asm_insw(io, (uint8_t*)buffer + (uint32_t)i * 512, 256);
     }
+    spin_unlock(&ata_lock);
 
     return 0; // Success
 }
 
 int ata_write_sectors(struct ATA_DP* dp, const void* buffer, uint8_t drive) {
+    spin_lock(&ata_lock);
+
     uint8_t bus = ((drive - 0x80) >> 1) & 1;
     uint8_t device = (drive & 1);
     uint16_t io = ata_buses[bus].io_base;
@@ -544,6 +578,8 @@ int ata_write_sectors(struct ATA_DP* dp, const void* buffer, uint8_t drive) {
     asm_outb(io + 7, ATA_CMD_FLUSH_EXT);
     _ata_wait_ready(io);
 
+    spin_unlock(&ata_lock);
+
     return 0; // Success
 }
 
@@ -557,8 +593,13 @@ static const char scan_to_ascii[128] = {
 };
 
 int8_t ps2_read_scan(void) {
+    spin_lock(&ps2_lock);
+
     while (!(asm_inb(0x64) & 1)); // wait for data
-    return asm_inb(0x60);
+    int8_t out = asm_inb(0x60);
+    spin_unlock(&ps2_lock);
+
+    return out;
 }
 
 void ps2_read_line(char* buf, int max_len, struct VMemDesign* design) {

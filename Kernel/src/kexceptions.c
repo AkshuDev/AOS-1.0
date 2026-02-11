@@ -33,7 +33,7 @@ static const char *exception_names[] = {
     "Reserved", "Reserved"
 };
 
-void aos_system_exception(regs_t *r) {
+void aos_system_exception(struct reg_trap_frame *r) {
     uint64_t num = r->int_no;
     const char* name = (num < 32) ? exception_names[num] : "Unknown Exception";
 

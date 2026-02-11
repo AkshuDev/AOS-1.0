@@ -174,7 +174,7 @@ uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, int flags, uint64_t* ph
     if (!avmf_alloc_region((uint64_t)*heap_ptr, phys, true_size, flags)) {serial_print("[AVMF] Failed to Allocate Internal Region for VMemory!\n"); return 0;}
     pager_map_range((uint64_t)*heap_ptr, phys, true_size, flags);
     *heap_ptr += true_size;
-    *phys_out = phys;
+    if (phys_out != NULL) *phys_out = phys;
     return (uint64_t)(*heap_ptr - true_size);
 }
 
