@@ -141,4 +141,6 @@ struct acpi_mcfg* acpi_get_mcfg() __attribute__((used));
 struct acpi_madt* acpi_get_madt() __attribute__((used));
 uint64_t acpi_get_lapic_base() __attribute__((used));
 void acpi_get_apic_info(uint8_t* apic_ids_out, uint64_t* apic_id_count_out) __attribute__((used));
+uint32_t acpi_read_timer(void) __attribute__((used));
+void acpi_mdelay(uint64_t ms) __attribute__((used));
 void acpi_reboot() __attribute__((used, noreturn));

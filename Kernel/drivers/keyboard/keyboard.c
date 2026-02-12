@@ -1,5 +1,6 @@
 #include <inttypes.h>
 
+#include <inc/core/kfuncs.h>
 #include <inc/drivers/io/io.h>
 #include <inc/drivers/keyboard/keyboard.h>
 
@@ -9,6 +10,7 @@ struct keyboard_state {
     uint8_t capslock;
 };
 
+static spinlock_t keyboard_lock = 0;
 static struct keyboard_state cur_state = {0};
 #define SHIFT_DOWN (cur_state.lshift || cur_state.rshift)
 
@@ -196,15 +198,17 @@ static const char keymap_capslock[128] = {
     [0x39] = ' ',
 };
 
-static void update_state(char sc) {
+static void update_state(uint8_t sc) {
     switch (sc) {
         case 0x2A:
             cur_state.lshift = 1;
+            break;
         case 0x36:
             cur_state.rshift = 1;
             break;
         case 0xAA:
             cur_state.lshift = 0;
+            break;
         case 0xB6:
             cur_state.rshift = 0;
             break;
@@ -220,22 +224,44 @@ static uint8_t is_letter(char ch) {
 }
 
 char keyboard_ps2_get_char(void) {
-    int8_t sc = ps2_read_scan();
-    if (sc < 0) return 0;
+    uint64_t rflags = spin_lock_irqsave(&keyboard_lock);
+    int8_t sc_raw = ps2_read_scan();
+    if (sc_raw < 0) {spin_unlock_irqrestore(&keyboard_lock, rflags); return 0;}
+    uint8_t sc = (uint8_t)sc_raw;
     update_state(sc);
 
-    if (sc & 0x80) return 0;
+    if (sc & 0x80) {spin_unlock_irqrestore(&keyboard_lock, rflags); return 0;}
 
     char ch;
-    if (SHIFT_DOWN && cur_state.capslock == 0)
-        ch = keymap_shift_ncl[sc];
-    else if (SHIFT_DOWN && cur_state.capslock == 1)
-        ch = keymap_shift_cl[sc];
-    else if (!SHIFT_DOWN && cur_state.capslock == 1)
-        ch = keymap_capslock[sc];
-    else
-        ch = keymap[sc];
 
-    
+    if (SHIFT_DOWN) {
+        ch = (cur_state.capslock) ? keymap_shift_cl[sc] : keymap_shift_ncl[sc];
+    } else {
+        ch = (cur_state.capslock) ? keymap_capslock[sc] : keymap[sc];
+    }
+
+    spin_unlock_irqrestore(&keyboard_lock, rflags);
+    return ch;
+}
+
+char keyboard_ps2_try_get_char(void) {
+    uint64_t rflags = spin_lock_irqsave(&keyboard_lock);
+
+    int16_t sc_raw = ps2_try_read_scan();
+    if (sc_raw < 0) {spin_unlock_irqrestore(&keyboard_lock, rflags); return 0;}
+    uint8_t sc = (uint8_t)sc_raw;
+    update_state(sc);
+
+    if (sc & 0x80) {spin_unlock_irqrestore(&keyboard_lock, rflags); return 0;}
+
+    char ch;
+
+    if (SHIFT_DOWN) {
+        ch = (cur_state.capslock) ? keymap_shift_cl[sc] : keymap_shift_ncl[sc];
+    } else {
+        ch = (cur_state.capslock) ? keymap_capslock[sc] : keymap[sc];
+    }
+
+    spin_unlock_irqrestore(&keyboard_lock, rflags);
     return ch;
 }

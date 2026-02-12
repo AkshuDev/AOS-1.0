@@ -90,25 +90,17 @@ void stage3(void) {
 
     uint8_t boot_drive = *AOS_BOOT_INFO_LOC; // Get Boot drive
     pm_print(&cursor, "Updating System info...\n");
-    aos_sysinfo_t SystemInfo;
-    SystemInfo.boot_drive = boot_drive;
-    SystemInfo.boot_mode = 0;
-    SystemInfo.reserved0 = 0;
-    SystemInfo.total_memory_kib = 0; // 0 means unknown
-    SystemInfo.cpu_signature = cpuid_signature();
-    cpuid_get_vendor(SystemInfo.cpu_vendor);
-    SystemInfo.apic_present = check_apic();
-    SystemInfo.tsc_freq_hz = measure_tsc();
-    SystemInfo.checksum = compute_checksum((uint8_t*)&SystemInfo, sizeof(SystemInfo) - 1);
+    aos_sysinfo_t* SystemInfo = (aos_sysinfo_t*)AOS_SYS_INFO_LOC;
+    SystemInfo->boot_drive = boot_drive;
+    SystemInfo->boot_mode = 0;
+    SystemInfo->reserved0 = 0;
+    SystemInfo->cpu_signature = cpuid_signature();
+    cpuid_get_vendor(SystemInfo->cpu_vendor);
+    SystemInfo->apic_present = check_apic();
+    SystemInfo->tsc_freq_hz = measure_tsc();
+    SystemInfo->checksum = compute_checksum((uint8_t*)SystemInfo, sizeof(*SystemInfo) - 1);
 
     pm_print(&cursor, "SystemInfo initialization complete!\n");
-
-    // Place it
-    PBFS_DP dp = {
-        .count = AOS_SYSINFO_SPAN,
-        .lba = AOS_SYSINFO_LBA
-    };
-    pm_write_sectors(&dp, &SystemInfo, boot_drive);
     pm_print(&cursor, "OS to Load: ");
     char os_to_load[256];
     pm_read_line(os_to_load, 256, &cursor);
@@ -119,8 +111,11 @@ void stage3(void) {
     pm_print(&cursor, "\n");
 
     pm_print(&cursor, "Loading AOS...\n");
-    dp.count = 100;
-    dp.lba = 80;
+
+    PBFS_DP dp = (PBFS_DP){
+        .count = 100,
+        .lba = 80
+    };
     
     int out = pm_read_sectors(&dp, AOS_KERNEL_LOC, boot_drive);
     if (out != 0) {

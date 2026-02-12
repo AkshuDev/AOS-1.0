@@ -46,6 +46,7 @@ void kernel_main(void) {
         for (;;) asm("hlt");
     }
 
+    ktimer_calibrate();
     smp_init();
 
     // Now safe to use local variables
@@ -82,17 +83,11 @@ void aos_shell_pm(void) {
     lines += 2;
     // Read sysinfo
     uint8_t boot_drive = *AOS_BOOT_INFO_LOC;
-    aos_sysinfo_t SystemInfo;
-    struct ATA_DP dp = {
-        .count = AOS_SYSINFO_SPAN,
-        .lba = AOS_SYSINFO_LBA
-    };
-    ata_read_sectors(&dp, &SystemInfo, boot_drive);
+    aos_sysinfo_t SystemInfo = *AOS_SYS_INFO_LOC;
     vmem_print(&vmem_design, "SystemInfo:\n");
     vmem_printf(&vmem_design, "Boot Drive: 0x%llx (%llu)\nBoot Mode: 0x%llx (%llu)\n", (uint64_t)SystemInfo.boot_drive, (uint64_t)SystemInfo.boot_drive, (uint64_t)SystemInfo.boot_mode, (uint64_t)SystemInfo.boot_mode);
     vmem_printf(&vmem_design, "CPU Vendor: %s\n", (uintptr_t)&SystemInfo.cpu_vendor);
-    vmem_printf(&vmem_design, "Total Memory: %llu KiB\n\n", (uint64_t)SystemInfo.total_memory_kib);
-    lines += 8;
+    lines += 7;
 
     while (1) {
         vmem_print(&vmem_design, "AOS: / $> "); // In AOS / means root and ~ means HOME_DIR like linux

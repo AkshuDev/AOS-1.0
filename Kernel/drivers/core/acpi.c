@@ -10,26 +10,93 @@
 
 static struct acpi_mcfg* mcfg_table = NULL;
 static struct acpi_madt* madt_table = NULL;
+static struct acpi_fadt* fadt_table = NULL;
+
 static uint8_t apic_ids[256];
 static uint64_t apic_id_count = 0;
 
+static uint32_t pm_timer_port = 0;
+static uint8_t pm_timer_24bit = 1;
+
+static spinlock_t acpi_lock = 0;
+
 struct acpi_mcfg* acpi_get_mcfg() {
-    return mcfg_table;
+    uint64_t rflags = spin_lock_irqsave(&acpi_lock);
+
+    struct acpi_mcfg* out = mcfg_table;
+
+    spin_unlock_irqrestore(&acpi_lock, rflags);
+    return out;
 }
 
 struct acpi_madt* acpi_get_madt() {
-    return madt_table;
+    uint64_t rflags = spin_lock_irqsave(&acpi_lock);
+
+    struct acpi_madt* out = madt_table;
+
+    spin_unlock_irqrestore(&acpi_lock, rflags);
+    return out;
 }
 
 uint64_t acpi_get_lapic_base() {
-    return (uint64_t)madt_table->lapic_addr;
+    uint64_t rflags = spin_lock_irqsave(&acpi_lock);
+
+    uint64_t out = (uint64_t)madt_table->lapic_addr;
+
+    spin_unlock_irqrestore(&acpi_lock, rflags);
+    return out;
 }
 
 void acpi_get_apic_info(uint8_t* apic_ids_out, uint64_t* apic_id_count_out) {
+    uint64_t rflags = spin_lock_irqsave(&acpi_lock);
+
     for (uint64_t i = 0; i < apic_id_count; i++) {
         apic_ids_out[i] = apic_ids[i];
     }
     *apic_id_count_out = apic_id_count;
+
+    spin_unlock_irqrestore(&acpi_lock, rflags);
+}
+
+uint32_t acpi_read_timer(void) { // A new entry to prevent DEADLOCKS due to spinlock
+    uint64_t rflags = spin_lock_irqsave(&acpi_lock);
+
+    if (pm_timer_port == 0) {spin_unlock_irqrestore(&acpi_lock, rflags); return 0; }
+    uint32_t out = asm_inl(pm_timer_port);
+
+    spin_unlock_irqrestore(&acpi_lock, rflags);
+    return out;
+}
+
+static uint32_t acpi_timer_read(void) {
+    if (pm_timer_port == 0) return 0;
+    return asm_inl(pm_timer_port);
+}
+
+void acpi_mdelay(uint64_t ms) {
+    uint64_t rflags = spin_lock_irqsave(&acpi_lock);
+
+    uint32_t start = acpi_timer_read();
+    uint64_t ticks_needed = ms * 3580;
+    uint64_t elapsed = 0;
+    uint32_t last = start;
+
+    while (elapsed < ticks_needed) {
+        uint32_t current = acpi_timer_read();
+        if (current < last) {
+            // Handle rollover (24-bit or 32-bit)
+            if (pm_timer_24bit)
+                elapsed += (current + 0x1000000 - last);
+            else
+                elapsed += (current + 0x100000000ULL - last);
+        } else {
+            elapsed += (current - last);
+        }
+        last = current;
+        asm volatile("pause");
+    }
+
+    spin_unlock_irqrestore(&acpi_lock, rflags);
 }
 
 static uint8_t acpi_checksum(void* table, uint32_t len) {
@@ -92,6 +159,21 @@ static void acpi_parse_madt(struct acpi_madt* madt) {
         ptr += len;
     }
     serial_printf("[ACPI : SMP] Total APIC IDs: %d\n", apic_id_count);
+
+    aos_sysinfo_t* sysinfo = (aos_sysinfo_t*)AOS_SYS_INFO_LOC;
+    sysinfo->apic_present = 1;
+}
+
+static void acpi_timer_init(struct acpi_fadt* fadt) {
+    pm_timer_port = fadt->pm_tmr_blk;
+    if (fadt->flags & (1 << 8)) {
+        pm_timer_24bit = 0;
+    }
+    serial_printf("[ACPI] PM Timer initialized on port 0x%x\n", pm_timer_port);
+}
+
+static void acpi_parse_fadt(struct acpi_fadt* fadt) {
+    acpi_timer_init(fadt);
 }
 
 static void acpi_parse_rsdt(struct acpi_rsdp_descriptor* rsdp) {
@@ -120,6 +202,10 @@ static void acpi_parse_rsdt(struct acpi_rsdp_descriptor* rsdp) {
                 madt_table = (struct acpi_madt*)sdt_hdr;
                 serial_printf("[ACPI] Found MADT at %p\n\tParsing...\n", madt_table);
                 acpi_parse_madt(madt_table);
+            } else if (memcmp(sdt_hdr->signature, "FACP", 4) == 0) {
+                fadt_table = (struct acpi_fadt*)sdt_hdr;
+                serial_printf("[ACPI] Found FADT at %p\n\tParsing...\n", fadt_table);
+                acpi_parse_fadt(fadt_table);
             }
         }
         return;
@@ -146,11 +232,17 @@ static void acpi_parse_rsdt(struct acpi_rsdp_descriptor* rsdp) {
             madt_table = (struct acpi_madt*)sdt_hdr;
             serial_printf("[ACPI] Found MADT at %p\n\tParsing...\n", madt_table);
             acpi_parse_madt(madt_table);
+        } else if (memcmp(sdt_hdr->signature, "FACP", 4) == 0) {
+            fadt_table = (struct acpi_fadt*)sdt_hdr;
+            serial_printf("[ACPI] Found FADT at %p\n\tParsing...\n", fadt_table);
+            acpi_parse_fadt(fadt_table);
         }
     }
 }
 
 void acpi_init(void) {
+    uint64_t rflags = spin_lock_irqsave(&acpi_lock);
+
     struct acpi_rsdp_descriptor *rsdp = acpi_find_rsdp();
     if (!rsdp) {
         serial_print("[ACPI] RSDP Descriptor Not Found!\n");
@@ -159,6 +251,8 @@ void acpi_init(void) {
 
     serial_printf("[ACPI] RSDP Descriptor found at %p\n", (uint64_t)rsdp);
     acpi_parse_rsdt(rsdp);
+
+    spin_unlock_irqrestore(&acpi_lock, rflags);
 }
 
 void acpi_reboot(void) {
@@ -172,5 +266,5 @@ void acpi_reboot(void) {
 }
 
 void acpi_shutdown() {
-    asm volatile("cli");
+    asm volatile("cli ; hlt");
 }

@@ -37,6 +37,7 @@ extern void aos_system_exception_asm_29(void);
 extern void aos_system_exception_asm_30(void);
 extern void aos_system_exception_asm_31(void);
 
+extern void aos_int_smp_timer(void);
 extern void aos_int_smp_ipi(void);
 
 idt_entry_t idt[IDT_SIZE];
@@ -93,6 +94,7 @@ void idt_init(void) {
     set_idt_entry(30, (uint64_t)aos_system_exception_asm_30, 0x08, 0x8E);
     set_idt_entry(31, (uint64_t)aos_system_exception_asm_31, 0x08, 0x8E);
 
+    set_idt_entry(0x30, (uint64_t)aos_int_smp_timer, 0x08, 0x8E);
     set_idt_entry(0x40, (uint64_t)aos_int_smp_ipi, 0x08, 0x8E);
 
     asm volatile("lidt %0" : : "m"(idt_ptr));

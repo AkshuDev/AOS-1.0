@@ -51,4 +51,5 @@ void smp_push_task(uint32_t core_idx, void (*entry)(void)) __attribute__((used))
 void smp_push_task_bsp(void (*entry)(void)) __attribute__((used));
 void smp_yield(void) __attribute__((used));
 
+void smp_timer_handler(void) __attribute__((used));
 void smp_ipi_handler(void) __attribute__((used));

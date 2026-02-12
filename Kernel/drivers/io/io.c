@@ -9,8 +9,12 @@
 #define SERIAL_PORT 0x3F8
 
 static spinlock_t serial_lock;
+static spinlock_t serialf_lock;
+static spinlock_t serialc_lock;
 static spinlock_t ata_lock;
 static spinlock_t vmem_lock;
+static spinlock_t vmemf_lock;
+static spinlock_t vmemc_lock;
 static spinlock_t vmem_cur_lock;
 static spinlock_t ps2_lock;
 
@@ -40,7 +44,7 @@ static uint64_t umod64(uint64_t n, uint64_t d) {
 }
 
 void serial_init(void) {
-    spin_lock(&serial_lock);
+    uint64_t rflags = spin_lock_irqsave(&serial_lock);
 
     asm_outb(SERIAL_PORT + 1, 0x00); // Disable interrupts
     asm_outb(SERIAL_PORT + 3, 0x80); // Enable DLAB
@@ -50,7 +54,7 @@ void serial_init(void) {
     asm_outb(SERIAL_PORT + 2, 0xC7); // FIFO: enable, clear, 14-byte threshold
     asm_outb(SERIAL_PORT + 4, 0x0B); // IRQs enabled, RTS/DSR set
 
-    spin_unlock(&serial_lock);
+    spin_unlock_irqrestore(&serial_lock, rflags);
 }
 
 // Check if transmit buffer is empty
@@ -60,18 +64,20 @@ int serial_is_transmit_empty(void) {
 
 // Print a single character
 void serial_printc(char c) {
-    spin_lock(&serial_lock);
+    uint64_t rflags = spin_lock_irqsave(&serialc_lock);
     while (!serial_is_transmit_empty());
     asm_outb(SERIAL_PORT, c);
-    spin_unlock(&serial_lock);
+    spin_unlock_irqrestore(&serialc_lock, rflags);
 }
 
 // Print a null-terminated string
 void serial_print(const char* str) {
+    uint64_t rflags = spin_lock_irqsave(&serial_lock);
     while (*str) {
         if (*str == '\n') serial_printc('\r'); // Carriage return for terminals
         serial_printc(*str++);
     }
+    spin_unlock_irqrestore(&serial_lock, rflags);
 }
 
 static void serial_print_integer(uint64_t val, int is_signed, int base, int uppercase) {
@@ -132,6 +138,7 @@ static void serial_print_ex_integer(uint64_t val, int base, int width, int zero_
 
 // Serial print with formatting
 void serial_printf(const char* fmt, ...) {
+    uint64_t rflags = spin_lock_irqsave(&serialf_lock);
     va_list args;
     va_start(args, fmt);
 
@@ -213,6 +220,7 @@ void serial_printf(const char* fmt, ...) {
     }
 
     va_end(args);
+    spin_unlock_irqrestore(&serialf_lock, rflags);
 }
 
 // VMem
@@ -221,7 +229,7 @@ void serial_printf(const char* fmt, ...) {
 #define VMEM_MAX_ROWS 25
 
 void vmem_set_cursor(uint16_t x, uint16_t y) {
-    spin_lock(&vmem_cur_lock);
+    uint64_t rflags = spin_lock_irqsave(&vmem_cur_lock);
 
     uint16_t pos = y * VMEM_MAX_COLS + x;
     asm_outb(0x3D4, 0x0E);
@@ -229,20 +237,20 @@ void vmem_set_cursor(uint16_t x, uint16_t y) {
     asm_outb(0x3D4, 0x0F);
     asm_outb(0x3D5, pos & 0xFF);
 
-    spin_unlock(&vmem_cur_lock);
+    spin_unlock_irqrestore(&vmem_cur_lock, rflags);
 }
 
 void vmem_disable_cursor(void) {
-    spin_lock(&vmem_cur_lock);
+    uint64_t rflags = spin_lock_irqsave(&vmem_cur_lock);
 
     asm_outb(0x3D4, 0x0A);
     asm_outb(0x3D5, 0x20);
 
-    spin_unlock(&vmem_cur_lock);
+    spin_unlock_irqrestore(&vmem_cur_lock, rflags);
 }
 
 void vmem_clear_screen(struct VMemDesign* design) {
-    spin_lock(&vmem_lock);
+    uint64_t rflags = spin_lock_irqsave(&vmem_lock);
 
     volatile uint16_t* vmem = (volatile uint16_t*)VMEM;
     uint16_t attr = (design->bg << 4) | design->fg;
@@ -250,11 +258,11 @@ void vmem_clear_screen(struct VMemDesign* design) {
     design->x = 0;
     design->y = 0;
 
-    spin_unlock(&vmem_lock);
+    spin_unlock_irqrestore(&vmem_lock, rflags);
 }
 
 void vmem_printc(struct VMemDesign* design, char c) {
-    spin_lock(&vmem_lock);
+    uint64_t rflags = spin_lock_irqsave(&vmemc_lock);
 
     volatile uint16_t* vmem = (volatile uint16_t*)VMEM;
     uint16_t attr = (design->bg << 4) | design->fg;
@@ -262,7 +270,7 @@ void vmem_printc(struct VMemDesign* design, char c) {
         design->x = 0;
         uint16_t y = design->y + 1;
         design->y = y;
-        spin_unlock(&vmem_lock);
+        spin_unlock_irqrestore(&vmemc_lock, rflags);
         vmem_set_cursor(design->x, y);
         if (design->serial_out == 1) serial_printc(c);
         return;
@@ -271,13 +279,15 @@ void vmem_printc(struct VMemDesign* design, char c) {
     uint16_t x = design->x + 1;
     design->x = x;
 
-    spin_unlock(&vmem_lock);
+    spin_unlock_irqrestore(&vmemc_lock, rflags);
     vmem_set_cursor(x, design->y);
     if (design->serial_out == 1) serial_printc(c);
 }
 
-void vmem_print(struct VMemDesign* design, const char* str) {
+void vmem_print(struct VMemDesign* design, const char* str) {\
+    uint64_t rflags = spin_lock_irqsave(&vmem_lock);
     while (*str) vmem_printc(design, *str++);
+    spin_unlock_irqrestore(&vmem_lock, rflags);
 }
 
 static void vmem_print_integer(struct VMemDesign* design, uint64_t val, int is_signed, int base, int uppercase) {
@@ -337,6 +347,8 @@ static void vmem_print_ex_integer(struct VMemDesign* design, uint64_t val, int b
 }
 
 void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
+    uint64_t rflags = spin_lock_irqsave(&vmemf_lock);
+
     va_list args;
     va_start(args, fmt);
 
@@ -418,6 +430,7 @@ void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
     }
 
     va_end(args);
+    spin_unlock_irqrestore(&vmemf_lock, rflags);
 }
 
 // ATA stuff
@@ -485,7 +498,7 @@ static inline void _ata_wait_ready(uint16_t io_base) {
 }
 
 int ata_read_sectors(struct ATA_DP* dp, void* buffer, uint8_t drive) {
-    spin_lock(&ata_lock);
+    uint64_t rflags = spin_lock_irqsave(&ata_lock);
 
     uint8_t bus = ((drive - 0x80) >> 1) & 1;
     uint8_t device = (drive & 1); // 0=master,1=slave
@@ -519,6 +532,7 @@ int ata_read_sectors(struct ATA_DP* dp, void* buffer, uint8_t drive) {
 
         // Check for errors.
         if (status & ATA_SR_ERR) { // Error
+            spin_unlock_irqrestore(&ata_lock, rflags);
             return -1;
         }
 
@@ -528,13 +542,13 @@ int ata_read_sectors(struct ATA_DP* dp, void* buffer, uint8_t drive) {
         // Read 256 words (512 bytes) into the buffer.
         asm_insw(io, (uint8_t*)buffer + (uint32_t)i * 512, 256);
     }
-    spin_unlock(&ata_lock);
+    spin_unlock_irqrestore(&ata_lock, rflags);
 
     return 0; // Success
 }
 
 int ata_write_sectors(struct ATA_DP* dp, const void* buffer, uint8_t drive) {
-    spin_lock(&ata_lock);
+    uint64_t rflags = spin_lock_irqsave(&ata_lock);
 
     uint8_t bus = ((drive - 0x80) >> 1) & 1;
     uint8_t device = (drive & 1);
@@ -565,6 +579,7 @@ int ata_write_sectors(struct ATA_DP* dp, const void* buffer, uint8_t drive) {
         uint8_t status = asm_inb(io + 7);
 
         if (status & ATA_SR_ERR) {
+            spin_unlock_irqrestore(&ata_lock, rflags);
             return -1;
         }
 
@@ -578,7 +593,7 @@ int ata_write_sectors(struct ATA_DP* dp, const void* buffer, uint8_t drive) {
     asm_outb(io + 7, ATA_CMD_FLUSH_EXT);
     _ata_wait_ready(io);
 
-    spin_unlock(&ata_lock);
+    spin_unlock_irqrestore(&ata_lock, rflags);
 
     return 0; // Success
 }
@@ -593,11 +608,24 @@ static const char scan_to_ascii[128] = {
 };
 
 int8_t ps2_read_scan(void) {
-    spin_lock(&ps2_lock);
+    uint64_t rflags = spin_lock_irqsave(&ps2_lock);
 
     while (!(asm_inb(0x64) & 1)); // wait for data
     int8_t out = asm_inb(0x60);
-    spin_unlock(&ps2_lock);
+    spin_unlock_irqrestore(&ps2_lock, rflags);
+
+    return out;
+}
+
+int16_t ps2_try_read_scan(void) {
+    uint64_t rflags = spin_lock_irqsave(&ps2_lock);
+    
+    if (!(asm_inb(0x64) & 1)) {
+        spin_unlock_irqrestore(&ps2_lock, rflags);
+        return -1;
+    }
+    int16_t out = (int16_t)asm_inb(0x60);
+    spin_unlock_irqrestore(&ps2_lock, rflags);
 
     return out;
 }

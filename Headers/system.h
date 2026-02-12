@@ -28,7 +28,6 @@ typedef struct {
   uint8_t boot_drive; // BIOS DL Value
   uint8_t boot_mode;  // 0=Normal | 1=Recovery | 2=Shell | 3=VGA | 4=VGA+Shell
   uint16_t reserved0; // alignment
-  uint64_t total_memory_kib; // Total memory in KiB (RAM)
   uint32_t cpu_signature;    // CPUID EAX from 0x1
   char cpu_vendor[13];       // Cpu Vendor
   uint8_t apic_present;      // 1 if APIC was found
@@ -38,3 +37,7 @@ typedef struct {
   uint8_t reserved[512 - 48]; // Padded to 512 bytes
 } aos_sysinfo_t;
 #pragma pack(pop)
+
+#define AOS_SYS_INFO_ADDR 0x2000
+#define AOS_SYS_INFO_LOC ((volatile aos_sysinfo_t*)AOS_SYS_INFO_ADDR)
+

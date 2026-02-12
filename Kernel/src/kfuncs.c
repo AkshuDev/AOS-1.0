@@ -4,6 +4,7 @@
 
 #include <stddef.h>
 
+#include <inc/core/acpi.h>
 #include <inc/core/kfuncs.h>
 #include <inc/mm/pager.h>
 
@@ -94,3 +95,45 @@ void spin_unlock(spinlock_t* lock) {
     __sync_lock_release(lock);
 }
 
+uint64_t spin_lock_irqsave(spinlock_t* lock) {
+    uint64_t flags = 0;
+    asm volatile("pushfq ; pop %0 ; cli" : "=rm"(flags) : : "memory");
+    while (__sync_lock_test_and_set(lock, 1)) {
+        while (*lock);
+    }
+}
+
+void spin_unlock_irqrestore(spinlock_t* lock, uint64_t flags) {
+    __sync_lock_release(lock);
+    asm volatile("push %0 ; popfq" : : "rm"(flags) : "memory", "cc");
+}
+
+static uint64_t tsc_ticks_per_ms = 0;
+
+static uint64_t ktimer_read_tsc(void) {
+    uint32_t low = 0;
+    uint32_t high = 0;
+    asm volatile("rdtscp" : "=a"(low), "=d"(high) : : "rcx");
+    return ((uint64_t)high << 32) | low;
+}
+
+void ktimer_calibrate(void) {
+    uint64_t start = ktimer_read_tsc();
+    acpi_mdelay(10);
+    uint64_t end = ktimer_read_tsc();
+    uint64_t cycles_per_10ms = end - start;
+    tsc_ticks_per_ms = cycles_per_10ms / 10;
+    aos_sysinfo_t* sysinfo = (aos_sysinfo_t*)AOS_SYS_INFO_LOC;
+    sysinfo->tsc_freq_hz = tsc_ticks_per_ms * 1000;
+}
+
+void kdelay(uint32_t ms) {
+    if (tsc_ticks_per_ms == 0) return;
+
+    uint64_t start = ktimer_read_tsc();
+    uint64_t ticks_needed = (uint64_t)ms * tsc_ticks_per_ms;
+
+    while ((ktimer_read_tsc() - start) < ticks_needed) {
+        asm volatile("pause");
+    }
+}

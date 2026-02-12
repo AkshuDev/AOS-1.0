@@ -1,3 +1,5 @@
+#include <stdarg.h>
+
 #include <inttypes.h>
 #include <asm.h>
 
@@ -111,6 +113,167 @@ void pyrion_builtin_printc(struct pyrion_ctx* ctx, char c) {
 void pyrion_builtin_print(struct pyrion_ctx* ctx, const char* str) {
     if (ctx == NULL) return;
     fb_print(&ctx->fb_info, &ctx->fb_cursor, str);
+}
+
+static uint64_t udiv64(uint64_t n, uint64_t d) {
+    uint64_t q = 0;
+    int i;
+    for (i = 63; i >= 0; i--) {
+        q <<= 1;
+        if ((n >> i) >= d) {
+            n -= d << i;
+            q |= 1;
+        }
+    }
+    return q;
+}
+static uint64_t umod64(uint64_t n, uint64_t d) {
+    int i;
+    for (i = 63; i >= 0; i--) {
+        if ((n >> i) >= d) {
+            n -= d << i;
+        }
+    }
+    return n;
+}
+
+static void pyrion_print_integer(struct pyrion_ctx* ctx, uint64_t val, int is_signed, int base, int uppercase) {
+    char buffer[32];
+    int i = 30;
+    buffer[31] = 0;
+    int neg = 0;
+
+    if (is_signed && ((int64_t)val) < 0) {
+        neg = 1;
+        val = -(int64_t)val;
+    }
+
+    do {
+        uint64_t digit = umod64(val, base);
+        buffer[i--] = (digit < 10) ? '0' + digit : (uppercase ? 'A' : 'a') + digit - 10;
+        val = udiv64(val, base);
+    } while (val);
+
+    if (neg) buffer[i--] = '-';
+    pyrion_builtin_print(ctx, &buffer[i+1]);
+}
+
+static void pyrion_print_ex_integer(struct pyrion_ctx* ctx, uint64_t val, int base, int width, int zero_pad, int is_signed) {
+    char buf[64];
+    const char* digits = "0123456789abcdef";
+    int i = 0;
+    int neg = 0;
+    if (is_signed && (int64_t)val < 0) {
+        neg = 1;
+        val = -(int64_t)val;
+    }
+    do {
+        buf[i++] = digits[val % base];
+        val /= base;
+    } while (val > 0);
+
+    int total_len = i + (neg ? 1 : 0);
+    if (width > total_len) {
+        int padding_count = width - total_len;
+        if (zero_pad) {
+            if (neg) {
+                pyrion_builtin_printc(ctx, '-');
+                neg = 0;
+            }
+            while (padding_count--) pyrion_builtin_printc(ctx, '0');
+        } else {
+            while(padding_count--) pyrion_builtin_printc(ctx, ' ');
+        }
+    }
+
+    if (neg) pyrion_builtin_printc(ctx, '-');
+    while (i > 0) {
+        pyrion_builtin_printc(ctx, buf[--i]);
+    }
+}
+
+void pyrion_builtin_printf(struct pyrion_ctx* ctx, const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+
+    while (*fmt) {
+        if (*fmt == '%') {
+            fmt++;
+
+            int zero_pad = 0;
+            int width = 0;
+            int is_long = 0;
+
+            if (*fmt == '0') {
+                zero_pad = 1;
+                fmt++;
+            }
+            while (*fmt >= '0' && *fmt <= '9') {
+                width = width * 10 + (*fmt - '0');
+                fmt++;
+            }
+            while (*fmt == 'l') {
+                is_long++;
+                fmt++;
+            }
+
+            switch (*fmt) {
+                case 'c': {
+                    char c = (char)va_arg(args, int);
+                    pyrion_builtin_printc(ctx, c);
+                    break;
+                }
+                case 's': {
+                    const char* s = va_arg(args, const char*);
+                    pyrion_builtin_print(ctx, s ? s : "(NULL)");
+                    break;
+                }
+                case 'i':
+                case 'd': { // signed 32/64-bit
+                    int64_t d;
+                    if (is_long >= 1) d = va_arg(args, int64_t);
+                    else d = (int64_t)va_arg(args, int);
+                    pyrion_print_ex_integer(ctx, (uint64_t)d, 10, width, zero_pad, 1);
+                    break;
+                }
+                case 'u': { // unsigned 32/64-bit
+                    uint64_t u;
+                    if (is_long >= 1) u = va_arg(args, uint64_t);
+                    else u = (uint64_t)va_arg(args, uint32_t);
+                    pyrion_print_ex_integer(ctx, u, 10, width, zero_pad, 0);
+                    break;
+                }
+                case 'x':
+                case 'p': { // Pointer
+                    uint64_t p;
+                    if (*fmt == 'p') {
+                        p = (uintptr_t)va_arg(args, void*);
+                        pyrion_builtin_print(ctx, "0x");
+                        if (width == 0) width = 16;
+                        zero_pad = 1;
+                    } else {
+                        if (is_long >= 1) p = va_arg(args, uint64_t);
+                        else p = (uint64_t)va_arg(args, uint32_t);
+                    }
+                    pyrion_print_ex_integer(ctx, p, 16, width, zero_pad, 0);
+                    break;
+                }
+                case '%': {
+                    pyrion_builtin_printc(ctx, '%');
+                    break;
+                }
+                default: {
+                    pyrion_builtin_printc(ctx, *fmt);
+                    break;
+                }
+            }
+        } else {
+            pyrion_builtin_printc(ctx, *fmt);
+        }
+        fmt++;
+    }
+
+    va_end(args);
 }
 
 void pyrion_builtin_draw_rect(struct pyrion_ctx* ctx, struct pyrion_rect* rect) {

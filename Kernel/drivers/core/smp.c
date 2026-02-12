@@ -13,9 +13,15 @@
 #define LAPIC_REG_ICR_LOW 0x0300
 #define LAPIC_REG_ICR_HIGH 0x0310
 
+#define LAPIC_TMR_INIT_CNT 0x0380
+#define LAPIC_TMR_CUR_CNT 0x0390
+#define LAPIC_TMR_DIV 0x03E0
+#define LAPIC_LVT_TMR 0x0320
+
 extern void thread_context_switch(struct thread_state* old, struct thread_state* new);
 
 static uintptr_t lapic_base_virt = 0;
+static uint32_t lapic_ticks_per_ms = 0;
 
 static void lapic_write(uint32_t reg, uint32_t value) {
     *(volatile uint32_t*)(lapic_base_virt + reg) = value;
@@ -26,20 +32,40 @@ static uint32_t lapic_read(uint32_t reg) {
     return *(volatile uint32_t*)(lapic_base_virt + reg);
 }
 
+static void lapic_timer_calibrate() {
+    lapic_write(LAPIC_TMR_DIV, 0x3); 
+
+    lapic_write(LAPIC_TMR_INIT_CNT, 0xFFFFFFFF);
+    kdelay(10);
+    lapic_write(LAPIC_LVT_TMR, 0x10000); 
+
+    uint32_t ticks_passed = 0xFFFFFFFF - lapic_read(LAPIC_TMR_CUR_CNT);
+    lapic_ticks_per_ms = ticks_passed / 10; 
+    serial_printf("[SMP : LAPIC] Calibrated: %d ticks/ms\n", lapic_ticks_per_ms);
+}
+
+static void lapic_timer_start(uint32_t ms) {
+    // set divider to 16
+    lapic_write(LAPIC_TMR_DIV, 0x3);
+
+    // Prepare LVT Timer Register:
+    // Bits 0-7: Vector (0x30)
+    // Bit 17: Periodic Mode (1) or One-shot (0)
+    uint32_t vector = 0x30 | (1 << 17); 
+    lapic_write(LAPIC_LVT_TMR, vector);
+
+    lapic_write(LAPIC_TMR_INIT_CNT, ms * lapic_ticks_per_ms);
+}
+
 static void lapic_init(uintptr_t phys_addr) {
     lapic_base_virt = phys_addr + AOS_DIRECT_MAP_BASE;
     lapic_write(0x80, 0);
     lapic_write(0xF0, 0x1FF);
+    lapic_timer_calibrate();
 }
 
 static uint8_t get_lapic_id(void) {
     return (uint8_t)(lapic_read(LAPIC_REG_ID) >> 24);
-}
-
-static void mdelay(uint64_t ms) {
-    for (int i = 0; i < 0xFF + ms; i++) {
-        asm volatile("pause"); // TODO: Add HPET based timer in kfuncs, and use it here!
-    }
 }
 
 extern void* smp_trampoline_start;
@@ -55,7 +81,7 @@ static void send_ipi(uint8_t target_apic_id, uint8_t vector) {
     // init IPI
     lapic_write(0x310, (target_apic_id << 24)); // ICR High
     lapic_write(0x300, 0x0000C500); // ICR Low: INIT
-    mdelay(10);
+    kdelay(10);
 
     while (lapic_read(0x300) & (1 << 12)) { asm("pause"); }
 
@@ -107,6 +133,9 @@ static void ap_kernel_entry(void) {
     uint32_t lapic_id = get_lapic_id();
     uint64_t kernel_stack = *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x510);
 
+    lapic_write(0xF0, 0x1FF); 
+    lapic_write(0x80, 0);
+
     idt_load_local();
 
     struct core_state* core = *(struct core_state**)(AOS_DIRECT_MAP_BASE + 0x520);
@@ -116,11 +145,14 @@ static void ap_kernel_entry(void) {
     core->status = CORE_STATUS_RUNNING;
     core->cur_thread = core->idle_thread;
 
-    asm volatile("sti");
+    lapic_timer_start(10);
+
     ap_boot_flag = 1;
     while (1) {
         asm volatile("" : : : "memory");
+        asm volatile("cli");
         if (*(struct thread_state* volatile*)&core->ready_list != NULL) {
+            asm volatile("sti");
             spin_lock(&core->queue_lock);
             struct thread_state* next = core->ready_list;
             core->ready_list = next->next;
@@ -135,15 +167,18 @@ static void ap_kernel_entry(void) {
             thread_context_switch(prev, next);
         } else {
             core->status = CORE_STATUS_READY;
+            asm volatile("sti");
             asm volatile("hlt");
-            serial_printf("[SMP : CORE %d] Rewaken!\n", core->core_idx);
             core->status = CORE_STATUS_RUNNING;
         }
     }
 }
 
 void smp_ipi_handler(void) {
-    serial_print("[SMP] Waking up core...\n");
+    lapic_write(0xB0, 0);
+}
+
+void smp_timer_handler(void) {
     lapic_write(0xB0, 0);
 }
 
@@ -264,10 +299,13 @@ void smp_init(void) {
 
         serial_printf("[SMP] Sending SIPI to APIC ID %lld\n", id);
         send_ipi(id, 0x08);
-        // TODO: Add a second ip to be sent after 200ms incase core doesn't respond
+        kdelay(200);
+        if (ap_boot_flag == 0) {
+            send_wakeup_ipi(id, 0x08);
 
-        uint64_t timeout = 0xFFFFFF;
-        while(ap_boot_flag == 0 && timeout != 0) { asm volatile("pause"); timeout--; }
+            uint64_t timeout = 0xFFFFFF;
+            while(ap_boot_flag == 0 && timeout != 0) { asm volatile("pause"); timeout--; }
+        }
 
         if (ap_boot_flag == 0) {
             serial_printf("[SMP] Error: Core %lld failed to check in!\n", id);
@@ -302,6 +340,8 @@ void smp_init(void) {
     }
 
     cores[bsp_core_idx] = bsp_state;
-
+    lapic_timer_start(10);
     ap_init_core_state(bsp_state);
+
+    asm volatile("sti");
 }
