@@ -50,6 +50,12 @@ struct pyrion_ctx* pyrion_create_ctx(void) {
     return ctx;
 }
 
+void pyrion_destroy_ctx(struct pyrion_ctx* ctx) {
+    if (ctx == NULL || ctx->fb_info.addr == 0) return;
+    avmf_free((uint64_t)ctx->fb_info.addr);
+    avmf_free((uint64_t)ctx);
+}
+
 void pyrion_viewport(struct pyrion_ctx* ctx, struct pyrion_rect* viewport) {
     if (ctx == NULL || ctx->fb_info.addr != 0 || ctx->fb_info.phys_addr != 0) return; // Only allows a single time use per context
     if (!(
@@ -58,10 +64,12 @@ void pyrion_viewport(struct pyrion_ctx* ctx, struct pyrion_rect* viewport) {
         viewport->y >= 0 &&
         viewport->y <= gdisplay_info.height &&
         viewport->width >= 0 &&
-        viewport->width <= gdisplay_info.width &&
-        viewport->height >= 0 &&
-        viewport->height <= gdisplay_info.height
+        viewport->height >= 0
     )) return;
+    if (viewport->width > gdisplay_info.width)
+        viewport->width = gdisplay_info.width;
+    if (viewport->height > gdisplay_info.height)
+        viewport->height = gdisplay_info.height;
 
     ctx->fb_info.addr = avmf_alloc(viewport->width * viewport->height * sizeof(uint32_t), MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, &ctx->fb_info.phys_addr);
     if (ctx->fb_info.addr == NULL) return;

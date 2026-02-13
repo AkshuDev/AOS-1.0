@@ -113,7 +113,7 @@ void stage3(void) {
     pm_print(&cursor, "Loading AOS...\n");
 
     PBFS_DP dp = (PBFS_DP){
-        .count = 100,
+        .count = 150,
         .lba = 80
     };
     

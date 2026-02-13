@@ -2,6 +2,8 @@
 #include <asm.h>
 #include <system.h>
 
+#include <inc/mm/pager.h>
+
 #include <inc/core/kfuncs.h>
 #include <inc/drivers/gpu/apis/pyrion.h>
 #include <inc/core/vshell.h>
@@ -12,7 +14,7 @@
 #define DEF_PROMPT "/ $ -> "
 
 static struct pyrion_ctx* vshell_ctx = NULL;
-static struct pyrion_rect vshell_viewport = (struct pyrion_rect){.x=0,.y=0,.width=500,.height=300,.color=0x121212FF};
+static struct pyrion_rect vshell_viewport = (struct pyrion_rect){.x=0,.y=0,.width=800,.height=600,.color=0x121212FF};
 static struct pyrion_ctx* gdisplay_ctx = NULL;
 static uint8_t vshell_running = 0;
 static char* prompt = DEF_PROMPT;
@@ -97,6 +99,7 @@ static void vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len) {
     } else if (last_cmd == 2 || strcmp(cmd_buf, "reboot") == 0) {
         if (last_cmd == 2) {
             if ((cmd_buf[0] == 'y' || cmd_buf[0] == 'Y') && *cmd_len == 1) {
+                pager_destroy_table(4);
                 acpi_reboot();
                 pyrion_builtin_print(vshell_ctx, "\nFailed to reboot!");
             } else {
@@ -145,7 +148,8 @@ void start_vshell(struct pyrion_ctx* display_ctx) {
     if (!vshell_ctx) return;
 
     pyrion_viewport(vshell_ctx, &vshell_viewport);
-    pyrion_conf(vshell_ctx, 0, 0, 0xFFFFFFFF, 0x000000FF);
+    pyrion_conf(vshell_ctx, 0, 0, 0xFFFFFFFF, 0x171717FF);
+    pyrion_clear(vshell_ctx, 0x171717FF);
     pyrion_builtin_print(vshell_ctx, "Welcome to AOS++ Visible Shell!\n");
 
     char cmd_buf[512];
@@ -158,4 +162,6 @@ void start_vshell(struct pyrion_ctx* display_ctx) {
         vshell_handle_shell((char*)cmd_buf, 512, &cmd_len);
         pyrion_flush(vshell_ctx);
     }
+
+    pyrion_destroy_ctx(vshell_ctx);
 }

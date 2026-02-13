@@ -25,6 +25,7 @@ struct bs1_e820 {
 } __attribute__((packed));
 
 static struct page_table* kernel_pml4;
+static struct page_table* mapped_pml4;
 static uint8_t pager_ready = 0;
 
 static inline void* pager_phys_to_virt(uint64_t phys) {
@@ -119,7 +120,6 @@ void pager_init(void) {
     pager_map_range(0x0, 0x0, 0x1000000, PAGE_PRESENT | PAGE_RW); // Identity Map the Kernel (16 MB)
     serial_print("[PAGER] Mapped Kernel\n");
 
-    uint64_t pml4_phys = (uint64_t)kernel_pml4;
     pager_load(kernel_pml4);
 
     pager_ready = 1;
@@ -168,6 +168,56 @@ struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags)
     return pml4;
 }
 
+void pager_destroy_table(int level) {
+    struct page_table* table = mapped_pml4;
+    if (!table) return;
+    if (level > 1) {
+        for (int i = 0; i < 512; i++) {
+            if (table->entries[i] & PAGE_PRESENT) {
+                if (level == 2 && (table->entries[i] & PAGE_HUGE)) continue;
+
+                uint64_t phys = table->entries[i] & ~0xFFFULL;
+                struct page_table* sub_table = (struct page_table*)pager_phys_to_virt(phys);
+                pager_destroy_table(level - 1);
+            }
+        }
+    }
+
+    uint64_t phys_addr = avmf_virt_to_phys((uint64_t)table);
+    avmf_free_phys((uint64_t)table);
+}
+
+static void invlpg(uint64_t addr) {
+    asm volatile("invlpg (%0)" : : "r"(addr) : "memory");
+}
+
+void pager_unmap(uint64_t virt) {
+    struct page_table* pml4 = mapped_pml4;
+    if (!pml4) return;
+
+    int idx_pml4 = (virt >> 39) & 0x1FF;
+    int idx_pdpt = (virt >> 30) & 0x1FF;
+    int idx_pd = (virt >> 21) & 0x1FF;
+    int idx_pt = (virt >> 12) & 0x1FF;
+
+    if (!(pml4->entries[idx_pml4] & PAGE_PRESENT)) return;
+    struct page_table* pdpt = (struct page_table*)pager_phys_to_virt(pml4->entries[idx_pml4] & ~0xFFFULL);
+    if (!(pdpt->entries[idx_pdpt] & PAGE_PRESENT)) return;
+    struct page_table* pd = (struct page_table*)pager_phys_to_virt(pdpt->entries[idx_pdpt] & ~0xFFFULL);
+
+    if (pd->entries[idx_pd] & PAGE_HUGE) {
+        pd->entries[idx_pd] &= ~PAGE_PRESENT;
+        invlpg(virt);
+        return;
+    }
+
+    if (!(pd->entries[idx_pd] & PAGE_PRESENT)) return;
+    struct page_table* pt = (struct page_table*)pager_phys_to_virt(pd->entries[idx_pd] & ~0xFFFULL);
+
+    pt->entries[idx_pt] &= ~PAGE_PRESENT;
+    invlpg(virt);
+}
+
 void pager_load(struct page_table* pml4) {
     uint64_t pml4_phys = (uint64_t)pml4;
     if (pager_ready) {
@@ -177,4 +227,5 @@ void pager_load(struct page_table* pml4) {
     }
     
     load_cr3(pml4_phys);
+    mapped_pml4 = pml4;
 }

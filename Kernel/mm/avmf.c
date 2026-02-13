@@ -1,6 +1,7 @@
 #include <inttypes.h>
 #include <system.h>
 
+#include <inc/core/kfuncs.h>
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
 #include <inc/drivers/io/io.h>
@@ -9,13 +10,20 @@
 
 #define PAGE_SIZE 0x1000
 #define AVMF_STATIC_SIZE 2048
+#define BITMAP_SIZE 131072
 
 static avmf_header_t* avmf_head;
 static avmf_header_t* last_found;
 
+static spinlock_t avmf_lock = 0;
+static spinlock_t avmf_lock2 = 0;
+
+static avmf_header_t static_headers[AVMF_STATIC_SIZE];
+static int header_index = 0;
+
 static uint64_t avmf_limit[128];
 static uint64_t avmf_base[128];
-static uint64_t avmf_cur_idx_ptr = 0;
+static uint64_t avmf_bitmap[BITMAP_SIZE];
 
 static uint64_t heap_kernel = AOS_KERNEL_SPACE_BASE;
 static uint64_t heap_driver = AOS_DRIVER_SPACE_BASE;
@@ -26,27 +34,30 @@ static inline uint64_t align4k(uint64_t value) {
     return (value + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
 }
 
-static uint64_t phys_alloc_ptr;
+static void bitmap_set(uint64_t page_idx) {
+    avmf_bitmap[page_idx / 8] |= (1 << (page_idx % 8));
+}
+
+static void bitmap_clear(uint64_t page_idx) {
+    avmf_bitmap[page_idx / 8] &= ~(1 << (page_idx % 8));
+}
+
+static uint8_t bitmap_test(uint64_t page_idx) {
+    return avmf_bitmap[page_idx / 8] & (1 << (page_idx % 8));
+}
 
 static uint64_t avmf_alloc_phys_page(void) {
-    if (avmf_cur_idx_ptr >= 128) {serial_print("[AVMF] Out of Physical Memory (IDX Cause)\n"); return 0;}
+    for (int i = 0; i < 128; i++) {
+        if (avmf_limit[i] == 0) continue;
 
-    while (avmf_cur_idx_ptr < 128) {
-        if (phys_alloc_ptr < avmf_base[avmf_cur_idx_ptr]) {
-            phys_alloc_ptr = avmf_base[avmf_cur_idx_ptr];
-        }
+        uint64_t start_page = avmf_base[i] / PAGE_SIZE;
+        uint64_t end_page = avmf_limit[i] / PAGE_SIZE;
 
-        if ((phys_alloc_ptr + PAGE_SIZE) <= avmf_limit[avmf_cur_idx_ptr]) {
-            uint64_t alloc_phys = phys_alloc_ptr;
-            phys_alloc_ptr += PAGE_SIZE;
-            return alloc_phys;
-        }
-
-        avmf_cur_idx_ptr++;
-        if (avmf_cur_idx_ptr < 128 && avmf_limit[avmf_cur_idx_ptr] != 0) {
-            phys_alloc_ptr = avmf_base[avmf_cur_idx_ptr];
-        } else {
-            break;
+        for (uint64_t p = start_page; p < end_page; p++) {
+            if (!bitmap_test(p)) {
+                bitmap_set(p);
+                return p * PAGE_SIZE;
+            }
         }
     }
 
@@ -77,30 +88,38 @@ void* avmf_phys_to_virt(uint64_t phys) {
 }
 
 uint64_t avmf_alloc_phys_contiguous(uint64_t size) {
+    uint64_t rflags = spin_lock_irqsave(&avmf_lock);
     uint64_t sz = align4k(size);
+    uint64_t pages_needed = sz / PAGE_SIZE;
 
-    if (avmf_cur_idx_ptr >= 128) {serial_printf("[AVMF] Out of Physical Memory (IDX Cause, Range: 0x%llx bytes)\n", sz); return 0;}
+    for (int i = 0; i < 128; i++) {
+        if (avmf_limit[i] == 0) continue;
 
-    while (avmf_cur_idx_ptr < 128) {
-        if (phys_alloc_ptr < avmf_base[avmf_cur_idx_ptr]) {
-            phys_alloc_ptr = avmf_base[avmf_cur_idx_ptr];
-        }
+        uint64_t start_page = avmf_base[i] / PAGE_SIZE;
+        uint64_t end_page = avmf_limit[i] / PAGE_SIZE;
+        uint64_t consecutive = 0;
+        uint64_t first_page = 0;
 
-        if ((phys_alloc_ptr + sz) <= avmf_limit[avmf_cur_idx_ptr]) {
-            uint64_t alloc_phys = phys_alloc_ptr;
-            phys_alloc_ptr += sz;
-            return alloc_phys;
-        }
+        for (uint64_t p = start_page; p < end_page; p++) {
+            if (!bitmap_test(p)) {
+                if (consecutive == 0) first_page = p;
+                consecutive++;
 
-        avmf_cur_idx_ptr++;
-        if (avmf_cur_idx_ptr < 128 && avmf_limit[avmf_cur_idx_ptr] != 0) {
-            phys_alloc_ptr = avmf_base[avmf_cur_idx_ptr];
-        } else {
-            break;
+                if (consecutive == pages_needed) {
+                    for (uint64_t j = first_page; j < first_page + pages_needed; j++) {
+                        bitmap_set(j);
+                    }
+                    spin_unlock_irqrestore(&avmf_lock, rflags);
+                    return first_page * PAGE_SIZE;
+                }
+            } else {
+                consecutive = 0;
+            }
         }
     }
 
     serial_printf("[AVMF] Out of physical memory (Range: 0x%llx bytes)\n", sz);
+    spin_unlock_irqrestore(&avmf_lock, rflags);
     return 0;
 }
 
@@ -134,7 +153,9 @@ uint64_t avmf_alloc_virt(uint64_t size, MemoryAllocType type) {
     if (*heap_ptr + true_size > heap_end) {serial_print("[AVMF] Not Enough VMemory for Allocation!\n"); return 0;}
     
     uint64_t ptr = *heap_ptr;
+    uint64_t rflags = spin_lock_irqsave(&avmf_lock);
     *heap_ptr += true_size;
+    spin_unlock_irqrestore(&avmf_lock, rflags);
 
     return ptr;
 }
@@ -173,19 +194,53 @@ uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, int flags, uint64_t* ph
 
     if (!avmf_alloc_region((uint64_t)*heap_ptr, phys, true_size, flags)) {serial_print("[AVMF] Failed to Allocate Internal Region for VMemory!\n"); return 0;}
     pager_map_range((uint64_t)*heap_ptr, phys, true_size, flags);
+    uint64_t rflags = spin_lock_irqsave(&avmf_lock);
     *heap_ptr += true_size;
     if (phys_out != NULL) *phys_out = phys;
+    spin_unlock_irqrestore(&avmf_lock, rflags);
     return (uint64_t)(*heap_ptr - true_size);
 }
 
+void avmf_free(uint64_t virt) {
+    avmf_header_t* hdr = avmf_find(virt);
+    if (!hdr) return;
+    uint64_t rflags = spin_lock_irqsave(&avmf_lock);
+
+    uint64_t phys = hdr->phys_addr;
+    uint64_t page_idx = phys / PAGE_SIZE;
+    uint64_t pages = hdr->size / PAGE_SIZE;
+
+    for (uint64_t i = 0; i < pages; i++) {
+        bitmap_clear(page_idx + i);
+    }
+    pager_unmap(virt);
+    spin_unlock_irqrestore(&avmf_lock, rflags);
+}
+
+void avmf_free_phys(uint64_t virt) {
+    avmf_header_t* hdr = avmf_find(virt);
+    if (!hdr) return;
+    uint64_t rflags = spin_lock_irqsave(&avmf_lock);
+
+    uint64_t phys = hdr->phys_addr;
+    uint64_t page_idx = phys / PAGE_SIZE;
+    uint64_t pages = hdr->size / PAGE_SIZE;
+
+    for (uint64_t i = 0; i < pages; i++) {
+        bitmap_clear(page_idx + i);
+    }
+    spin_unlock_irqrestore(&avmf_lock, rflags);
+}
+
 void avmf_init(uint64_t* base_phys, uint64_t* limit_phys, uint8_t entries) {
+    uint64_t rflags = spin_lock_irqsave(&avmf_lock);
     uint8_t ent = entries <= 128 ? entries : 128;
     for (uint8_t i = 0; i < ent; i++) {
         avmf_base[i] = base_phys[i];
         avmf_limit[i] = limit_phys[i];
     }
     avmf_head = (avmf_header_t*)NULL;
-    phys_alloc_ptr = (uint64_t)avmf_base[0];
+    spin_unlock_irqrestore(&avmf_lock, rflags);
 }
 
 uint8_t avmf_alloc_region(uint64_t virt, uint64_t phys, uint64_t size, uint32_t flags) {
@@ -202,10 +257,9 @@ uint8_t avmf_alloc_region(uint64_t virt, uint64_t phys, uint64_t size, uint32_t 
     }
 
     avmf_header_t* node = (avmf_header_t*)NULL;
-
-    static avmf_header_t static_headers[AVMF_STATIC_SIZE];
-    static int header_index = 0;
+ 
     if (header_index >= AVMF_STATIC_SIZE) return 0;
+    uint64_t rflags = spin_lock_irqsave(&avmf_lock2);
     node = &static_headers[header_index++];
     
     node->virt_addr = virt;
@@ -223,6 +277,7 @@ uint8_t avmf_alloc_region(uint64_t virt, uint64_t phys, uint64_t size, uint32_t 
     } else {
         last_node->next = node;
     }
+    spin_unlock_irqrestore(&avmf_lock2, rflags);
 
     return 1;
 }
@@ -231,8 +286,10 @@ int avmf_map(uint64_t virt, uint64_t phys, uint32_t flags) {
     avmf_header_t* region = avmf_find(virt);
     if (!region) {serial_print("[AVMF] Did not find region for mapping!\n"); return 0;}
 
+    uint64_t rflags = spin_lock_irqsave(&avmf_lock);
     region->phys_addr = phys;
     region->flags |= flags;
+    spin_unlock_irqrestore(&avmf_lock, rflags);
     return 1;
 }
 
@@ -248,8 +305,10 @@ int avmf_map_identity_virt(uint64_t virt, uint64_t phys, uint32_t flags) { // Wo
     }
     if (!region) {serial_print("[AVMF] Did not find region for identity mapping!\n"); return 0;}
 
+    uint64_t rflags = spin_lock_irqsave(&avmf_lock);
     region->virt_addr = virt;
     region->flags |= flags;
+    spin_unlock_irqrestore(&avmf_lock, rflags);
     return 1;
 }
 

@@ -46,6 +46,9 @@ uint64_t avmf_alloc_virt(uint64_t size, MemoryAllocType type) __attribute__((use
 uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, int flags, uint64_t* phys_out) __attribute__((used));
 uint8_t avmf_alloc_region(uint64_t virt, uint64_t phys, uint64_t size, uint32_t flags) __attribute__((used));
 
+void avmf_free(uint64_t virt) __attribute__((used));
+void avmf_free_phys(uint64_t virt) __attribute__((used));
+
 int avmf_map(uint64_t virt, uint64_t phys, uint32_t flags) __attribute__((used));
 int avmf_map_identity_virt(uint64_t virt, uint64_t phys, uint32_t flags) __attribute__((used));
 

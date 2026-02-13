@@ -25,4 +25,6 @@ struct page_table {
 void pager_map_range(uint64_t virt, uint64_t phys, uint64_t size, uint64_t flags) __attribute__((used));
 void pager_init() __attribute__((used));
 struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags) __attribute__((used));
+void pager_destroy_table(int level) __attribute__((used));
+void pager_unmap(uint64_t virt) __attribute__((used));
 void pager_load(struct page_table* pml4) __attribute__((used));

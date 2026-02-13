@@ -107,6 +107,7 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
         *lines += 1;
     } else if (strcmp(cmd, "reboot") == 0) {
         vmem_print(vmem_design, "Rebooting...\n");
+        pager_destroy_table(4);
         acpi_reboot();
     } else if (strcmp(cmd, "clear") == 0) {
         vmem_clear_screen(vmem_design);
