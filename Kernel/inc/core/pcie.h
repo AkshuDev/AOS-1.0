@@ -45,3 +45,6 @@ uint32_t pcie_read(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) __at
 int pcie_find_nvme(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0) __attribute__((used));
 int pcie_find_sata(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0) __attribute__((used));
 int pcie_find_vga(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0) __attribute__((used));
+int pcie_find(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint16_t target_vendor, uint8_t use_vendor) __attribute__((used));
+int pcie_find_ex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint8_t target_subclass, uint8_t target_progifclass, uint16_t target_vendor, uint8_t use_vendor) __attribute__((used));
+int pcie_find_rex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint8_t target_subclass, uint8_t target_progifclass, uint8_t target_revision, uint16_t target_vendor, uint8_t use_vendor) __attribute__((used));

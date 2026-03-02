@@ -16,6 +16,16 @@ PBFS_DISK_PARAMS := ../PBFS/PBFS/tools/disk_params.asm
 PBFS_DISK_IO_O := $(BUILD_DIR)/disk_io.o
 PBFS_DISK_PARAMS_O := $(BUILD_DIR)/disk_params.o
 
+KERNEL := ../Kernel
+DRIVER := $(KERNEL)/drivers
+DRIVER_CORE := $(DRIVER)/core
+DRIVERS_SRC := $(DRIVER)/io/io.c \
+			   $(KERNEL)/src/kfuncs.c
+BTL_DRIVERS_SRC := $(SRC_DIR)/pcie.c \
+					$(SRC_DIR)/acpi.c
+DRIVERS_O := $(patsubst $(KERNEL)/%.c,$(BUILD_DIR)/%.o,$(DRIVERS_SRC))
+BTL_DRIVERS_O := $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(BTL_DRIVERS_SRC))
+
 BIN_DIR := bin
 SRC_DIR := src
 
@@ -51,9 +61,16 @@ $(stage3_bin): $(stage3_elf)
 	@echo "Copying Stage 3 AOS Bootloader into binary..."
 	$(OBJCOPY) -O binary $(stage3_elf) $(stage3_bin)
 
-$(stage3_elf): $(stage3_o)
+$(BUILD_DIR)/%.o: $(KERNEL)/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -I ../Kernel -c $< -o $@
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(stage3_elf): $(stage3_o) $(DRIVERS_O) $(BTL_DRIVERS_O)
 	@echo "Linking Stage 3 AOS Bootloader into elf..."
-	$(LD) $(LDFLAGS) $(stage3_o) -o $(stage3_elf) $(LDENDFLAGS)
+	$(LD) $(LDFLAGS) $(stage3_o) $(DRIVERS_O) $(BTL_DRIVERS_O) -o $(stage3_elf) $(LDENDFLAGS)
 
 $(stage2_bin): $(stage2)
 	@echo "Assembling Stage 2 AOS Bootloader into binary..."

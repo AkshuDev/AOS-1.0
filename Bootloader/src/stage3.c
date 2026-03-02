@@ -1,7 +1,9 @@
-#include <pbfs_blt_stub.h> // Has everything for bootloaders/protected mode
 #include <system.h>
+#include <../Kernel/inc/core/kfuncs.h>
+#include <../Kernel/inc/drivers/io/io.h>
+#include <../Kernel/inc/core/acpi.h>
 
-void pm_print_hex(PM_Cursor_t *cursor, unsigned int val) {
+void pm_print_hex(struct VMemDesign* cursor, unsigned int val) {
     char hex[9];
     const char *digits = "0123456789ABCDEF";
     for (int i = 7; i >= 0; i--) {
@@ -9,7 +11,7 @@ void pm_print_hex(PM_Cursor_t *cursor, unsigned int val) {
         val >>= 4;
     }
     hex[8] = '\0';
-    pm_print(cursor, hex);
+    vmem_print(cursor, hex);
 }
 
 void cpuid_get_vendor(char *vendor_out) {
@@ -54,7 +56,6 @@ void stage3_jump_to_kernel(void (*kernel)(void), uint64_t stack_top) {
         "cld\n\t"
         "jmp *%rdi\n\t" // kernel pointer is 1st arg (rdi)
     );
-    __builtin_unreachable();
 }
 
 uint8_t check_apic(void) { return 0; } // Stub for now
@@ -69,27 +70,29 @@ uint8_t compute_checksum(const uint8_t* data, uint32_t len) {
 void stage3(void) __attribute__((section(".entry"), used)); 
 void stage3(void) {
     enable_a20();
-    PM_Cursor_t cursor = {
+    struct VMemDesign cursor = {
         .x = 0,
         .y = 0,
-        .fg = PM_COLOR_WHITE,
-        .bg = PM_COLOR_BLACK
+        .fg = VMEM_COLOR_WHITE,
+        .bg = VMEM_COLOR_BLACK
     };
 
-    pm_set_cursor(&cursor, 0, 0);
-    pm_clear_screen(&cursor);
-    pm_print(&cursor, "Welcome To AOS Bootloader! Debugging...\n");
+    acpi_init();
+
+    vmem_set_cursor(0, 0);
+    vmem_clear_screen(&cursor);
+    vmem_print(&cursor, "Welcome To AOS Bootloader! Debugging...\n");
     
     unsigned char *mem = (unsigned char *)0x100000;
     *mem = 0xAA;
     if (*mem != 0xAA) {
-        cursor.fg = PM_COLOR_RED;
-        pm_print(&cursor, "A20 line disabled!\n");
+        cursor.fg = VMEM_COLOR_RED;
+        vmem_print(&cursor, "A20 line disabled!\n");
         for (;;) asm("hlt");
     }
 
     uint8_t boot_drive = *AOS_BOOT_INFO_LOC; // Get Boot drive
-    pm_print(&cursor, "Updating System info...\n");
+    vmem_print(&cursor, "Updating System info...\n");
     aos_sysinfo_t* SystemInfo = (aos_sysinfo_t*)AOS_SYS_INFO_LOC;
     SystemInfo->boot_drive = boot_drive;
     SystemInfo->boot_mode = 0;
@@ -100,39 +103,44 @@ void stage3(void) {
     SystemInfo->tsc_freq_hz = measure_tsc();
     SystemInfo->checksum = compute_checksum((uint8_t*)SystemInfo, sizeof(*SystemInfo) - 1);
 
-    pm_print(&cursor, "SystemInfo initialization complete!\n");
-    pm_print(&cursor, "OS to Load: ");
+    vmem_print(&cursor, "SystemInfo initialization complete!\n");
+    vmem_print(&cursor, "OS to Load: ");
     char os_to_load[256];
-    pm_read_line(os_to_load, 256, &cursor);
-    if (str_eq(os_to_load, "aos") != 1) {
-        pm_print(&cursor, "\nOS Kernel not found!\n");
-        for (;;) asm("hlt");
+    if (is_ps2_present() == 1) {
+        ps2_init();
+        ps2_read_line(os_to_load, 256, &cursor);
+        if (strcmp(os_to_load, "aos") != 0) {
+            vmem_print(&cursor, "\nOS Kernel not found!\n");
+            for (;;) asm("hlt");
+        }
+    } else {
+        vmem_print(&cursor, "No keyboard detected .... Running AOS\n");
     }
-    pm_print(&cursor, "\n");
+    vmem_print(&cursor, "\n");
 
-    pm_print(&cursor, "Loading AOS...\n");
+    vmem_print(&cursor, "Loading AOS...\n");
 
-    PBFS_DP dp = (PBFS_DP){
+    struct ATA_DP dp = (struct ATA_DP){
         .count = 150,
         .lba = 80
     };
     
-    int out = pm_read_sectors(&dp, AOS_KERNEL_LOC, boot_drive);
+    int out = ata_read_sectors(&dp, AOS_KERNEL_LOC, boot_drive);
     if (out != 0) {
-        cursor.fg = PM_COLOR_RED;
-        pm_print(&cursor, "Disk Error!\n");
+        cursor.fg = VMEM_COLOR_RED;
+        vmem_print(&cursor, "Disk Error!\n");
         for (;;) asm("hlt");
     }
-    cursor.fg = PM_COLOR_GREEN;
-    pm_print(&cursor, "Loaded Kernel!\n");
-    cursor.fg = PM_COLOR_YELLOW;
-    pm_print(&cursor, "Dumping first 16 dwords from 0x100000:\n");
+    cursor.fg = VMEM_COLOR_GREEN;
+    vmem_print(&cursor, "Loaded Kernel!\n");
+    cursor.fg = VMEM_COLOR_YELLOW;
+    vmem_print(&cursor, "Dumping first 16 dwords from 0x100000:\n");
     unsigned int *data = (unsigned int*)0x100000;
     for (int i = 0; i < 16; i++) {
         pm_print_hex(&cursor, data[i]);
-        pm_print(&cursor, " ");
+        vmem_print(&cursor, " ");
     }
-    pm_print(&cursor, "\n\n\nJumping to Kernel...\n");
+    vmem_print(&cursor, "\n\n\nJumping to Kernel...\n");
     stage3_jump_to_kernel((void(*)(void))AOS_KERNEL_LOC, AOS_KERNEL_STACK_TOP);
 
     __builtin_unreachable(); // Tell GCC control never returns 

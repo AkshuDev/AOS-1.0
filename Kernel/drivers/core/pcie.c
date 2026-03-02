@@ -132,3 +132,84 @@ int pcie_find_vga(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0) {
     return 0;
 }
 
+int pcie_find(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint16_t target_vendor, uint8_t use_vendor) {
+    for (uint8_t b = 0; b < PCI_MAX_BUS; b++) {
+        for (uint8_t s = 0; s < PCI_MAX_SLOT; s++) {
+            for (uint8_t f = 0; f < PCI_MAX_FUNC; f++) {
+                uint32_t data = pcie_read(b, s, f, 0);
+                uint16_t vendor = data & 0xFFFF;
+                if (use_vendor && vendor != target_vendor) continue;
+                uint32_t class_data = pcie_read(b, s, f, 0x08);
+                uint8_t class = (class_data >> 24) & 0xFF;
+                if (class == target_class) {
+                    *bus = b;
+                    *slot = s;
+                    *func = f;
+                    *bar0 = pcie_read(b, s, f, 0x10);
+                    return 1;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+int pcie_find_ex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint8_t target_subclass, uint8_t target_progifclass, uint16_t target_vendor, uint8_t use_vendor) {
+    // Pci find Extended
+    for (uint8_t b = 0; b < PCI_MAX_BUS; b++) {
+        for (uint8_t s = 0; s < PCI_MAX_SLOT; s++) {
+            for (uint8_t f = 0; f < PCI_MAX_FUNC; f++) {
+                uint32_t data = pcie_read(b, s, f, 0);
+                uint16_t vendor = data & 0xFFFF;
+                if (vendor == 0xFFFF || (use_vendor == 1 && vendor != target_vendor)) continue;
+                uint32_t class_data = pcie_read(b, s, f, 0x08);
+                uint8_t class = (class_data >> 24) & 0xFF;
+                uint8_t class_sub = (class_data >> 16) & 0xFF;
+                uint8_t class_progif = (class_data >> 8) & 0xFF;
+                if (
+                    class == target_class &&
+                    class_sub == target_subclass &&
+                    class_progif == target_progifclass
+                ) {
+                    *bus = b;
+                    *slot = s;
+                    *func = f;
+                    *bar0 = pcie_read(b, s, f, 0x10);
+                    return 1;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+int pcie_find_rex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint8_t target_subclass, uint8_t target_progifclass, uint8_t target_revision, uint16_t target_vendor, uint8_t use_vendor) {
+    // Pci find Revision-Extended
+    for (uint8_t b = 0; b < PCI_MAX_BUS; b++) {
+        for (uint8_t s = 0; s < PCI_MAX_SLOT; s++) {
+            for (uint8_t f = 0; f < PCI_MAX_FUNC; f++) {
+                uint32_t data = pcie_read(b, s, f, 0);
+                uint16_t vendor = data & 0xFFFF;
+                if (vendor == 0xFFFF || (use_vendor == 0 && vendor != target_vendor)) continue;
+                uint32_t class_data = pcie_read(b, s, f, 0x08);
+                uint8_t class = (class_data >> 24) & 0xFF;
+                uint8_t class_sub = (class_data >> 16) & 0xFF;
+                uint8_t class_progif = (class_data >> 8) & 0xFF;
+                uint8_t revision = (class_data & 0xFF);
+                if (
+                    class == target_class &&
+                    class_sub == target_subclass &&
+                    class_progif == target_progifclass &&
+                    revision == revision
+                ) {
+                    *bus = b;
+                    *slot = s;
+                    *func = f;
+                    *bar0 = pcie_read(b, s, f, 0x10);
+                    return 1;
+                }
+            }
+        }
+    }
+    return 0;
+}

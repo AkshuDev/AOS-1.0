@@ -104,7 +104,7 @@ dap_s2:
 dap_s3:
     db 0x10 ; size (16 bytes)
     db 0 ; reserved
-    dw 35 ; sectors to read
+    dw 33 ; sectors to read
     dw 0x0000 ; dest offset
     dw 0x1500 ; dest segment
     dq 45 ; starting lba

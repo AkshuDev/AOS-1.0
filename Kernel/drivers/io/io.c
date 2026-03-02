@@ -607,6 +607,49 @@ static const char scan_to_ascii[128] = {
     'z','x','c','v','b','n','m',',','.','/',0,'*',0,' ',0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 };
 
+int is_ps2_present(void) {
+    uint64_t rflags = spin_lock_irqsave(&ps2_lock);
+
+    int out = 0;
+    while (asm_inb(0x64) & 0x01) { (void)asm_inb(0x60); }
+    asm_outb(0x60, 0xEE);
+    for (int i = 0; i < 500000; i++) {
+        if (asm_inb(0x64) & 0x01) {
+            uint8_t resp = asm_inb(0x60);
+            if (resp == 0xEE) { out = 1; break; } // keyboard present
+            else { out = 0; break; };
+        }
+    }
+
+    spin_unlock_irqrestore(&ps2_lock, rflags);
+    return out;
+}
+
+void ps2_init(void) {
+    uint64_t rflags = spin_lock_irqsave(&ps2_lock);
+
+    uint8_t config;
+    while (asm_inb(0x64) & 0x02) { asm volatile("pause"); }
+    asm_outb(0x64, 0x20);
+    while (!(asm_inb(0x64) & 0x01)) {}
+    config = asm_inb(0x60);
+
+    // Set bits: bit 0 = interrupt on keyboard, bit 4 = enable keyboard port
+    config |= (1 << 0) | (1 << 4);
+
+    // Write config byte back
+    while (asm_inb(0x64) & 0x02) { asm volatile("pause"); }
+    asm_outb(0x64, 0x60);
+    while (asm_inb(0x64) & 0x02) { asm volatile("pause"); }
+    asm_outb(0x60, config);
+
+    // Send enable scanning command to keyboard
+    while (asm_inb(0x64) & 0x02) { asm volatile("pause"); }
+    asm_outb(0x60, 0xF4);
+
+    spin_unlock_irqrestore(&ps2_lock, rflags);
+}
+
 int8_t ps2_read_scan(void) {
     uint64_t rflags = spin_lock_irqsave(&ps2_lock);
 
