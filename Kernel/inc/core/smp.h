@@ -35,6 +35,8 @@ struct core_state {
     uint32_t lapic_id;
     uint32_t core_idx;
 
+    uint8_t shutdown_core;
+
     enum core_status status;
 
     struct thread_state* cur_thread;
@@ -53,3 +55,5 @@ void smp_yield(void) __attribute__((used));
 
 void smp_timer_handler(void) __attribute__((used));
 void smp_ipi_handler(void) __attribute__((used));
+
+void smp_shutdown(void) __attribute__((used));

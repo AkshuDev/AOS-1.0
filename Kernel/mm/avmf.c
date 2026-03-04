@@ -190,7 +190,7 @@ uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, int flags, uint64_t* ph
     if (*heap_ptr + true_size > heap_end) {serial_print("[AVMF] Not Enough VMemory for Allocation!\n"); return 0;}
 
     uint64_t phys = avmf_alloc_phys_contiguous(true_size);
-    if (!phys) {serial_print("[AVMF] Unable to retrieve physical address of VMemory Allocation!\n"); return 0;}
+    if (!phys) {serial_printf("[AVMF] Unable to retrieve physical address of VMemory Allocation for Size: 0x%llx bytes\n", true_size); return 0;}
 
     if (!avmf_alloc_region((uint64_t)*heap_ptr, phys, true_size, flags)) {serial_print("[AVMF] Failed to Allocate Internal Region for VMemory!\n"); return 0;}
     pager_map_range((uint64_t)*heap_ptr, phys, true_size, flags);

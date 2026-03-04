@@ -219,6 +219,7 @@ void virtio_init(struct gpu_device* gpu) {
     gpu->framebuffer->pitch = gpu->framebuffer->w * (gpu->framebuffer->bpp / 8);
     gpu->framebuffer->size = gpu->framebuffer->pitch * gpu->framebuffer->h;
 
+    gpu->active = 1;
     serial_print("[VIRTIO] Initialization completed!\n");
 }
 
@@ -262,4 +263,21 @@ void virtio_init_resources(struct gpu_device* gpu, int id) {
 
 void virtio_set_mode(struct gpu_device* gpu, uint32_t w, uint32_t h, uint32_t bpp) {
     (void)gpu; (void)w; (void)h; (void)bpp;
+}
+
+void virtio_switch_off(struct gpu_device* gpu) {
+    serial_print("[VIRTIO] Switching Off...\n");
+    common_cfg->device_status = 0; // Reset
+    while (common_cfg->device_status != 0) { __asm__ volatile("pause"); }
+    serial_print("[VIRTIO] GPU Reset completed!\n[VIRTIO] Unmapping used memory!\n");
+
+    // Unmap
+    avmf_free((uint64_t)virtq.desc);
+    avmf_free((uint64_t)cmd_buf);
+    avmf_free((uint64_t)resp_buf);
+
+    serial_print("[VIRTIO] Unmapping completed!\n");
+
+    gpu->active = 0;
+    serial_print("[VIRTIO] Switched off!\n");
 }

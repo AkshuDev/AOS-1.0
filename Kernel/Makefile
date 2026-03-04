@@ -1,12 +1,12 @@
 CC := gcc
-CFLAGS := -ffreestanding -m64 -fno-stack-protector -fno-pic -Wall -nostdlib -fno-pie -I ../PBFS/PBFS/headers -I ../Headers -I ./ -w
+CFLAGS := -ffreestanding -m64 -fno-stack-protector -fno-pic -Wall -nostdlib -fno-pie -I ../PBFS -I ../Headers -I ./ -w
 
 ASM := nasm
 ASMFLAGS := -f elf64
 
 LD := ld
 LDFLAGS := -m elf_x86_64 -nostdlib --nmagic --omagic -L ../PBFS/PBFS/build-fs -T linker.ld
-LDPBFS := ../PBFS/PBFS/build-fs/pbfs.a
+LDPBFS := ../PBFS/PBFS/build-fs/libpbfs-ndrivers.a
 
 OBJCOPY := objcopy
 
@@ -68,6 +68,9 @@ $(KERNEL_ELF): $(KERNEL_O) $(DRIVERS_O) $(MEMORY_FILES_O) $(ASM_x86_64_FILES_O)
 $(KERNEL_BIN): $(KERNEL_ELF)
 	@echo "Copying Kernel to binary..."
 	$(OBJCOPY) -O binary $(KERNEL_ELF) $(KERNEL_BIN)
+
+$(LDPBFS): ../PBFS/PBFS/src-fs/Makefile
+	@make -C ../PBFS/PBFS/src-fs
 
 clean:
 	@echo "Cleaning..."

@@ -62,13 +62,13 @@ case "$mode" in
         -device ide-hd,bus=ide.0,unit=0,drive=drive-ide0-0-0 \
         -device intel-iommu \
         -device virtio-gpu-pci,rombar=0 \
-        -device qemu-xhci,id=xhci \
-        -device usb-kbd,bus=xhci.0 \
-        -device usb-mouse,bus=xhci.0 \
         -vga virtio \
         -serial stdio \
         -d guest_errors \
         -no-shutdown
+        # -device qemu-xhci,id=xhci \
+        # -device usb-kbd,bus=xhci.0 \
+        # -device usb-mouse,bus=xhci.0 \
     ;;
 0) # Non-KVM Low-End
     qemu-system-x86_64 \

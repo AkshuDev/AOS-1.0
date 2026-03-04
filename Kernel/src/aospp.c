@@ -37,7 +37,10 @@ void aospp_start(void) {
 
     // Map framebuffer
     gpu_framebuffer.virt = avmf_alloc(gpu_framebuffer.size, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &(gpu_framebuffer.phys));
-
+    if (gpu_framebuffer.virt == 0) {
+        serial_print("Allocation failed for framebuffer!\n");
+        return;
+    }
     if (gpu_device.init_resources != NULL) gpu_device.init_resources(&gpu_device, 1);
     serial_print("Initializing Pyrion...\n");
     pyrion_init(&gpu_device);
@@ -45,7 +48,7 @@ void aospp_start(void) {
     display_ctx = pyrion_create_ctx();
     if (display_ctx == NULL) return;
 
-    smp_push_task(1, aos_start_vshell);
+    start_vshell(display_ctx);
 
     for (;;) asm("hlt");
 }

@@ -151,7 +151,9 @@ static void ap_kernel_entry(void) {
     while (1) {
         asm volatile("" : : : "memory");
         asm volatile("cli");
-        if (*(struct thread_state* volatile*)&core->ready_list != NULL) {
+        if (core->shutdown_core == 1) {
+            break;
+        } else if (*(struct thread_state* volatile*)&core->ready_list != NULL) {
             asm volatile("sti");
             spin_lock(&core->queue_lock);
             struct thread_state* next = core->ready_list;
@@ -172,6 +174,10 @@ static void ap_kernel_entry(void) {
             core->status = CORE_STATUS_RUNNING;
         }
     }
+
+    asm volatile("cli");
+    asm volatile("wbinvd");
+    for (;;) { asm volatile("hlt"); }
 }
 
 void smp_ipi_handler(void) {
@@ -253,6 +259,11 @@ void smp_init(void) {
     *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x500) = current_cr3;
 
     for (uint32_t i = 0; i < (uint32_t)core_count; i++) {
+        if (cores[i] != NULL) {
+            serial_printf("[SMP] Warning: Core %d already registered, skipping!\n", i);
+            continue;
+        }
+
         uint8_t id = apic_ids[i];
         if (id == bsp_apic_id) {bsp_core_idx = i; continue;}
 
@@ -290,6 +301,7 @@ void smp_init(void) {
         ap_core_state->stack = (void*)((uintptr_t)ap_stack + 16384);
         ap_core_state->status = CORE_STATUS_READY;
         ap_core_state->next_tid = 0;
+        ap_core_state->shutdown_core = 0;
 
         *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x510) = (uintptr_t)ap_stack + 16384;
         *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x518) = (uintptr_t)ap_kernel_entry;
@@ -344,4 +356,20 @@ void smp_init(void) {
     ap_init_core_state(bsp_state);
 
     asm volatile("sti");
+}
+
+void smp_shutdown(void) {
+    for (int i = 0; i < 256; i++) {
+        if (cores[i] == NULL) continue;
+        cores[i]->shutdown_core = 1;
+        
+        // Broadcast INIT IPI to reset the AP
+        lapic_write(LAPIC_REG_ICR_HIGH, cores[i]->lapic_id << 24);
+        lapic_write(LAPIC_REG_ICR_LOW, 0x00004500); // INIT, level=assert
+        kdelay(10);
+
+        // Deassert INIT3
+        lapic_write(LAPIC_REG_ICR_LOW, 0x00004000); // INIT deassert
+        kdelay(10);
+    }
 }

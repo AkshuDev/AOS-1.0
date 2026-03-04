@@ -16,7 +16,7 @@
 #define PCI_BAR0 0x10
 #define PCI_BAR_COUNT 6
 
-#define PCIE_VIRT_BASE 0xFFFFC00000000000ULL
+#define PCIE_VIRT_BASE AOS_PCIe_VIRT_BASE
 
 typedef struct {
     uint16_t vendor_id;
@@ -42,9 +42,9 @@ typedef struct {
 uint8_t pcie_init() __attribute__((used));
 uint32_t pcie_read_bar(uint8_t bus, uint8_t slot, uint8_t func, uint8_t bar_index) __attribute__((used));
 uint32_t pcie_read(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) __attribute__((used));
-int pcie_find_nvme(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0) __attribute__((used));
-int pcie_find_sata(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0) __attribute__((used));
-int pcie_find_vga(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0) __attribute__((used));
+uint16_t pcie_config_read16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) __attribute__((used));
+int pcie_write(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value) __attribute__((used));
 int pcie_find(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint16_t target_vendor, uint8_t use_vendor) __attribute__((used));
 int pcie_find_ex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint8_t target_subclass, uint8_t target_progifclass, uint16_t target_vendor, uint8_t use_vendor) __attribute__((used));
 int pcie_find_rex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint8_t target_subclass, uint8_t target_progifclass, uint8_t target_revision, uint16_t target_vendor, uint8_t use_vendor) __attribute__((used));
+void pcie_enable_busmaster(uint8_t bus, uint8_t slot, uint8_t func) __attribute__((used));

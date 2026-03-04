@@ -41,7 +41,10 @@ static void vshell_cmd_sysinfo(void) {
     char* apic_present = SystemInfo->apic_present ? "True" : "False";
 
     pyrion_builtin_print(vshell_ctx, "Additional Information:\n");
-    pyrion_builtin_printf(vshell_ctx, "  APIC Present: %s\n  TSC Freq. : %d Hz\n", apic_present, SystemInfo->tsc_freq_hz);
+    pyrion_builtin_printf(vshell_ctx, "  APIC Present: %s\n  TSC Freq. : %llu Hz\n", apic_present, SystemInfo->tsc_freq_hz);
+    uint64_t ghz = SystemInfo->tsc_freq_hz / 1000000000;
+    uint64_t mhz = (SystemInfo->tsc_freq_hz % 1000000000) / 1000000;
+    pyrion_builtin_printf(vshell_ctx, "  CPU Clock: %llu.%03llu GHz\n", ghz, mhz);
 }
 
 static uint8_t vshell_handle_user_input(char* buf, int max_len, int* len) {
@@ -84,14 +87,16 @@ static void vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len) {
 
     if (last_cmd == 1 || strcmp(cmd_buf, "exit") == 0) {
         if (last_cmd == 1) {
-            if ((cmd_buf[0] == 'y' || cmd_buf[0] == 'Y') && *cmd_len == 1)
+            if ((cmd_buf[0] == 'y' || cmd_buf[0] == 'Y') && *cmd_len == 1) {
                 vshell_running = 0;
-            else
+                asm("int $0x50");
+            } else {
                 pyrion_builtin_print(vshell_ctx, "\nCancelled 'exit' Command!");
+            }
             pyrion_builtin_printc(vshell_ctx, '\n');
             last_cmd = 0;
         } else {
-            pyrion_builtin_print(vshell_ctx, "'Exit' Will not shutdown the machine but rather return to the normal shell\n NOTE: The shell will work however the display will be hanged\n  Sure (y/N): ");
+            pyrion_builtin_print(vshell_ctx, "'Exit' Will not shutdown the machine but rather start AOS Safety Shell\nSure (y/N): ");
             last_cmd = 1;
             *cmd_len = 0;
             return;

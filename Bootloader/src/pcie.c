@@ -58,79 +58,6 @@ uint32_t pcie_read(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
     return asm_inl(0xCFC);
 }
 
-int pcie_find_sata(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0) {
-    for (uint8_t b = 0; b < PCI_MAX_BUS; b++) {
-        for (uint8_t s = 0; s < PCI_MAX_SLOT; s++) {
-            for (uint8_t f = 0; f < PCI_MAX_FUNC; f++) {
-                uint32_t data = pcie_read(b, s, f, 0);
-                uint16_t vendor = data & 0xFFFF;
-                if (vendor == 0xFFFF) continue;
-                
-                uint32_t class_data = pcie_read(b, s, f, 0x08);
-                uint8_t class = (class_data >> 24) & 0xFF;
-                uint8_t subclass = (class_data >> 16) & 0xFF;
-                
-                if (class == PCI_CLASS_MASS_STORAGE && subclass == PCI_SUBCLASS_AHCI) { // SATA (AHCI)
-                    *bus = b;
-                    *slot = s;
-                    *func = f;
-                    *bar0 = pcie_read(b, s, f, 0x10); // MMIO base
-                    return 1;
-                }
-            }
-        }
-    }
-    return 0;
-}
-
-int pcie_find_nvme(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0) {
-    for (uint8_t b = 0; b < PCI_MAX_BUS; b++) {
-        for (uint8_t s = 0; s < PCI_MAX_SLOT; s++) {
-            for (uint8_t f = 0; f < PCI_MAX_FUNC; f++) {
-                uint32_t data = pcie_read(b, s, f, 0);
-                uint16_t vendor = data & 0xFFFF;
-                if (vendor == 0xFFFF) continue;
-                
-                uint32_t class_data = pcie_read(b, s, f, 0x08);
-                uint8_t class = (class_data >> 24) & 0xFF;
-                uint8_t subclass = (class_data >> 16) & 0xFF;
-                
-                if (class == PCI_CLASS_MASS_STORAGE && subclass == PCI_SUBCLASS_NVMe) { // NVMe
-                    *bus = b;
-                    *slot = s;
-                    *func = f;
-                    *bar0 = pcie_read(b, s, f, 0x10); // MMIO base
-                    return 1;
-                }
-            }
-        }
-    }
-    return 0;
-}
-
-
-int pcie_find_vga(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0) {
-    for (uint8_t b = 0; b < PCI_MAX_BUS; b++) {
-        for (uint8_t s = 0; s < PCI_MAX_SLOT; s++) {
-            for (uint8_t f = 0; f < PCI_MAX_FUNC; f++) {
-                uint32_t data = pcie_read(b, s, f, 0);
-                uint16_t vendor = data & 0xFFFF;
-                if (vendor == 0xFFFF) continue;
-                uint32_t class_data = pcie_read(b, s, f, 0x08);
-                uint8_t class = (class_data >> 24) & 0xFF;
-                if (class == PCI_VGA_DISPLAY) { // VGA controller
-                    *bus = b;
-                    *slot = s;
-                    *func = f;
-                    *bar0 = pcie_read(b, s, f, 0x10);
-                    return 1;
-                }
-            }
-        }
-    }
-    return 0;
-}
-
 int pcie_find(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint16_t target_vendor, uint8_t use_vendor) {
     for (uint8_t b = 0; b < PCI_MAX_BUS; b++) {
         for (uint8_t s = 0; s < PCI_MAX_SLOT; s++) {
@@ -199,7 +126,7 @@ int pcie_find_rex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, ui
                     class == target_class &&
                     class_sub == target_subclass &&
                     class_progif == target_progifclass &&
-                    revision == revision
+                    revision == target_revision
                 ) {
                     *bus = b;
                     *slot = s;
@@ -211,4 +138,41 @@ int pcie_find_rex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, ui
         }
     }
     return 0;
+}
+
+uint16_t pcie_config_read16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
+    uint32_t value = pcie_read(bus, slot, func, offset & 0xFC);
+
+    if (offset & 2)
+        return (uint16_t)(value >> 16);
+    else
+        return (uint16_t)(value & 0xFFFF);
+}
+
+int pcie_write(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value) {
+    if (mcfg_table) {
+        int eidx = get_segment(bus);
+        if (eidx >= 0 && eidx < mcfg_num_segs) {
+            struct acpi_mcfg_entry* e = &mcfg_table->entries[eidx];
+
+            uint64_t virt_addr =(uint64_t)(PCIE_VIRT_BASE + ((uint64_t)e->pcie_segment << 28) + (((uint64_t)bus - e->start_bus) << 20) + ((uint64_t)slot << 15) + ((uint64_t)func << 12) + offset);
+
+            *(volatile uint32_t*)virt_addr = value;
+            return 1;
+        }
+    }
+
+    // Legacy
+    uint32_t addr = (1U << 31) | (bus << 16) | (slot << 11) | (func << 8) | (offset & 0xFC);
+
+    asm_outl(0xCF8, addr);
+    asm_outl(0xCFC, value);
+    return 1;
+}
+
+void pcie_enable_busmaster(uint8_t bus, uint8_t slot, uint8_t func) {
+    uint32_t cmd_reg = pcie_read(bus, slot, func, 0x04);
+    cmd_reg |= (1 << 1); // memory space enable
+    cmd_reg |= (1 << 2); // bus master enable
+    pcie_write(bus, slot, func, 0x04, cmd_reg);
 }

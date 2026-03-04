@@ -163,4 +163,22 @@ void cmd_start(char* program, int* lines, struct VMemDesign* vmem_design) {
     }
 }
 
+void aos_vmss_start(void) {
+    asm("int $0x51");
+
+    struct VMemDesign vmem_design = {
+        .x = 0,
+        .y = 0,
+        .fg = VMEM_COLOR_WHITE,
+        .bg = VMEM_COLOR_BLACK,
+        .serial_out = 1
+    };
+
+    vmem_set_cursor(0, 0);
+    vmem_clear_screen(&vmem_design);
+    vmem_print(&vmem_design, "Welcome To AOS VM Safety Shell!\n\n");
+    aos_shell_pm();
+    for (;;) asm("hlt");
+}
+
 asm(".globl kernel_main");

@@ -31,6 +31,7 @@ void pyrion_init(struct gpu_device* device) {
 }
 
 struct pyrion_ctx* pyrion_create_ctx(void) {
+    serial_print("[Pyrion] Creating Context...\n");
     uint64_t ctx_phys = 0;
     uint64_t ctx_virt = (uint64_t)avmf_alloc(sizeof(struct pyrion_ctx), MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, &ctx_phys);
 
@@ -47,6 +48,7 @@ struct pyrion_ctx* pyrion_create_ctx(void) {
     ctx->fb_info.size = 0; ctx->fb_info.bpp = gdisplay_info.bpp;
     
     ctx->valid = 0;
+    serial_print("[Pyrion] Context Created\n");
     return ctx;
 }
 
@@ -66,11 +68,16 @@ void pyrion_viewport(struct pyrion_ctx* ctx, struct pyrion_rect* viewport) {
         viewport->width >= 0 &&
         viewport->height >= 0
     )) return;
-    if (viewport->width > gdisplay_info.width)
+    if (viewport->width > gdisplay_info.width) {
         viewport->width = gdisplay_info.width;
-    if (viewport->height > gdisplay_info.height)
+        serial_printf("[Pyrion] Viewport width > Display width, Clamping to %d\n", gdisplay_info.width);
+    }
+    if (viewport->height > gdisplay_info.height) {
         viewport->height = gdisplay_info.height;
+        serial_printf("[Pyrion] Viewport height > Display height, Clamping to %d\n", gdisplay_info.height);
+    }
 
+    serial_printf("[Pyrion] Setting Viewport: W-%u H-%u X-%u Y-%u\n", viewport->width, viewport->height, viewport->x, viewport->y);
     ctx->fb_info.addr = avmf_alloc(viewport->width * viewport->height * sizeof(uint32_t), MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, &ctx->fb_info.phys_addr);
     if (ctx->fb_info.addr == NULL) return;
     ctx->fb_info.width = viewport->width;
@@ -84,6 +91,7 @@ void pyrion_viewport(struct pyrion_ctx* ctx, struct pyrion_rect* viewport) {
     ctx->fb_cursor.bg_color = viewport->color;
 
     ctx->viewport = *viewport;
+    serial_print("[Pyrion] Viewport set!\n");
 }
 
 void pyrion_flush(struct pyrion_ctx* ctx) {
@@ -314,3 +322,9 @@ void pyrion_conf(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t fg, ui
     ctx->fb_cursor.y = y;
 }
 
+void pyrion_switch_off(void) {
+    // NOTE: Highly dangerous, switches off the gpu!
+    serial_print("[Pyrion] Switching off the GPU, going to VGA Mode!\n");
+    if (gdevice->switch_off != NULL) gdevice->switch_off(gdevice);
+    serial_print("[Pyrion] In VGA Mode!\n");
+}

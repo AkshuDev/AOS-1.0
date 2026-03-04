@@ -230,3 +230,4 @@ void virtio_init(struct gpu_device* gpu) __attribute__((used));
 void virtio_init_resources(struct gpu_device* gpu, int resource_id) __attribute__((used));
 void virtio_flush(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, uint32_t h, int resource_id) __attribute__((used));
 void virtio_set_mode(struct gpu_device* gpu, uint32_t w, uint32_t h, uint32_t bpp) __attribute__((used));
+void virtio_switch_off(struct gpu_device* gpu) __attribute__((used));

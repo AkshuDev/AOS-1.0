@@ -3,18 +3,13 @@ OBJCOPY := objcopy
 LD := ld
 ASM := nasm
 
-CFLAGS := -ffreestanding -mno-red-zone -mno-sse -O0 -fno-stack-protector -g -fno-pic -nostdlib -m64 -I ../PBFS/PBFS/headers -I ../PBFS/PBFS/PEFI/includes -I ../Headers -w
+CFLAGS := -ffreestanding -mno-red-zone -mno-sse -O0 -fno-stack-protector -g -fno-pic -nostdlib -m64 -I ../PBFS -I ../Headers -w
 LDFLAGS := -m elf_x86_64 -T linker.ld -g
 LDENDFLAGS := 
 ASMFLAGS := -f elf32 -g
 ASMFLAGS_BIN := -f bin
 
 BUILD_DIR := build
-
-PBFS_DISK_IO := ../PBFS/PBFS/tools/disk_io.asm 
-PBFS_DISK_PARAMS := ../PBFS/PBFS/tools/disk_params.asm
-PBFS_DISK_IO_O := $(BUILD_DIR)/disk_io.o
-PBFS_DISK_PARAMS_O := $(BUILD_DIR)/disk_params.o
 
 KERNEL := ../Kernel
 DRIVER := $(KERNEL)/drivers
@@ -79,14 +74,6 @@ $(stage2_bin): $(stage2)
 $(stage3_o): $(stage3)
 	@echo "Compiling Stage 3 AOS Bootloader..."
 	$(CC) $(CFLAGS) -c $(stage3) -o $(stage3_o)
-
-$(PBFS_DISK_PARAMS_O): $(PBFS_DISK_PARAMS)
-	@echo "Assembling PBFS Tools..."
-	$(ASM) $(ASMFLAGS) $(PBFS_DISK_PARAMS) -o $(PBFS_DISK_PARAMS_O)
-
-$(PBFS_DISK_IO_O): $(PBFS_DISK_IO)
-	@echo "Assembling PBFS Tools..."
-	$(ASM) $(ASMFLAGS) $(PBFS_DISK_IO) -o $(PBFS_DISK_IO_O)
 
 clean:
 	@echo "Cleaning..."

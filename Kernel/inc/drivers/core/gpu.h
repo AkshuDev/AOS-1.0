@@ -23,6 +23,9 @@ typedef struct gpu_device {
     void (*set_mode)(struct gpu_device* gpu, uint32_t width, uint32_t height, uint32_t bpp);
     void (*swap_buffers)(struct gpu_device* gpu);
     void (*flush)(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, uint32_t h, int resource_id);
+    void (*switch_off)(struct gpu_device* gpu);
+
+    uint8_t active;
 } gpu_device_t;
 
 void svga_write(uintptr_t mmio_base, uint32_t index, uint32_t value, uint32_t svga_index_port, uint32_t svga_value_port) __attribute__((used));

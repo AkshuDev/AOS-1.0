@@ -39,6 +39,8 @@ extern void aos_system_exception_asm_31(void);
 
 extern void aos_int_smp_timer(void);
 extern void aos_int_smp_ipi(void);
+extern void aos_int_avmss(void); // AOS Video Memory Safety Shell
+extern void aos_int_gpu_switch_off(void);
 
 idt_entry_t idt[IDT_SIZE];
 idt_ptr_t idt_ptr;
@@ -96,6 +98,8 @@ void idt_init(void) {
 
     set_idt_entry(0x30, (uint64_t)aos_int_smp_timer, 0x08, 0x8E);
     set_idt_entry(0x40, (uint64_t)aos_int_smp_ipi, 0x08, 0x8E);
+    set_idt_entry(0x50, (uint64_t)aos_int_avmss, 0x08, 0x8E);
+    set_idt_entry(0x51, (uint64_t)aos_int_gpu_switch_off, 0x08, 0x8E);
 
     asm volatile("lidt %0" : : "m"(idt_ptr));
     asm volatile ("sti");

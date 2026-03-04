@@ -86,6 +86,8 @@ void get_framebuffer_info_virtio(PCIe_FB* fb, pcie_device_t* device, gpu_device_
     gpu->set_mode = virtio_set_mode;
     gpu->swap_buffers = NULL;
     gpu->flush = virtio_flush;
+    gpu->switch_off = virtio_switch_off;
+    gpu->active = 0;
 }
 
 uint64_t gpu_get_framebuffer_and_info(PCIe_FB* fb, pcie_device_t* dev, gpu_device_t* gpu) {
