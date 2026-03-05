@@ -40,7 +40,7 @@ $(DISK): $(BOOTLOADER_STAGE1) $(BOOTLOADER_STAGE2) $(BOOTLOADER_STAGE3) $(AOS_KE
 	$(DD) if=$(BOOTLOADER_STAGE1) of=$(DISK) bs=512 count=1 conv=notrunc
 	$(DD) if=$(BOOTLOADER_STAGE2) of=$(DISK) bs=512 seek=5 conv=notrunc
 	$(DD) if=$(BOOTLOADER_STAGE3) of=$(DISK) bs=512 seek=45 conv=notrunc
-	$(DD) if=$(AOS_KERNEL) of=$(DISK) bs=512 seek=80 conv=notrunc
+	$(DD) if=$(AOS_KERNEL) of=$(DISK) bs=512 seek=200 conv=notrunc
 	@echo "DONE!"
 
 $(BOOTLOADER_STAGE1) $(BOOTLOADER_STAGE2) $(BOOTLOADER_STAGE3):

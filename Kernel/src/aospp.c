@@ -7,7 +7,7 @@
 #include <inc/drivers/core/framebuffer.h>
 #include <inc/drivers/io/io.h>
 #include <inc/core/pcie.h>
-#include <inc/drivers/core/gpu.h>
+#include <inc/drivers/gpu/gpu.h>
 #include <inc/drivers/gpu/apis/pyrion.h>
 #include <inc/core/vshell.h>
 #include <inc/core/smp.h>
@@ -29,22 +29,22 @@ void aos_start_vshell(void) {
 }
 
 void aospp_start(void) {
-    serial_print("Searching for GPU...\n");
+    serial_print("[AOS++] Searching for GPU...\n");
     (void)gpu_get_framebuffer_and_info(&gpu_framebuffer, &pcie_gpu_device, &gpu_device); // FB is useless, we query device directly, this is for legacy
 
-    serial_print("Initializing GPU Driver...\n");
+    serial_print("[AOS++] Initializing GPU Driver...\n");
     if (gpu_device.init != NULL) gpu_device.init(&gpu_device);
 
     // Map framebuffer
     gpu_framebuffer.virt = avmf_alloc(gpu_framebuffer.size, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &(gpu_framebuffer.phys));
     if (gpu_framebuffer.virt == 0) {
-        serial_print("Allocation failed for framebuffer!\n");
+        serial_print("[AOS++] Allocation failed for framebuffer!\n");
         return;
     }
     if (gpu_device.init_resources != NULL) gpu_device.init_resources(&gpu_device, 1);
-    serial_print("Initializing Pyrion...\n");
+    serial_print("[AOS++] Initializing Pyrion...\n");
     pyrion_init(&gpu_device);
-    serial_print("Creating main display Pyrion Context...\n");
+    serial_print("[AOS++] Creating main display Pyrion Context...\n");
     display_ctx = pyrion_create_ctx();
     if (display_ctx == NULL) return;
 

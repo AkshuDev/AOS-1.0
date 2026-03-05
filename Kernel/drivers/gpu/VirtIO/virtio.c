@@ -7,7 +7,7 @@
 
 #include <inc/drivers/gpu/virtio.h>
 #include <inc/drivers/io/io.h>
-#include <inc/drivers/core/gpu.h>
+#include <inc/drivers/gpu/gpu.h>
 #include <inc/core/pcie.h>
 
 #define ALIGN_UP(x, align) (((x) + ((align) - 1)) & ~((align) - 1))

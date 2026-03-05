@@ -1,7 +1,7 @@
 #pragma once
 
 #include <inttypes.h>
-#include <inc/drivers/core/gpu.h>
+#include <inc/drivers/gpu/gpu.h>
 #include <inc/drivers/core/framebuffer.h>
 
 enum pyrion_color_formats {

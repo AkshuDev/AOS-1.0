@@ -3,7 +3,7 @@ OBJCOPY := objcopy
 LD := ld
 ASM := nasm
 
-CFLAGS := -ffreestanding -mno-red-zone -mno-sse -O0 -fno-stack-protector -g -fno-pic -nostdlib -m64 -I ../PBFS -I ../Headers -w
+CFLAGS := -ffreestanding -mno-red-zone -mno-sse -O0 -fno-stack-protector -g -fno-pic -nostdlib -m64 -I ../PBFS -I ../Headers -I ../Kernel -w
 LDFLAGS := -m elf_x86_64 -T linker.ld -g
 LDENDFLAGS := 
 ASMFLAGS := -f elf32 -g
@@ -17,7 +17,9 @@ DRIVER_CORE := $(DRIVER)/core
 DRIVERS_SRC := $(DRIVER)/io/io.c \
 			   $(KERNEL)/src/kfuncs.c
 BTL_DRIVERS_SRC := $(SRC_DIR)/pcie.c \
-					$(SRC_DIR)/acpi.c
+					$(SRC_DIR)/acpi.c \
+					$(SRC_DIR)/drive.c \
+					$(SRC_DIR)/drivers/sata.c
 DRIVERS_O := $(patsubst $(KERNEL)/%.c,$(BUILD_DIR)/%.o,$(DRIVERS_SRC))
 BTL_DRIVERS_O := $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(BTL_DRIVERS_SRC))
 
@@ -58,7 +60,7 @@ $(stage3_bin): $(stage3_elf)
 
 $(BUILD_DIR)/%.o: $(KERNEL)/%.c
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -I ../Kernel -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@

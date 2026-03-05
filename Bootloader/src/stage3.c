@@ -1,7 +1,9 @@
 #include <system.h>
-#include <../Kernel/inc/core/kfuncs.h>
-#include <../Kernel/inc/drivers/io/io.h>
-#include <../Kernel/inc/core/acpi.h>
+
+#include <inc/core/kfuncs.h>
+#include <inc/drivers/io/io.h>
+#include <inc/core/acpi.h>
+#include <inc/drivers/io/drive.h>
 
 void pm_print_hex(struct VMemDesign* cursor, unsigned int val) {
     char hex[9];
@@ -74,7 +76,8 @@ void stage3(void) {
         .x = 0,
         .y = 0,
         .fg = VMEM_COLOR_WHITE,
-        .bg = VMEM_COLOR_BLACK
+        .bg = VMEM_COLOR_BLACK,
+        .serial_out = 1
     };
 
     acpi_init();
@@ -120,16 +123,34 @@ void stage3(void) {
 
     vmem_print(&cursor, "Loading AOS...\n");
 
+    uint8_t found_drive = 0;
+    drive_device_t cur_drive = {0};
+
     struct ATA_DP dp = (struct ATA_DP){
         .count = 150,
-        .lba = 80
+        .lba = 200
     };
-    
-    int out = ata_read_sectors(&dp, AOS_KERNEL_LOC, boot_drive);
-    if (out != 0) {
-        cursor.fg = VMEM_COLOR_RED;
-        vmem_print(&cursor, "Disk Error!\n");
-        for (;;) asm("hlt");
+
+    if (get_available_drives(&cur_drive) == 1) {
+        if (cur_drive.active != 1) {
+            if (cur_drive.init != NULL) cur_drive.init();
+        }
+        if (cur_drive.read_blk != NULL) {
+            serial_print("Running Kernel Read...\n");
+            found_drive = cur_drive.read_blk(cur_drive.cur_port, dp.lba, dp.count, AOS_KERNEL_LOC);
+            serial_printf("Read worked: %d\n", found_drive);
+        }
+    }
+
+    if (found_drive != 1) {
+        vmem_print(&cursor, "No drive found, using ATA!\n");
+        
+        int out = ata_read_sectors(&dp, AOS_KERNEL_LOC, boot_drive);
+        if (out != 0) {
+            cursor.fg = VMEM_COLOR_RED;
+            vmem_print(&cursor, "Disk Error!\n");
+            for (;;) asm("hlt");
+        }
     }
     cursor.fg = VMEM_COLOR_GREEN;
     vmem_print(&cursor, "Loaded Kernel!\n");

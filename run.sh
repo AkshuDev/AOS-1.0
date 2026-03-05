@@ -36,9 +36,9 @@ case "$mode" in
         -M q35,accel=kvm \
         -cpu host,migratable=no,+invtsc,+x2apic \
         -smp 16,sockets=1,cores=8,threads=2 \
-        -drive file=Bin/disk.pbfs,format=raw,if=none,id=drive-ide0-0-0 \
-        -device piix3-ide,id=ide \
-        -device ide-hd,bus=ide.0,unit=0,drive=drive-ide0-0-0 \
+        -drive file=Bin/disk.pbfs,format=raw,if=none,id=drive0 \
+        -device ahci,id=ahci \
+        -device ide-hd,bus=ahci.0,unit=0,drive=drive0 \
         -device intel-iommu \
         -device virtio-gpu-pci,rombar=0 \
         -device qemu-xhci,id=xhci \
@@ -48,7 +48,7 @@ case "$mode" in
         -net nic -net user \
         -serial stdio \
         -enable-kvm \
-        -d guest_errors \
+        -d guest_errors,cpu_reset,int \
         -no-shutdown
     ;;
 1) # Non-KVM High-End
@@ -57,14 +57,14 @@ case "$mode" in
         -M q35 \
         -cpu Haswell,-hle,-rtm,-pcid,-invpcid,-tsc-deadline,+x2apic,vendor=GenuineIntel \
         -smp 16,sockets=1,dies=1,cores=16,threads=1 \
-        -drive file=Bin/disk.pbfs,format=raw,if=none,id=drive-ide0-0-0 \
-        -device piix3-ide,id=ide \
-        -device ide-hd,bus=ide.0,unit=0,drive=drive-ide0-0-0 \
+        -drive file=Bin/disk.pbfs,format=raw,if=none,id=drive0 \
+        -device ahci,id=ahci \
+        -device ide-hd,bus=ahci.0,unit=0,drive=drive0 \
         -device intel-iommu \
         -device virtio-gpu-pci,rombar=0 \
         -vga virtio \
         -serial stdio \
-        -d guest_errors \
+        -d guest_errors,cpu_reset,int \
         -no-shutdown
         # -device qemu-xhci,id=xhci \
         # -device usb-kbd,bus=xhci.0 \
@@ -80,7 +80,7 @@ case "$mode" in
         -device usb-mouse,bus=uhci0.0 \
         -vga virtio \
         -serial stdio \
-        -d guest_errors \
+        -d guest_errors,cpu_reset,int \
         -no-shutdown \
         -no-reboot
     ;;

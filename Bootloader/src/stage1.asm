@@ -96,7 +96,7 @@ ebx_struct_addr equ 0x8004
 dap_s2:
     db 0x10 ; size (16 bytes)
     db 0 ; reserved
-    dw 40 ; sectors to read
+    dw 33 ; sectors to read
     dw 0x0000 ; dest offset
     dw 0x1000 ; dest segment
     dq 5 ; starting lba
@@ -104,7 +104,7 @@ dap_s2:
 dap_s3:
     db 0x10 ; size (16 bytes)
     db 0 ; reserved
-    dw 33 ; sectors to read
+    dw 49 ; sectors to read
     dw 0x0000 ; dest offset
     dw 0x1500 ; dest segment
     dq 45 ; starting lba

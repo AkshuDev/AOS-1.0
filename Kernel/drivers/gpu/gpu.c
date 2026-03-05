@@ -2,7 +2,7 @@
 #include <asm.h>
 
 #include <inc/core/pcie.h>
-#include <inc/drivers/core/gpu.h>
+#include <inc/drivers/gpu/gpu.h>
 #include <inc/drivers/io/io.h>
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>

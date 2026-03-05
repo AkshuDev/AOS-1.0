@@ -8,6 +8,8 @@
 #include <inc/core/pcie.h>
 #include <inc/core/smp.h>
 
+#include <inc/drivers/io/drive.h>
+
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
 
@@ -24,6 +26,9 @@ static char* help_shell = "Usage: [COMMAND]\n"
     "\tmemdump <addr> <size>: Prints memory at the specified address for the specified size\n";
 
 static int help_shell_nlines = 8;
+
+static drive_device_t current_drive = {0};
+static uint8_t current_drive_works = 0;
 
 // Define a static stack array
 void kernel_main(void) __attribute__((used, noinline, section(".start"), noreturn));
@@ -48,6 +53,32 @@ void kernel_main(void) {
 
     ktimer_calibrate();
     smp_init();
+
+    // Search for drives
+    current_drive_works = 0;
+    if (get_available_drives(&current_drive) != 1) {
+        serial_print("[AOS] Failed to find any I/O Drives!\n");
+    } else {
+        if (current_drive.active != 1) {
+            if (current_drive.init != NULL) current_drive.init();
+        }
+        // else already initialized by the func
+        // Print info
+        serial_printf("[AOS] Found I/O Drive ->\n\tName: %s\n\tBlock Size: %u\n\tTotal Blocks: %u\n", current_drive.name, current_drive.block_dev.block_size, current_drive.block_dev.block_count);
+        // do test read for now
+        char tmp[512];
+        uint8_t read = 0;
+        if (current_drive.read_blk != NULL) {
+            if (current_drive.read_blk(current_drive.cur_port, 0, 1, tmp) == 1)
+                read = 1;
+        }
+        if (read == 0) {
+            serial_print("[AOS] Test read from drive failed! Scrapping drive!\n");
+        } else {
+            serial_print("[AOS] Drive passed the tests, using drive!\n");
+            current_drive_works = 1;
+        }
+    }
 
     // Now safe to use local variables
     struct VMemDesign vmem_design = {

@@ -1,4 +1,6 @@
+#include "inc/core/idt.h"
 #include <asm.h>
+#include <sys/types.h>
 #include <system.h>
 
 #include <inc/core/acpi.h>
@@ -261,12 +263,10 @@ void acpi_init(void) {
 
 static void acpi_8042_reboot(void) {
     uint8_t good = 0x02;
-    while (good & 0x02)
-        good = asm_inb(0x64);
-    asm_outb(0x64, 0xFE);
-    for (;;) {
-        asm volatile("hlt");
+    for (int i = 0; i < 100000; i++) {
+        if (!(asm_inb(0x64) & 0x02)) break;
     }
+    asm_outb(0x64, 0xFE);
 }
 
 static void acpi_io_reboot(void) {
@@ -277,31 +277,46 @@ static void acpi_io_reboot(void) {
     asm_outb(fadt_table->reset_reg.address, fadt_table->reset_val);
 }
 
+static void acpi_pci_reboot(void) {
+    asm_outb(0x02, 0xCF9);
+    kdelay(1);
+    asm_outb(0x06, 0xCF9);
+}
+
+static void acpi_triple_fault_reboot(void) {
+    idt_ptr_t idt = {0};
+    asm volatile("lidt %0" : : "m"(idt));
+    asm volatile("int $3");
+}
+
 void acpi_reboot(void) {
     smp_shutdown();
     if (!fadt_table) {
-        serial_print("[ACPI] CANNOT REBOOT! Trying multiple reboot methods... (No FADT Found)\n");
-        acpi_io_reboot();
         acpi_8042_reboot();
+        acpi_pci_reboot();
+        acpi_triple_fault_reboot();
 
         for (;;) {asm volatile("hlt");}
     }
     uint64_t virt = avmf_alloc_virt(1, MALLOC_TYPE_KERNEL);
     if (virt == 0) {
-        serial_print("[ACPI] CANNOT REBOOT! Trying multiple reboot methods... (Virtual Memory Allocation Failed)\n");
-        acpi_io_reboot();
         acpi_8042_reboot();
+        acpi_pci_reboot();
+        acpi_triple_fault_reboot();
 
         for (;;) {asm volatile("hlt");}
     }
 
-    pager_map_range(virt, fadt_table->reset_reg.address, 1, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
-    uint8_t* reg = (uint8_t*)((uintptr_t)virt);
-    *reg = fadt_table->reset_val;
+    if (fadt_table->reset_reg.address_space == 0) {
+        uint8_t* reg = (uint8_t*)((uintptr_t)(AOS_DIRECT_MAP_BASE + fadt_table->reset_reg.address));
+        *reg = fadt_table->reset_val;
+    } else {
+        acpi_io_reboot();
+    }
     
-    serial_print("[ACPI] CANNOT REBOOT! Trying multiple reboot methods... (Unknown cause)\n");
-    acpi_io_reboot();
     acpi_8042_reboot();
+    acpi_pci_reboot();
+    acpi_triple_fault_reboot();
 
     for (;;) {asm volatile("hlt");}
 }

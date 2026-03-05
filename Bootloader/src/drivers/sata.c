@@ -2,9 +2,6 @@
 #include <inttypes.h>
 #include <asm.h>
 
-#include <inc/mm/avmf.h>
-#include <inc/mm/pager.h>
-
 #include <inc/core/pcie.h>
 #include <inc/core/kfuncs.h>
 
@@ -17,6 +14,89 @@
 #define PBFS_NDRIVERS
 #include <PBFS/headers/pbfs-fs.h>
 #undef PBFS_NDRIVERS
+
+// Pager stuff due to Bootloader
+#define PAGE_SIZE 4096
+#define PAGE_PRESENT 0x1 // Page Present
+#define PAGE_RW 0x2 // Read/Write
+#define PAGE_USER 0x4 // User-mode accessable
+#define PAGE_PWT 0x8 // Write through
+#define PAGE_PCD 0x10 // Cache-disable
+#define PAGE_ACCESSED 0x20 // Accessed
+#define PAGE_DIRTY 0x40 // Dirty
+#define PAGE_PAT 0x80 // Page Attribute Table
+#define PAGE_GLOBAL 0x100 // Global
+#define PAGE_XD 0x8000000000000000ULL // EXEC DISABLE
+
+typedef uint64_t page_entry_t;
+static uint64_t next_free_phys = 0x1000000;
+
+static inline uint64_t get_cr3(void) {
+    uint64_t cr3;
+    asm volatile("mov %%cr3, %0" : "=r"(cr3));
+    return cr3 & ~0xFFF; // mask out flags, get page table base
+}
+
+void* alloc_4k_page(void) {
+    uint64_t page = next_free_phys;
+    next_free_phys += 0x1000;
+
+    // optional: zero out page
+    uint8_t* ptr = (uint8_t*)page;
+    for (int i = 0; i < 0x1000; i++) ptr[i] = 0;
+
+    return (void*)page;
+}
+
+static void map_phys_range(uint64_t virt, uint64_t phys, uint64_t size, uint64_t flags) {
+    uint64_t* pml4 = (uint64_t*)get_cr3();
+    uint64_t pages = (size + 0xFFF) / 0x1000; // Number of 4KB pages
+
+    for (uint64_t i = 0; i < pages; i++) {
+        uint64_t vaddr = virt + i * 0x1000;
+        uint64_t paddr = phys + i * 0x1000;
+
+        uint16_t pml4_idx = (vaddr >> 39) & 0x1FF;
+        uint16_t pdpt_idx = (vaddr >> 30) & 0x1FF;
+        uint16_t pd_idx = (vaddr >> 21) & 0x1FF;
+        uint16_t pt_idx = (vaddr >> 12) & 0x1FF;
+
+        uint64_t* pdpt;
+        uint64_t* pd;
+        uint64_t* pt;
+
+        // Allocate or reuse PDPT
+        if (!(pml4[pml4_idx] & PAGE_PRESENT)) {
+            pdpt = (uint64_t*)alloc_4k_page(); // Your 4KB allocator
+            memset(pdpt, 0, 0x1000);
+            pml4[pml4_idx] = (uint64_t)pdpt | flags | PAGE_PRESENT;
+        } else {
+            pdpt = (uint64_t*)(pml4[pml4_idx] & ~0xFFF);
+        }
+
+        // Allocate or reuse PD
+        if (!(pdpt[pdpt_idx] & PAGE_PRESENT)) {
+            pd = (uint64_t*)alloc_4k_page();
+            memset(pd, 0, 0x1000);
+            pdpt[pdpt_idx] = (uint64_t)pd | flags | PAGE_PRESENT;
+        } else {
+            pd = (uint64_t*)(pdpt[pdpt_idx] & ~0xFFF);
+        }
+
+        // Allocate or reuse PT
+        if (!(pd[pd_idx] & PAGE_PRESENT)) {
+            pt = (uint64_t*)alloc_4k_page();
+            memset(pt, 0, 0x1000);
+            pd[pd_idx] = (uint64_t)pt | flags | PAGE_PRESENT;
+        } else {
+            pt = (uint64_t*)(pd[pd_idx] & ~0xFFF);
+        }
+
+        // Set final entry
+        pt[pt_idx] = (paddr & ~0xFFF) | flags | PAGE_PRESENT;
+    }
+}
+// Pager stuff over
 
 static pcie_device_t sata_device = {0};
 static uint8_t found_sata = 0;
@@ -89,18 +169,9 @@ static int sata_port_init(struct sata_hba_port* port, struct sata_port_state* st
     port->is = 0xFFFFFFFF;
     port->serr = 0xFFFFFFFF;
 
-    state->clb_virt = avmf_alloc(1024, MALLOC_TYPE_DRIVER, PAGE_RW | PAGE_PRESENT, &state->clb_phys);
-    if (state->clb_virt == 0) {
-        serial_print("[AHCI] Could not allocate 1024 bytes!\n");
-        return 0;
-    }
+    state->clb_virt = (uint64_t)alloc_4k_page();
     memset((void*)state->clb_virt, 0, 1024);
-    state->fis_virt = avmf_alloc(256, MALLOC_TYPE_DRIVER, PAGE_RW | PAGE_PRESENT, &state->fis_phys);
-    if (state->fis_virt == 0) {
-        serial_print("[AHCI] Could not allocate 256 bytes!\n");
-        avmf_free(state->clb_virt);
-        return 0;
-    }
+    state->fis_virt = (uint64_t)alloc_4k_page();
     memset((void*)state->fis_virt, 0, 256);
 
     state->cmd_hdrs = (struct sata_hba_cmd_hdr*)state->clb_virt;
@@ -108,20 +179,17 @@ static int sata_port_init(struct sata_hba_port* port, struct sata_port_state* st
     int slots = ((hba_mem->cap >> 8) & 0x1F) + 1;
     serial_printf("[AHCI] Command slots: %d\n", slots);
     for (int i = 0; i < slots; i++) {
-        uint64_t ct_phys = 0;
-        uint64_t ct_virt = avmf_alloc(256, MALLOC_TYPE_DRIVER, PAGE_RW | PAGE_PRESENT, &ct_phys);
-        if (ct_virt == 0) {
-            serial_print("[AHCI] Could not allocate 256 bytes for command table!\n");
-            avmf_free(state->clb_virt);
-            avmf_free(state->fis_virt);
-            return 0;
-        }
+        uint64_t ct_phys = (uint64_t)alloc_4k_page();
+        uint64_t ct_virt = ct_phys;
         memset((void*)ct_virt, 0, 256);
 
         state->cmd_hdrs[i].prdtl = 0;
         state->cmd_hdrs[i].ctba = (uint32_t)(ct_phys & 0xFFFFFFFF);
         state->cmd_hdrs[i].ctbau = (uint32_t)(ct_phys >> 32);
     }
+
+    state->clb_phys = state->clb_virt; // identity mapped in Bootloader
+    state->fis_phys = state->fis_virt;
 
     port->clb = (uint32_t)(state->clb_phys & 0xFFFFFFFF);
     port->clbu = (uint32_t)(state->clb_phys >> 32);
@@ -148,13 +216,14 @@ static void sata_map_bar(void) {
         return;
     }
     uint64_t phys = bar5 & ~0xF;
-    pager_map_range(AOS_AHCI_VIRT_BASE, phys, 0x2000, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
+    map_phys_range(AOS_AHCI_VIRT_BASE, phys, 0x2000, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
 
     hba_mem = (struct sata_hba_mem*)AOS_AHCI_VIRT_BASE;
 }
 
 static int sata_issue_cmd(struct sata_port_state* state, int write, uint64_t lba, uint32_t count, void* buffer) {
-    serial_print("[AHCI] Sending command...\n");
+    serial_print("[AHCI] Issueing command!\n");
+    
     struct sata_hba_port* port = state->port;
     if (!sata_busy_wait(port))
         return 0;
@@ -164,6 +233,7 @@ static int sata_issue_cmd(struct sata_port_state* state, int write, uint64_t lba
         serial_print("[AHCI] No free command slot\n");
         return 0;
     }
+    serial_printf("[AHCI] Found Slot: %d\n", slot);
 
     struct sata_hba_cmd_hdr* cmd = &state->cmd_hdrs[slot];
     memset(cmd, 0, sizeof(struct sata_hba_cmd_hdr));
@@ -218,7 +288,7 @@ static int sata_issue_cmd(struct sata_port_state* state, int write, uint64_t lba
         return 0;
     }
 
-    serial_print("[AHCI] Command sent successfully!\n");
+    serial_print("[AHCI] Command finished!\n");
     return 1;
 }
 
@@ -235,9 +305,9 @@ int sata_init(void) {
     if (hba_mem == NULL) return 0;
     pcie_enable_busmaster(sata_device.bus, sata_device.slot, sata_device.func);
 
-    // Reset
     hba_mem->ghc |= (1 << 31); // AHCI
 
+    // Reset
     hba_mem->ghc |= (1 << 0);
     while (hba_mem->ghc & (1 << 0));
 
@@ -292,7 +362,6 @@ int sata_init(void) {
             }
 
             serial_printf("[AHCI] Port with signature [%x] found\n", port->sig);
-
             switch (port->sig) {
                 case SATA_PORT_SIGNATURE:
                     serial_printf("[AHCI] SATA drive on port %d\n", i);
@@ -339,7 +408,7 @@ int sata_read_blk(int port_id, uint64_t lba, uint32_t count, void* buffer) {
     if (!state->active)
         return 0;
 
-    return sata_issue_cmd(state, 0, lba, count, (void*)(avmf_virt_to_phys((uint64_t)buffer)));
+    return sata_issue_cmd(state, 0, lba, count, buffer);
 }
 
 int sata_write_blk(int port_id, uint64_t lba, uint32_t count, void* buffer) {
@@ -351,7 +420,7 @@ int sata_write_blk(int port_id, uint64_t lba, uint32_t count, void* buffer) {
     if (!state->active)
         return 0;
 
-    return sata_issue_cmd(state, 1, lba, count, (void*)(avmf_virt_to_phys((uint64_t)buffer)));
+    return sata_issue_cmd(state, 1, lba, count, buffer);
 }
 
 int sata_flush(int port_id) {
@@ -396,50 +465,29 @@ int sata_flush(int port_id) {
 }
 
 static int sata_get_info(int port_id, struct sata_identify* id) {
-    if (!found_sata) {
-        serial_print("[AHCI] State is not found!\n");
-        return 0;
-    }
+    if (!found_sata) return 0;
 
-    serial_printf("[AHCI] Getting state for port id: %d\n", port_id);
     struct sata_port_state* state = &port_states[port_id];
-    if (!state->active) {
-        serial_print("[AHCI] State is not active!\n");
+    if (!state->active) return 0;
+
+    char buffer[512];
+    if (!buffer) return 0;
+
+    if (!sata_issue_cmd(state, 0, 0, 1, buffer)) {
         return 0;
     }
 
-    serial_print("[AHCI] Allocating memory...\n");
-    uint64_t phys = 0;
-    void* buffer = (void*)avmf_alloc(512, MALLOC_TYPE_DRIVER, PAGE_RW | PAGE_PRESENT, &phys);
-    if (!buffer) {
-        serial_print("[AHCI] Failed to allocate!\n");
-        return 0;
-    }
-
-    serial_print("[AHCI] Sending command...\n");
-    if (!sata_issue_cmd(state, 0, 0, 1, (void*)phys)) {
-        avmf_free((uint64_t)buffer);
-        serial_print("[AHCI] Failed to issue command!\n");
-        return 0;
-    }
-
-    serial_printf("[AHCI] Filling structures...\n");
     memcpy(id, buffer, sizeof(struct sata_identify));
-    avmf_free((uint64_t)buffer);
     return 1;
 }
 
 int sata_get_block_device(int port_id, struct block_device* out) {
-    serial_print("[AHCI] Getting drive info...\n");
     struct sata_identify iden = {0};
-    if (sata_get_info(port_id, &iden) != 1) {
-        serial_print("[AHCI] Failed to get drive info!\n");
-        return 0;
-    }
+    if (sata_get_info(port_id, &iden) != 1) return 0;
     uint32_t block_count = ((uint32_t)iden.lba_cap_48[1] << 16) | iden.lba_cap_48[0];
     out->block_count = block_count;
     out->block_size = 512;
-    char* model = (char*)avmf_alloc(41, MALLOC_TYPE_DRIVER, PAGE_RW | PAGE_PRESENT, NULL);
+    char* model = (char*)alloc_4k_page();;
     if (model == NULL) {
         out->name = NULL;
         return 1;

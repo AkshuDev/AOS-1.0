@@ -3,7 +3,7 @@
 #include <inttypes.h>
 #include <asm.h>
 #include <inc/core/pcie.h>
-#include <inc/drivers/core/gpu.h>
+#include <inc/drivers/gpu/gpu.h>
 
 // Credits: https://github.com/torvalds/linux/blob/master/include/uapi/linux/virtio_gpu.h (For the enum structure)
 enum virtio_gpu_ctrl_type {
