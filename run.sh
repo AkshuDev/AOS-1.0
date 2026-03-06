@@ -34,22 +34,19 @@ case "$mode" in
     qemu-system-x86_64 \
         -m 256M \
         -M q35,accel=kvm \
-        -cpu host,migratable=no,+invtsc,+x2apic \
-        -smp 16,sockets=1,cores=8,threads=2 \
         -drive file=Bin/disk.pbfs,format=raw,if=none,id=drive0 \
         -device ahci,id=ahci \
         -device ide-hd,bus=ahci.0,unit=0,drive=drive0 \
-        -device intel-iommu \
         -device virtio-gpu-pci,rombar=0 \
-        -device qemu-xhci,id=xhci \
-        -device usb-kbd,bus=xhci.0 \
-        -device usb-mouse,bus=xhci.0 \
         -vga virtio \
         -net nic -net user \
         -serial stdio \
         -enable-kvm \
-        -d guest_errors,cpu_reset,int \
+        -d guest_errors \
         -no-shutdown
+        # -device qemu-xhci,id=xhci \
+        # -device usb-kbd,bus=xhci.0 \
+        # -device usb-mouse,bus=xhci.0 \
     ;;
 1) # Non-KVM High-End
     qemu-system-x86_64 \
@@ -64,8 +61,9 @@ case "$mode" in
         -device virtio-gpu-pci,rombar=0 \
         -vga virtio \
         -serial stdio \
-        -d guest_errors,cpu_reset,int \
-        -no-shutdown
+        -d guest_errors \
+        -no-shutdown \
+        -no-reboot
         # -device qemu-xhci,id=xhci \
         # -device usb-kbd,bus=xhci.0 \
         # -device usb-mouse,bus=xhci.0 \
@@ -80,7 +78,7 @@ case "$mode" in
         -device usb-mouse,bus=uhci0.0 \
         -vga virtio \
         -serial stdio \
-        -d guest_errors,cpu_reset,int \
+        -d guest_errors \
         -no-shutdown \
         -no-reboot
     ;;

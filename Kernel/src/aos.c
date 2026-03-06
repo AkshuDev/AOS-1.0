@@ -38,7 +38,19 @@ static void cmd_print_help(struct VMemDesign* vmem_design, int* lines);
 void cmd_start(char* program, int* lines, struct VMemDesign* vmem_design);
 void aospp_start();
 
+extern uint64_t stack_top; // From linker script
+
 void kernel_main(void) {
+    asm volatile (
+        "mov %0, %%rsp\n\t"
+        "mov %%rsp, %%rbp"
+        :
+        :
+        "r"(&stack_top)
+        :
+        "memory"
+    );
+
     serial_init();
     idt_init();
     // Reserve MMIO region at 0xF0000000, kernel starts at 0x100000

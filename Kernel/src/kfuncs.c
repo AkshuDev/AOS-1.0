@@ -97,27 +97,61 @@ void spin_unlock(spinlock_t* lock) {
 
 uint64_t spin_lock_irqsave(spinlock_t* lock) {
     uint64_t flags = 0;
-    asm volatile("pushfq ; pop %0 ; cli" : "=rm"(flags) : : "memory");
+    asm volatile(
+        "pushfq\n\t"
+        "pop %0\n\t"
+        "cli"
+        :
+        "=r"(flags)
+        : :
+        "memory"
+    );
     while (__sync_lock_test_and_set(lock, 1)) {
         while (*lock);
     }
+
+    return flags;
 }
 
 void spin_unlock_irqrestore(spinlock_t* lock, uint64_t flags) {
     __sync_lock_release(lock);
-    asm volatile("push %0 ; popfq" : : "rm"(flags) : "memory", "cc");
+    asm volatile(
+        "push %0\n\t"
+        "popfq"
+        : :
+        "r"(flags)
+        :
+        "memory", "cc"
+    );
 }
 
 static uint64_t tsc_ticks_per_ms = 0;
+static uint8_t rdtscp_supported = 0;
 
 static uint64_t ktimer_read_tsc(void) {
     uint32_t low = 0;
     uint32_t high = 0;
-    asm volatile("rdtscp" : "=a"(low), "=d"(high) : : "rcx");
+    if (rdtscp_supported == 1) {
+        asm volatile("rdtscp" : "=a"(low), "=d"(high) : : "rcx");
+        asm volatile("cpuid" : : : "rax", "rcx", "rdx", "memory");
+    }
+    else {
+        asm volatile("cpuid" : : : "rax", "rcx", "rdx", "memory");
+        asm volatile("rdtsc" : "=a"(low), "=d"(high) : : "memory");
+    }
     return ((uint64_t)high << 32) | low;
 }
 
 void ktimer_calibrate(void) {
+    uint32_t eax, ebx, ecx, edx;
+    eax = 0x80000001;
+    asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
+    if (edx & (1 << 27)) {
+        rdtscp_supported = 1;
+    } else {
+        rdtscp_supported = 0;
+    }
+
     uint64_t start = ktimer_read_tsc();
     acpi_mdelay(10);
     uint64_t end = ktimer_read_tsc();

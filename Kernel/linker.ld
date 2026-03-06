@@ -17,10 +17,14 @@ SECTIONS
 
     .rodata : { *(.rodata*) }
     .data   : { *(.data*) }
-    .bss    : { 
-        __bss_start = .; 
-        *(.bss*) 
-        __bss_end = .; 
+    .bss : {
+        __bss_start = .;
+        *(.bss*)
+        . = ALIGN(16);
+        stack_bottom = .;
+        . += 0x4000; /* 16KB stack */
+        stack_top = .;
+        __bss_end = .;
     }
 
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }

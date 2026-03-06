@@ -19,7 +19,26 @@
 #define ENCLOSURE_PORT_SIGNATURE 0xC33C0101
 #define PORTMULTIPLIER_PORT_SIGNATURE 0x96690101
 
+#define FIS_TYPE_REG_H2D 0x27
+#define FIS_TYPE_REG_D2H 0x34
+#define FIS_TYPE_DMA_ACT 0x39
+#define FIS_TYPE_DMA_SETUP 0x41
+#define FIS_TYPE_DATA 0x46
+#define FIS_TYPE_BIST 0x58
+#define FIS_TYPE_PIO_SETUP 0x5F
+#define FIS_TYPE_DEV_BITS 0xA1
+
+#define CMD_ATA_READ_PIO 0x20
+#define CMD_ATA_READ_PIO_EXT 0x24
 #define CMD_ATA_FLUSH_CACHE 0xE7
+#define CMD_ATA_READ_DMA 0xC8
+#define CMD_ATA_READ_DMA_EXT 0x25
+#define CMD_ATA_WRITE_PIO 0x30
+#define CMD_ATA_WRITE_PIO_EXT 0x34
+#define CMD_ATA_WRITE_DMA 0xCA
+#define CMD_ATA_WRITE_DMA_EXT 0x35
+#define CMD_ATA_FLUSH_CACHE_EXT 0xEA
+#define CMD_ATA_IDENTIFY 0xEC
 
 struct sata_hba_port {
     uint32_t clb; // Command List Base (low)
@@ -75,8 +94,8 @@ struct sata_hba_cmd_hdr {
     uint8_t pmp:4;
 
     uint16_t prdtl;
-    uint16_t prdbc;
-    uint16_t rsv1;
+
+    uint32_t prdbc;
 
     uint32_t ctba;
     uint32_t ctbau;

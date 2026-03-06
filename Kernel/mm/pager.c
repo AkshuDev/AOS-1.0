@@ -117,7 +117,7 @@ void pager_init(void) {
     serial_print("[PAGER] Allocated Virtual Memory for Page Tables\n");
     pager_map_range(AOS_DIRECT_MAP_BASE, 0x0, max_phys_addr, PAGE_PRESENT | PAGE_RW);
     serial_print("[PAGER] Mapped Direct Map\n");
-    pager_map_range(0x0, 0x0, 0x1000000, PAGE_PRESENT | PAGE_RW); // Identity Map the Kernel (16 MB)
+    pager_map_range(0x0, 0x0, 0x1000000 * 64, PAGE_PRESENT | PAGE_RW); // Identity Map the Kernel (64 MB)
     serial_print("[PAGER] Mapped Kernel\n");
 
     pager_load(kernel_pml4);
