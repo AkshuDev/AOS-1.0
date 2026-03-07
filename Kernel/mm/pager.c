@@ -24,8 +24,8 @@ struct bs1_e820 {
     struct bs1_e820_entry entries[];
 } __attribute__((packed));
 
-static struct page_table* kernel_pml4;
-static struct page_table* mapped_pml4;
+static struct page_table* kernel_pml4 = NULL;
+static struct page_table* mapped_pml4 = NULL;
 static uint8_t pager_ready = 0;
 
 static inline void* pager_phys_to_virt(uint64_t phys) {
@@ -46,7 +46,11 @@ static struct page_table* alloc_page_table(uint64_t* phys_out) {
     avmf_alloc_region(virt, phys, PAGE_SIZE, AVMF_FLAG_PRESENT | AVMF_FLAG_WRITEABLE);
 
     volatile struct page_table* tbl = NULL;
-    tbl = (volatile struct page_table*)phys;
+    
+    if (pager_ready == 1)
+        tbl = (volatile struct page_table*)virt;
+    else
+        tbl = (volatile struct page_table*)phys;
  
     for (int i = 0; i < 512; i++) {
         tbl->entries[i] = 0;
@@ -113,7 +117,12 @@ void pager_init(void) {
     serial_print("[PAGER] Initialized AVMF\n");
 
     uint64_t kernel_pml4_phys = 0;
-    kernel_pml4 = alloc_page_table(&kernel_pml4_phys);
+    while (kernel_pml4 == NULL) {
+        kernel_pml4 = alloc_page_table(&kernel_pml4_phys);
+        if (!kernel_pml4) {
+            serial_print("[PAGER] Failed to allocate kernel PML4, retrying...\n");
+        }
+    }
     serial_print("[PAGER] Allocated Virtual Memory for Page Tables\n");
     pager_map_range(AOS_DIRECT_MAP_BASE, 0x0, max_phys_addr, PAGE_PRESENT | PAGE_RW);
     serial_print("[PAGER] Mapped Direct Map\n");

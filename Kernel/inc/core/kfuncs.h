@@ -1,5 +1,6 @@
 #pragma once
 
+#include <inttypes.h>
 #include <stddef.h>
 
 typedef volatile int spinlock_t;
@@ -10,6 +11,9 @@ int memcmp(const void* s1, const void* s2, size_t n) __attribute__((used));
 
 int strcmp(char* s1, char* s2) __attribute__((used));
 int strncmp(char* s1, char* s2, size_t n) __attribute__((used));
+size_t strlen(char* s) __attribute__((used));
+char* strcpy(char* dest, char* src) __attribute__((used));
+char* strncpy(char* dest, char* src, size_t n) __attribute__((used));
 uint32_t str_to_uint(const char* str) __attribute__((used));
 
 void spin_lock(spinlock_t* lock) __attribute__((used));
@@ -19,3 +23,9 @@ void spin_unlock_irqrestore(spinlock_t* lock, uint64_t flags) __attribute__((use
 
 void ktimer_calibrate(void) __attribute__((used));
 void kdelay(uint32_t ms) __attribute__((used));
+
+void* kmalloc(size_t size) __attribute__((used));
+void klink(void* ptr1, void* ptr2) __attribute__((used));
+void kfree(void* ptr) __attribute__((used));
+void* kcalloc(size_t nmemb, size_t size) __attribute__((used));
+void* krealloc(void* ptr, size_t new_size) __attribute__((used));

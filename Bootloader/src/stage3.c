@@ -128,7 +128,7 @@ void stage3(void) {
 
     struct ATA_DP dp = (struct ATA_DP){
         .count = 150,
-        .lba = 200
+        .lba = 400
     };
 
     if (get_available_drives(&cur_drive) == 1) {

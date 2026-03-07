@@ -7,22 +7,28 @@ SECTIONS
 
     /* Kernel entry section */
     .start : {
-        KEEP(*(.start))       /* kernel_main goes here */
+        KEEP(*(.start)) /* kernel_main goes here */
     }
 
     /* All other code, including PBFS helpers */
+    . = ALIGN(0x1000);
     .text : {
-        *(.text*)             /* everything else goes after .start */
+        *(.text*) /* everything else goes after .start */
     }
 
+    . = ALIGN(0x1000);
     .rodata : { *(.rodata*) }
+
+    . = ALIGN(0x1000);
     .data   : { *(.data*) }
+
+    . = ALIGN(0x1000);
     .bss : {
         __bss_start = .;
         *(.bss*)
         . = ALIGN(16);
         stack_bottom = .;
-        . += 0x4000; /* 16KB stack */
+        . += 0x8000; /* 32KB stack */
         stack_top = .;
         __bss_end = .;
     }

@@ -14,12 +14,12 @@ BUILD_DIR := build
 KERNEL := ../Kernel
 DRIVER := $(KERNEL)/drivers
 DRIVER_CORE := $(DRIVER)/core
-DRIVERS_SRC := $(DRIVER)/io/io.c \
-			   $(KERNEL)/src/kfuncs.c
+DRIVERS_SRC := $(DRIVER)/io/io.c
 BTL_DRIVERS_SRC := $(SRC_DIR)/pcie.c \
 					$(SRC_DIR)/acpi.c \
 					$(SRC_DIR)/drive.c \
-					$(SRC_DIR)/drivers/sata.c
+					$(SRC_DIR)/drivers/sata.c \
+					$(SRC_DIR)/kfuncs.c
 DRIVERS_O := $(patsubst $(KERNEL)/%.c,$(BUILD_DIR)/%.o,$(DRIVERS_SRC))
 BTL_DRIVERS_O := $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(BTL_DRIVERS_SRC))
 
@@ -61,6 +61,7 @@ $(stage3_bin): $(stage3_elf)
 $(BUILD_DIR)/%.o: $(KERNEL)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@

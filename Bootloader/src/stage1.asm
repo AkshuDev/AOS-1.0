@@ -99,7 +99,7 @@ dap_s2:
     dw 33 ; sectors to read
     dw 0x0000 ; dest offset
     dw 0x1000 ; dest segment
-    dq 5 ; starting lba
+    dq 8 ; starting lba
 
 dap_s3:
     db 0x10 ; size (16 bytes)
@@ -107,7 +107,17 @@ dap_s3:
     dw 49 ; sectors to read
     dw 0x0000 ; dest offset
     dw 0x1500 ; dest segment
-    dq 45 ; starting lba
+    dq 64 ; starting lba
 
-times 510 - ($ - $$) db 0
+times 446 - ($ - $$) db 0
+
+db 0x80 ; Bootable/Active Flag
+db 0, 1, 0 ; CHS Start
+db 0x7F ; Partition Type (Reserved/Developer)
+db 0, 1, 0 ; CHS End
+dd 0 ; LBA Start (Starts at Sector 0)
+dd 4096 ; Total Sectors
+
+times 510-($-$$) db 0
+
 dw 0xAA55 

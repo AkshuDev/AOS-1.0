@@ -10,6 +10,15 @@
 
 #include <inc/drivers/io/drive.h>
 
+#ifdef PBFS_WDRIVERS
+    #undef PBFS_WDRIVERS
+#endif
+#define PBFS_NDRIVERS
+#include <PBFS/headers/pbfs-fs.h>
+#include <PBFS/headers/pbfs.h>
+#include <PBFS/headers/pbfs_structs.h>
+#undef PBFS_NDRIVERS
+
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
 
@@ -22,13 +31,20 @@ static char* help_shell = "Usage: [COMMAND]\n"
     "\treboot: Reboots the system.\n"
     "\tclear: Clears the screen.\n"
     "\tshutdown: Shuts down the system.\n"
-    "\tstart <program>: Starts a Program, Use 'start -help' for more info\n"
-    "\tmemdump <addr> <size>: Prints memory at the specified address for the specified size\n";
+    "\tstart <program>: Starts a Program, Use 'start -help' for more info\n";
 
 static int help_shell_nlines = 8;
 
 static drive_device_t current_drive = {0};
 static uint8_t current_drive_works = 0;
+static uint8_t current_drive_mounted = 0;
+
+static struct pbfs_funcs pbfs_init_funcs = {
+    .malloc = kmalloc,
+    .free = kfree
+};
+static char g_pbfs_cwd[PBFS_MAX_PATH_LEN] = {0};
+static struct pbfs_mount g_pbfs_mnt = {0};
 
 // Define a static stack array
 void kernel_main(void) __attribute__((used, noinline, section(".start"), noreturn));
@@ -92,6 +108,8 @@ void kernel_main(void) {
         }
     }
 
+    pbfs_init(&pbfs_init_funcs);
+
     // Now safe to use local variables
     struct VMemDesign vmem_design = {
         .x = 0,
@@ -118,12 +136,8 @@ void aos_shell_pm(void) {
     };
     
     char input[SHELL_MAX_INPUT];
-    int lines = 0;
+    int lines = 1;
 
-    vmem_set_cursor(0, 0);
-    vmem_clear_screen(&vmem_design);
-    vmem_print(&vmem_design, "Welcome to AOS Shell!\n\n");
-    lines += 2;
     // Read sysinfo
     uint8_t boot_drive = *AOS_BOOT_INFO_LOC;
     aos_sysinfo_t SystemInfo = *AOS_SYS_INFO_LOC;
@@ -133,7 +147,7 @@ void aos_shell_pm(void) {
     lines += 7;
 
     while (1) {
-        vmem_print(&vmem_design, "AOS: / $> "); // In AOS / means root and ~ means HOME_DIR like linux
+        vmem_printf(&vmem_design, "AOS: %s $> ", g_pbfs_cwd);
         ps2_read_line(input, SHELL_MAX_INPUT, &vmem_design);
 
         exec_cmd(input, &lines, &vmem_design);
@@ -157,16 +171,79 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
         *lines = 0;
     } else if (strncmp(cmd, "start ", 6) == 0) {
         cmd_start(cmd + 6, lines, vmem_design);
-    } else if (strncmp(cmd, "memdump ", 8) == 1) {
-        uintptr_t addr = str_to_uint(cmd + 8);
-        for (int i = 0; i < 16; i++) {
-            vmem_printf(vmem_design, "0x%08x: %02x %02x %02x %02x\n", 
-                    addr + i*4,
-                    *((uint8_t*)(addr + i*4)),
-                    *((uint8_t*)(addr + i*4 +1)),
-                    *((uint8_t*)(addr + i*4 +2)),
-                    *((uint8_t*)(addr + i*4 +3)));
-            *lines++;
+    } else if (strcmp(cmd, "pbfsctl-fmt") == 0) {
+        if (current_drive_works != 1) {
+            vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
+            *lines += 1;
+        } else {
+            int out = pbfs_format(&current_drive.block_dev, 1, 100, current_drive.cur_port);
+            if (out != PBFS_RES_SUCCESS) {
+                vmem_printf(vmem_design, "Error: Failed! (Code: %d)\n", out);
+                *lines += 1;
+            }
+            current_drive_mounted = 0;
+        }
+    } else if (strcmp(cmd, "pbfsctl-mnt") == 0) {
+        if (current_drive_works != 1) {
+            vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
+            *lines += 1;
+        } else {
+            int out = pbfs_mount(&current_drive.block_dev, &g_pbfs_mnt);
+            if (out != PBFS_RES_SUCCESS) {
+                vmem_printf(vmem_design, "Error: Failed! (Code: %d)\n", out);
+                *lines += 1;
+            }
+            current_drive_mounted = 0;
+        }
+    } else if (strncmp(cmd, "cd ", 3) == 0) {
+        if (current_drive_works == 0) {
+            vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
+            *lines += 1;
+        } else {
+            if (current_drive_mounted == 0) {
+                vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
+                *lines += 1;
+            } else {
+                char* _path = cmd + 3;
+                char path[PBFS_MAX_PATH_LEN];
+                path_normalize(_path, path, PBFS_MAX_PATH_LEN);
+
+                PBFS_DMM_Entry entry;
+                uint64_t tmplba = 0;
+                if (pbfs_find_entry(path, &entry, &tmplba, &g_pbfs_mnt) != PBFS_RES_SUCCESS || !(entry.type & METADATA_FLAG_DIR)) {
+                    vmem_print(vmem_design, "Error: No such directory!\n");
+                    *lines += 1;
+                } else {
+                    strcpy(g_pbfs_cwd, path);
+                }
+            }
+        }
+    } else if (strcmp(cmd, "mkdir") == 0) {
+        if (current_drive_works == 0) {
+            vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
+            *lines += 1;
+        } else {
+            if (current_drive_mounted == 0) {
+                vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
+                *lines += 1;
+            } else {
+                char* _path = cmd + 3;
+                char path[PBFS_MAX_PATH_LEN];
+                path_normalize(_path, path, PBFS_MAX_PATH_LEN);
+
+                PBFS_DMM_Entry entry;
+                uint64_t tmplba = 0;
+                if (pbfs_find_entry(path, &entry, &tmplba, &g_pbfs_mnt) == PBFS_RES_SUCCESS) {
+                    vmem_print(vmem_design, "Error: File or Directory already exists!\n");
+                    *lines += 1;
+                } else {
+                    int out = pbfs_add_dir(&g_pbfs_mnt, path, 0, 0, (PBFS_Permission_Flags)(PERM_READ | PERM_WRITE));
+                    if (out != PBFS_RES_SUCCESS) {
+                        vmem_printf(vmem_design, "Error: Failed! (Code: %d)\n", out);
+                        *lines += 1;
+                    }
+                }
+            }
         }
     } else {
         vmem_print(vmem_design, "Unknown command\n");

@@ -4,6 +4,13 @@
 
 #include <inc/mm/pager.h>
 
+#ifdef PBFS_WDRIVERS
+    #undef PBFS_WDRIVERS
+#endif
+#define PBFS_NDRIVERS
+#include <PBFS/headers/pbfs-fs.h>
+#undef PBFS_NDRIVERS
+
 #include <inc/core/kfuncs.h>
 #include <inc/drivers/gpu/apis/pyrion.h>
 #include <inc/core/vshell.h>
@@ -128,7 +135,7 @@ static void vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len) {
             }
         } else if (strcmp(cmd_buf, "clear") == 0) {
             pyrion_clear(vshell_ctx, vshell_ctx->fb_cursor.bg_color);
-            pyrion_set_cursor(vshell_ctx, 0, 0);
+            pyrion_set_cursor(vshell_ctx, 0, 0); 
         } else {
             pyrion_builtin_print(vshell_ctx, "Unknown Command: ");
             pyrion_builtin_print(vshell_ctx, cmd_buf);
