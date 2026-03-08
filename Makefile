@@ -35,13 +35,12 @@ $(BIN_DIR):
 	@mkdir -p $(BIN_DIR)
 
 $(DISK): $(BOOTLOADER_STAGE1) $(BOOTLOADER_STAGE2) $(BOOTLOADER_STAGE3) $(AOS_KERNEL)
-	@echo "Creating AOS Disk..."
-	touch $(DISK)
-	$(PBFS_CLI) $(DISK) -bs 512 -tb 4096 -dn AOS_DISK -rkt -btp 200 -f
+	@echo "Creating+Formatting AOS Disk and adding Kernel..."
+	$(PBFS_CLI) $(DISK) -bs 512 -tb 4096 -dn AOS_DISK -rkt -btp 200 -c -f --permissions rw -ad /root -k $(AOS_KERNEL) AOS++
+	@echo "Filling in the Bootloader partition..."
 	$(DD) if=$(BOOTLOADER_STAGE1) of=$(DISK) bs=512 count=1 conv=notrunc
 	$(DD) if=$(BOOTLOADER_STAGE2) of=$(DISK) bs=512 seek=8 conv=notrunc
 	$(DD) if=$(BOOTLOADER_STAGE3) of=$(DISK) bs=512 seek=64 conv=notrunc
-	$(DD) if=$(AOS_KERNEL) of=$(DISK) bs=512 seek=400 conv=notrunc
 	@echo "DONE!"
 
 $(BOOTLOADER_STAGE1) $(BOOTLOADER_STAGE2) $(BOOTLOADER_STAGE3):

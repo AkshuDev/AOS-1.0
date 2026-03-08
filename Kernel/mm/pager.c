@@ -47,10 +47,7 @@ static struct page_table* alloc_page_table(uint64_t* phys_out) {
 
     volatile struct page_table* tbl = NULL;
     
-    if (pager_ready == 1)
-        tbl = (volatile struct page_table*)virt;
-    else
-        tbl = (volatile struct page_table*)phys;
+    tbl = (volatile struct page_table*)phys;
  
     for (int i = 0; i < 512; i++) {
         tbl->entries[i] = 0;

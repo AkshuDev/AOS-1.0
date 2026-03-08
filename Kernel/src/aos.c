@@ -31,7 +31,11 @@ static char* help_shell = "Usage: [COMMAND]\n"
     "\treboot: Reboots the system.\n"
     "\tclear: Clears the screen.\n"
     "\tshutdown: Shuts down the system.\n"
-    "\tstart <program>: Starts a Program, Use 'start -help' for more info\n";
+    "\tstart <program>: Starts a Program, Use 'start -help' for more info\n"
+    "\tpbfsctl-mnt: Mounts the current drive\n"
+    "\tpbfsctl-fmt: Formats the current drive (Not Recommended)\n"
+    "\tmkdir <dir>: Makes a new dir\n"
+    "\tcd <dir>: Changes Current Working Dir\n";
 
 static int help_shell_nlines = 8;
 
@@ -53,6 +57,11 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design);
 static void cmd_print_help(struct VMemDesign* vmem_design, int* lines);
 void cmd_start(char* program, int* lines, struct VMemDesign* vmem_design);
 void aospp_start();
+static int bd_read_blk(struct block_device* dev, uint64_t lba, void* buf);
+static int bd_write_blk(struct block_device* dev, uint64_t lba, const void* buf);
+static int bd_read(struct block_device* dev, uint64_t lba, uint64_t count, void* buf);
+static int bd_write(struct block_device* dev, uint64_t lba, uint64_t count, const void* buf);
+static int bd_flush(struct block_device* dev);
 
 extern uint64_t stack_top; // From linker script
 
@@ -105,6 +114,11 @@ void kernel_main(void) {
         } else {
             serial_print("[AOS] Drive passed the tests, using drive!\n");
             current_drive_works = 1;
+            current_drive.block_dev.read_block = bd_read_blk;
+            current_drive.block_dev.read = bd_read;
+            current_drive.block_dev.write_block = bd_write_blk;
+            current_drive.block_dev.write = bd_write;
+            current_drive.block_dev.flush = bd_flush;
         }
     }
 
@@ -180,6 +194,8 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
             if (out != PBFS_RES_SUCCESS) {
                 vmem_printf(vmem_design, "Error: Failed! (Code: %d)\n", out);
                 *lines += 1;
+            } else {
+                bd_flush(&current_drive.block_dev);
             }
             current_drive_mounted = 0;
         }
@@ -192,8 +208,10 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
             if (out != PBFS_RES_SUCCESS) {
                 vmem_printf(vmem_design, "Error: Failed! (Code: %d)\n", out);
                 *lines += 1;
+                current_drive_mounted = 0;
+            } else {
+                current_drive_mounted = 1;
             }
-            current_drive_mounted = 0;
         }
     } else if (strncmp(cmd, "cd ", 3) == 0) {
         if (current_drive_works == 0) {
@@ -208,6 +226,11 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
                 char path[PBFS_MAX_PATH_LEN];
                 path_normalize(_path, path, PBFS_MAX_PATH_LEN);
 
+                if (_path[0] == '.') {
+                    // Relative
+                    path_join(path, g_pbfs_cwd, _path, PBFS_MAX_PATH_LEN);
+                }
+
                 PBFS_DMM_Entry entry;
                 uint64_t tmplba = 0;
                 if (pbfs_find_entry(path, &entry, &tmplba, &g_pbfs_mnt) != PBFS_RES_SUCCESS || !(entry.type & METADATA_FLAG_DIR)) {
@@ -218,7 +241,7 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
                 }
             }
         }
-    } else if (strcmp(cmd, "mkdir") == 0) {
+    } else if (strncmp(cmd, "mkdir ", 6) == 0) {
         if (current_drive_works == 0) {
             vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
             *lines += 1;
@@ -231,6 +254,10 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
                 char path[PBFS_MAX_PATH_LEN];
                 path_normalize(_path, path, PBFS_MAX_PATH_LEN);
 
+                if (_path[0] == '.') {
+                    path_join(path, g_pbfs_cwd, _path, PBFS_MAX_PATH_LEN);
+                }
+
                 PBFS_DMM_Entry entry;
                 uint64_t tmplba = 0;
                 if (pbfs_find_entry(path, &entry, &tmplba, &g_pbfs_mnt) == PBFS_RES_SUCCESS) {
@@ -241,6 +268,8 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
                     if (out != PBFS_RES_SUCCESS) {
                         vmem_printf(vmem_design, "Error: Failed! (Code: %d)\n", out);
                         *lines += 1;
+                    } else {
+                        bd_flush(&current_drive.block_dev);
                     }
                 }
             }
@@ -299,6 +328,46 @@ void aos_vmss_start(void) {
     vmem_print(&vmem_design, "Welcome To AOS VM Safety Shell!\n\n");
     aos_shell_pm();
     for (;;) asm("hlt");
+}
+
+static int bd_read_blk(struct block_device* dev, uint64_t lba, void* buf) {
+    if (current_drive_works == 1) {
+        current_drive.read_blk(current_drive.cur_port, lba, 1, buf);
+        return 1;
+    }
+    return 0;
+}
+
+static int bd_write_blk(struct block_device* dev, uint64_t lba, const void* buf) {
+    if (current_drive_works == 1) {
+        current_drive.write_blk(current_drive.cur_port, lba, 1, buf);
+        return 1;
+    }
+    return 0;
+}
+
+static int bd_read(struct block_device* dev, uint64_t lba, uint64_t count, void* buf) {
+    if (current_drive_works == 1) {
+        current_drive.read_blk(current_drive.cur_port, lba, count, buf);
+        return 1;
+    }
+    return 0;
+}
+
+static int bd_write(struct block_device* dev, uint64_t lba, uint64_t count, const void* buf) {
+    if (current_drive_works == 1) {
+        current_drive.write_blk(current_drive.cur_port, lba, count, buf);
+        return 1;
+    }
+    return 0;
+}
+
+static int bd_flush(struct block_device* dev) {
+    if (current_drive_works == 1) {
+        current_drive.flush(current_drive.cur_port);
+        return 1;
+    }
+    return 0;
 }
 
 asm(".globl kernel_main");

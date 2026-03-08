@@ -2,6 +2,10 @@
 #include <asm.h>
 #include <sys/cdefs.h>
 
+#define IO_VMEM 0xB8000
+#define IO_VMEM_MAX_COLS 80
+#define IO_VMEM_MAX_ROWS 25
+
 enum VMemColors {
     VMEM_COLOR_BLACK = 0x0,
     VMEM_COLOR_BLUE = 0x1,

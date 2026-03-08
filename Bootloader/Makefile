@@ -4,8 +4,8 @@ LD := ld
 ASM := nasm
 
 CFLAGS := -ffreestanding -mno-red-zone -mno-sse -O0 -fno-stack-protector -g -fno-pic -nostdlib -m64 -I ../PBFS -I ../Headers -I ../Kernel -w
-LDFLAGS := -m elf_x86_64 -T linker.ld -g
-LDENDFLAGS := 
+LDFLAGS := -m elf_x86_64 -T linker.ld -g -L ../PBFS/PBFS/build-fs
+LDENDFLAGS := -lpbfs-ndrivers
 ASMFLAGS := -f elf32 -g
 ASMFLAGS_BIN := -f bin
 

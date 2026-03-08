@@ -134,7 +134,7 @@ init_pm64:
     mov ds, ax
     mov es, ax
     mov ss, ax
-    mov rsp, 0x90000
+    mov rsp, 0x08000000 ; 128MB
     and rsp, -16
     mov rbp, rsp
 
