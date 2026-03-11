@@ -190,9 +190,9 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
             vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
             *lines += 1;
         } else {
-            int out = pbfs_format(&current_drive.block_dev, 1, 100, current_drive.cur_port);
+            int out = pbfs_format(&current_drive.block_dev, 1, 1024, 2048, current_drive.cur_port);
             if (out != PBFS_RES_SUCCESS) {
-                vmem_printf(vmem_design, "Error: Failed! (Code: %d)\n", out);
+                vmem_printf(vmem_design, "Error: %s\n", pbfs_get_err_str(out));
                 *lines += 1;
             } else {
                 bd_flush(&current_drive.block_dev);
@@ -206,7 +206,7 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
         } else {
             int out = pbfs_mount(&current_drive.block_dev, &g_pbfs_mnt);
             if (out != PBFS_RES_SUCCESS) {
-                vmem_printf(vmem_design, "Error: Failed! (Code: %d)\n", out);
+                vmem_printf(vmem_design, "Error: %s\n", pbfs_get_err_str(out));
                 *lines += 1;
                 current_drive_mounted = 0;
             } else {
@@ -266,7 +266,7 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
                 } else {
                     int out = pbfs_add_dir(&g_pbfs_mnt, path, 0, 0, (PBFS_Permission_Flags)(PERM_READ | PERM_WRITE));
                     if (out != PBFS_RES_SUCCESS) {
-                        vmem_printf(vmem_design, "Error: Failed! (Code: %d)\n", out);
+                        vmem_printf(vmem_design, "Error: %s\n", pbfs_get_err_str(out));
                         *lines += 1;
                     } else {
                         bd_flush(&current_drive.block_dev);

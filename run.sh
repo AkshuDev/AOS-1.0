@@ -1,6 +1,7 @@
 #!/bin/bash
 
 mode=1
+uefi=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
     -le | --low-end)
@@ -13,6 +14,10 @@ while [[ $# -gt 0 ]]; do
         ;;
     -kvm | --kvm)
         mode=2
+        shift
+        ;;
+    --uefi)
+        uefi=1
         shift
         ;;
     --)
@@ -29,6 +34,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+append_uefi_bios() {
+    if [[ $uefi -eq 1 ]]; then
+        echo "-global driver=cfi.pflash01,property=secure,value=on" \
+             "-drive if=pflash,format=raw,unit=0,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd,readonly=on" \
+             "-drive if=pflash,format=raw,unit=1,file=./virtualization/ovmf_vars.4m.fd"
+    fi
+}
+
 case "$mode" in
 2) #KVM
     qemu-system-x86_64 \
@@ -43,7 +56,8 @@ case "$mode" in
         -serial stdio \
         -enable-kvm \
         -d guest_errors \
-        -no-shutdown
+        -no-shutdown \
+        $(append_uefi_bios)
         # -device qemu-xhci,id=xhci \
         # -device usb-kbd,bus=xhci.0 \
         # -device usb-mouse,bus=xhci.0 \
@@ -63,7 +77,8 @@ case "$mode" in
         -serial stdio \
         -d guest_errors \
         -no-shutdown \
-        -no-reboot
+        -no-reboot \
+        $(append_uefi_bios)
         # -device qemu-xhci,id=xhci \
         # -device usb-kbd,bus=xhci.0 \
         # -device usb-mouse,bus=xhci.0 \
@@ -80,7 +95,8 @@ case "$mode" in
         -serial stdio \
         -d guest_errors \
         -no-shutdown \
-        -no-reboot
+        -no-reboot \
+        $(append_uefi_bios)
     ;;
 *)
     echo "Invalid Mode: $mode" >&2

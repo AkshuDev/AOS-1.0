@@ -1,6 +1,6 @@
 [
   {
-    "file": "src/stage3.c",
+    "file": "MBR/src/stage3.c",
     "arguments": [
       "gcc",
       "-ffreestanding",
@@ -19,12 +19,12 @@
       "../Kernel",
       "-w",
       "-c",
-      "src/stage3.c",
+      "MBR/src/stage3.c",
       "-o",
-      "build/stage3.o"
+      "MBR/build/stage3.o"
     ],
     "directory": "/home/AkshuDev/Projects/AOS-1.0/Bootloader",
-    "output": "build/stage3.o"
+    "output": "MBR/build/stage3.o"
   },
   {
     "file": "../Kernel/drivers/io/io.c",
@@ -48,13 +48,13 @@
       "-c",
       "../Kernel/drivers/io/io.c",
       "-o",
-      "build/drivers/io/io.o"
+      "MBR/build/drivers/io/io.o"
     ],
     "directory": "/home/AkshuDev/Projects/AOS-1.0/Bootloader",
-    "output": "build/drivers/io/io.o"
+    "output": "MBR/build/drivers/io/io.o"
   },
   {
-    "file": "../Kernel/src/kfuncs.c",
+    "file": "MBR/src/pcie.c",
     "arguments": [
       "gcc",
       "-ffreestanding",
@@ -73,15 +73,15 @@
       "../Kernel",
       "-w",
       "-c",
-      "../Kernel/src/kfuncs.c",
+      "MBR/src/pcie.c",
       "-o",
-      "build/src/kfuncs.o"
+      "MBR/build/pcie.o"
     ],
     "directory": "/home/AkshuDev/Projects/AOS-1.0/Bootloader",
-    "output": "build/src/kfuncs.o"
+    "output": "MBR/build/pcie.o"
   },
   {
-    "file": "src/pcie.c",
+    "file": "MBR/src/acpi.c",
     "arguments": [
       "gcc",
       "-ffreestanding",
@@ -100,15 +100,15 @@
       "../Kernel",
       "-w",
       "-c",
-      "src/pcie.c",
+      "MBR/src/acpi.c",
       "-o",
-      "build/pcie.o"
+      "MBR/build/acpi.o"
     ],
     "directory": "/home/AkshuDev/Projects/AOS-1.0/Bootloader",
-    "output": "build/pcie.o"
+    "output": "MBR/build/acpi.o"
   },
   {
-    "file": "src/acpi.c",
+    "file": "MBR/src/drive.c",
     "arguments": [
       "gcc",
       "-ffreestanding",
@@ -127,15 +127,15 @@
       "../Kernel",
       "-w",
       "-c",
-      "src/acpi.c",
+      "MBR/src/drive.c",
       "-o",
-      "build/acpi.o"
+      "MBR/build/drive.o"
     ],
     "directory": "/home/AkshuDev/Projects/AOS-1.0/Bootloader",
-    "output": "build/acpi.o"
+    "output": "MBR/build/drive.o"
   },
   {
-    "file": "src/drive.c",
+    "file": "MBR/src/drivers/sata.c",
     "arguments": [
       "gcc",
       "-ffreestanding",
@@ -154,15 +154,15 @@
       "../Kernel",
       "-w",
       "-c",
-      "src/drive.c",
+      "MBR/src/drivers/sata.c",
       "-o",
-      "build/drive.o"
+      "MBR/build/drivers/sata.o"
     ],
     "directory": "/home/AkshuDev/Projects/AOS-1.0/Bootloader",
-    "output": "build/drive.o"
+    "output": "MBR/build/drivers/sata.o"
   },
   {
-    "file": "src/drivers/sata.c",
+    "file": "MBR/src/kfuncs.c",
     "arguments": [
       "gcc",
       "-ffreestanding",
@@ -181,12 +181,40 @@
       "../Kernel",
       "-w",
       "-c",
-      "src/drivers/sata.c",
+      "MBR/src/kfuncs.c",
       "-o",
-      "build/drivers/sata.o"
+      "MBR/build/kfuncs.o"
     ],
     "directory": "/home/AkshuDev/Projects/AOS-1.0/Bootloader",
-    "output": "build/drivers/sata.o"
+    "output": "MBR/build/kfuncs.o"
+  },
+  {
+    "file": "UEFI/src/bootloader_uefi.c",
+    "arguments": [
+      "x86_64-w64-mingw32-gcc",
+      "-ffreestanding",
+      "-mno-red-zone",
+      "-mno-sse",
+      "-O0",
+      "-fno-stack-protector",
+      "-g",
+      "-fno-pic",
+      "-m64",
+      "-I",
+      "../PBFS",
+      "-I",
+      "../Headers",
+      "-I",
+      "../Kernel",
+      "-w",
+      "-I",
+      "../PBFS/PBFS/PEFI/includes",
+      "-o",
+      "UEFI/build/bootloader_uefi.efi",
+      "UEFI/src/bootloader_uefi.c"
+    ],
+    "directory": "/home/AkshuDev/Projects/AOS-1.0/Bootloader",
+    "output": "UEFI/build/bootloader_uefi.efi"
   },
   {
     "file": "src/aos.c",
