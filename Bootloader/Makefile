@@ -7,6 +7,7 @@ DD := dd
 UEFI_CC = x86_64-w64-mingw32-gcc
 MFORMAT = mformat
 MCOPY = mcopy
+UEFI_AR := x86_64-w64-mingw32-ar
 
 MBR_DIR := MBR
 UEFI_DIR := UEFI
@@ -18,16 +19,26 @@ UEFI_BUILD_DIR := $(UEFI_DIR)/build
 UEFI_BIN_DIR := $(UEFI_DIR)/bin
 UEFI_SRC_DIR := $(UEFI_DIR)/src
 
-CFLAGS := -ffreestanding -mno-red-zone -O0 -fno-stack-protector -g -fPIC -nostdlib -m64 -I ../PBFS -I ../Headers -I ../Kernel -w
-UEFI_INC := -I ../PBFS/PBFS/PEFI/includes
+CFLAGS := -ffreestanding -mno-red-zone -O0 -fno-stack-protector -fno-pic -nostdlib -m64 -I ../PBFS -I ../Headers -I ../Kernel -w
+UEFI_CFLAGS := -mabi=ms \
+		-ffreestanding -fshort-wchar \
+		-mno-red-zone -fno-stack-protector \
+		-g -O0 \
+		-nostdlib -w -shared \
+		-I ../PBFS -I ../Headers -I ../Kernel -I ../PBFS/PBFS/PEFI/includes
 
 LDFLAGS_UEFI = -shared \
-		-Wl,--subsystem,10 \
-		-Wl,--image-base,0 \
-		-Wl,--section-alignment,0x1000 \
-		-Wl,--file-alignment,0x1000 \
-		-Wl,-e,efi_main \
-		-L $(UEFI_BUILD_DIR) -L ../PBFS/PBFS/PEFI/build
+        -Wl,--subsystem,10 \
+        -Wl,--image-base,0x140000000 \
+		-Wl,-q \
+        -Wl,--section-alignment,0x1000 \
+        -Wl,--file-alignment,0x1000 \
+        -Wl,--entry,efi_main \
+        -Wl,--enable-reloc-section \
+        -Wl,--disable-stdcall-fixup \
+		-Wl,--dll \
+        -L $(UEFI_BUILD_DIR) -L ../PBFS/PBFS/PEFI/build
+
 LDFLAGS_MBR := -m elf_x86_64 -T linker.ld -L ../PBFS/PBFS/build-fs
 LDENDFLAGS := -lpbfs-ndrivers
 LDENDFLAGS_UEFI := -lpbfs-ndrivers -lpefi
@@ -120,11 +131,11 @@ $(UEFI_TARGET): $(UEFI_BOOTLOADER_EFI)
 
 $(UEFI_BOOTLOADER_EFI): $(UEFI_BOOTLOADER_SRC)
 	@echo "Recomping PBFS for PE32..."
-	$(UEFI_CC) $(CFLAGS) -mabi=ms -c -I ../PBFS/PBFS/headers ../PBFS/PBFS/src-fs/pbfs-fs-ndrivers.c -o $(UEFI_BUILD_DIR)/pbfs-fs-ndrivers.o
-	$(UEFI_CC) $(CFLAGS) -mabi=ms -c -I ../PBFS/PBFS/headers ../PBFS/PBFS/tools/utils.c -o $(UEFI_BUILD_DIR)/utils.o
-	ar rcs $(UEFI_BUILD_DIR)/libpbfs-ndrivers.a $(UEFI_BUILD_DIR)/utils.o $(UEFI_BUILD_DIR)/pbfs-fs-ndrivers.o
+	$(UEFI_CC) $(UEFI_CFLAGS) -c -I ../PBFS/PBFS/headers ../PBFS/PBFS/src-fs/pbfs-fs-ndrivers.c -o $(UEFI_BUILD_DIR)/pbfs-fs-ndrivers.o
+	$(UEFI_CC) $(UEFI_CFLAGS) -c -I ../PBFS/PBFS/headers ../PBFS/PBFS/tools/utils.c -o $(UEFI_BUILD_DIR)/utils.o
+	$(UEFI_AR) rcs $(UEFI_BUILD_DIR)/libpbfs-ndrivers.a $(UEFI_BUILD_DIR)/utils.o $(UEFI_BUILD_DIR)/pbfs-fs-ndrivers.o
 	@echo "Compiling UEFI AOS Bootloader to EFI..."
-	$(UEFI_CC) $(CFLAGS) -mabi=ms $(UEFI_INC) -o $(UEFI_BOOTLOADER_EFI) $(UEFI_BOOTLOADER_SRC) $(LDFLAGS_UEFI) $(LDENDFLAGS_UEFI)
+	$(UEFI_CC) $(UEFI_CFLAGS) -o $(UEFI_BOOTLOADER_EFI) $(UEFI_BOOTLOADER_SRC) $(LDFLAGS_UEFI) $(LDENDFLAGS_UEFI)
 
 uefi: $(UEFI_BUILD_DIR) $(UEFI_BIN_DIR) $(UEFI_TARGET)
 mbr: $(MBR_BUILD_DIR) $(MBR_BIN_DIR) $(MBR_stage1_bin) $(MBR_stage2_bin) $(MBR_stage3_bin)
