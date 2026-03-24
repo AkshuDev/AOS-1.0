@@ -51,16 +51,19 @@ static uint8_t mmio_read8(uint64_t addr) {
 }
 
 static void virtio_submit_sync(void* cmd, uint64_t cmd_phys, size_t cmd_size, void* resp, uint64_t resp_phys, size_t resp_size) {
+    serial_printf("[VIRTIO] Submitting Sync [CMD: %lx, CMD PHYS: %lx, CMD SIZE: %lx]\n", (uint64_t)cmd, cmd_phys, cmd_size);
     uint16_t head = virtq.free_head;
     uint16_t next = (head + 1) % virtq.queue_size;
 
     // Descriptor 1: The Command (Read-only)
+    serial_print("[VIRTIO] Setting Descriptor 1\n");
     virtq.desc[head].addr = (uintptr_t)cmd_phys;
     virtq.desc[head].len = cmd_size;
     virtq.desc[head].flags = VIRTQ_DESC_F_NEXT;
     virtq.desc[head].next = next;
 
     // Descriptor 2: The Response (Write-only for GPU)
+    serial_print("[VIRTIO] Setting Descriptor 2\n");
     virtq.desc[next].addr = (uintptr_t)resp_phys;
     virtq.desc[next].len = resp_size;
     virtq.desc[next].flags = VIRTQ_DESC_F_WRITE;
@@ -71,15 +74,18 @@ static void virtio_submit_sync(void* cmd, uint64_t cmd_phys, size_t cmd_size, vo
     virtq.avail->idx++;
 
     // Notify Doorbell
+    serial_print("[VIRTIO] Notifying GPU\n");
     uintptr_t db = notify_base + (common_cfg->queue_notify_off * notify_multiplier);
     mmio_write32(db, 0);
 
     // Poll for completion
+    serial_print("[VIRTIO] Polling\n");
     while (virtq.used->idx != virtq.avail->idx) {
         __asm__ volatile("pause");
     }
 
     virtq.free_head = (next + 1) % virtq.queue_size;
+    serial_print("[VIRTIO] Submitted Sync\n");
 }
 
 static struct virtio_cap get_cap(uint8_t b, uint8_t s, uint8_t f, uint8_t target_type) {
@@ -122,11 +128,14 @@ static void setup_queue(gpu_device_t* gpu, uint16_t q_idx) {
     virtq.avail = (struct virtq_avail*)((uintptr_t)mem + desc_t_size);
     virtq.used = (struct virtq_used*)((uintptr_t)virtq.avail + avail_r_size);
     virtq.queue_size = size;
+    virtq.free_head = 0;
 
     common_cfg->queue_desc = phys;
     common_cfg->queue_avail = phys + desc_t_size;
     common_cfg->queue_used = (uintptr_t)phys + avail_r_size + desc_t_size;
     common_cfg->queue_enable = 1;
+
+    serial_print("[VIRTIO] Queues ready!\n");
 }
 
 void virtio_flush(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, uint32_t h, int resource_id) {
@@ -206,7 +215,9 @@ void virtio_init(struct gpu_device* gpu) {
     struct virtio_gpu_ctrl_hdr* get_info = (struct virtio_gpu_ctrl_hdr*)cmd_buf;
     get_info->type = VIRTIO_GPU_CMD_GET_DISPLAY_INFO;
     virtio_submit_sync(get_info, cmd_buf_phys, sizeof(*get_info), resp_buf, resp_buf_phys, sizeof(struct virtio_gpu_resp_display_info));
+    serial_print("submit is not the issue!\n");
     struct virtio_gpu_resp_display_info* display = (struct virtio_gpu_resp_display_info*)resp_buf;
+    serial_print("resp is not the issue!\n");
     if (display->displays[0].enabled) {
         gpu->framebuffer->w = display->displays[0].r.width;
         gpu->framebuffer->h = display->displays[0].r.height;

@@ -129,7 +129,9 @@ uint64_t spin_lock_irqsave(spinlock_t* lock) {
         "memory"
     );
     while (__sync_lock_test_and_set(lock, 1)) {
-        while (*lock);
+        while (*lock) {
+            asm volatile("pause"); // "Performance is Key" - Some random dude sitting on a chair programming this
+        }
     }
 
     return flags;

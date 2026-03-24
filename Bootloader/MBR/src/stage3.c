@@ -97,7 +97,15 @@ void draw_menu_frame(struct VMemDesign* cursor) {
     int width = IO_VMEM_MAX_COLS;
     int height = IO_VMEM_MAX_ROWS;
     int start_x = 0;
-    int start_y = 0;
+    int start_y = 1; // After id
+
+    // Draw id
+    const char* id = "AOS Bootloader V1.0";
+    int id_x = (IO_VMEM_MAX_COLS - strlen(id)) / 2;
+    vmem_set_cursor(id_x, 0);
+    cursor->x = id_x;
+    cursor->y = 0;
+    vmem_print(cursor, id);
 
     // Draw Top
     vmem_set_cursor(start_x, start_y);
@@ -108,7 +116,7 @@ void draw_menu_frame(struct VMemDesign* cursor) {
     vmem_printc(cursor, 0xBB); // ╗
 
     // Draw Sides
-    for(int i = 1; i < height - 1; i++) {
+    for(int i = 1; i < height - 2; i++) {
         vmem_set_cursor(start_x, start_y + i);
         cursor->x = start_x;
         cursor->y = start_y + i;
@@ -120,9 +128,9 @@ void draw_menu_frame(struct VMemDesign* cursor) {
     }
 
     // Draw Bottom
-    vmem_set_cursor(start_x, start_y + height - 1);
+    vmem_set_cursor(start_x, start_y + height - 2);
     cursor->x = start_x;
-    cursor->y = start_y + height - 1;
+    cursor->y = start_y + height - 2;
     vmem_printc(cursor, 0xC8); // ╚
     for(int i = 0; i < width - 2; i++) vmem_printc(cursor, 0xCD); // ═
     vmem_printc(cursor, 0xBC); // ╝
@@ -265,7 +273,9 @@ void stage3(void) {
             }
 
             if(i < entry_count_fit) {
+                size_t len = strlen(os_entries[i].name);
                 vmem_print(&cursor, os_entries[i].name);
+                for (uint32_t j=0;j<(IO_VMEM_MAX_COLS-len);j++) vmem_printc(&cursor, ' ');
             } else {
                 vmem_print(&cursor, "                "); // Clear empty slots
             }
@@ -273,9 +283,9 @@ void stage3(void) {
 
         cursor.fg = VMEM_COLOR_WHITE;
         cursor.bg = VMEM_COLOR_BLACK;
-        vmem_set_cursor(help_text_x, 1);
+        vmem_set_cursor(help_text_x, 2);
         cursor.x = help_text_x;
-        cursor.y = 1;
+        cursor.y = 2;
         vmem_print(&cursor, help_text);
 
         uint8_t scancode = ps2_read_scan(); 

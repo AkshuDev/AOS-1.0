@@ -503,10 +503,7 @@ static int sata_get_info(int port_id, struct sata_identify* id) {
         serial_print("[AHCI] State is not active!\n");
         return 0;
     }
-
-    serial_print("Print fails here!\n");
     uint8_t buffer[512];
-    serial_print("Now print fails again!\n");
 
     if (!sata_send_cmd(state, 0, 0, 1, (void*)buffer, CMD_ATA_IDENTIFY, FIS_TYPE_REG_H2D)) {
         serial_print("[AHCI] Failed to issue command!\n");

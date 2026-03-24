@@ -109,7 +109,7 @@ init_pm:
     ; Enable LME (EFER)
     mov ecx, 0xC0000080
     rdmsr
-    or eax, (1 << 8) ; set LME
+    or eax, (1 << 8) | (1 << 11) ; set LME and NXE
     wrmsr
 
     ; Load 64-bit GDT runtime
@@ -178,6 +178,7 @@ enable_a20:
 setup_paging:
     ret
 
+ALIGN 16
 gdt_start:
     dq 0x0000000000000000 ; NULL
     dq 0x00CF9A000000FFFF ; CODE_SEG
