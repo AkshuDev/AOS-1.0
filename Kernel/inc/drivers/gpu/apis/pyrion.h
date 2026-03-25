@@ -29,17 +29,16 @@ struct pyrion_display_info {
 };
 
 struct pyrion_ctx {
-    uint32_t ctx_id;
-    uint32_t resource_id;
+    uint64_t ctx_id;
+    uint64_t res_id;
     uint64_t ctx_phys;
-    FB_Cursor_t fb_cursor;
-    FB_Info_t fb_info;
 
     struct pyrion_rect viewport;
     uint8_t valid;
 };
 
-void pyrion_init(struct gpu_device* device) __attribute__((used));
+void pyrion_init(void) __attribute__((used));
+void pyrion_finish(void) __attribute__((used));
 void pyrion_conf(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t fg, uint32_t bg) __attribute__((used));
 
 struct pyrion_ctx* pyrion_create_ctx(void) __attribute__((used));

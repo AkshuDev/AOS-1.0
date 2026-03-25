@@ -32,7 +32,7 @@ static char* help_shell = "Usage: [COMMAND]\n"
     "\tclear: Clears the screen.\n"
     "\tshutdown: Shuts down the system.\n"
     "\tstart <program>: Starts a Program, Use 'start -help' for more info\n"
-    "\tpbfsctl-mnt: Mounts the current drive\n"
+    "\tpbfsctl-mnt: Remounts the current drive\n"
     "\tpbfsctl-fmt: Formats the current drive (Not Recommended)\n"
     "\tmkdir <dir>: Makes a new dir\n"
     "\tcd <dir>: Changes Current Working Dir\n";
@@ -123,6 +123,20 @@ void kernel_main(void) {
     }
 
     pbfs_init(&pbfs_init_funcs);
+    if (current_drive_works) {
+        int out = pbfs_mount(&current_drive.block_dev, &g_pbfs_mnt);
+        if (out != PBFS_RES_SUCCESS) {
+            serial_printf("Error: Failed to mount\n\tPBFS Error: %s\n", pbfs_get_err_str(out));
+            g_pbfs_cwd[0] = '\0';
+            current_drive_mounted = 0;
+        } else {
+            g_pbfs_cwd[0] = '/';
+            g_pbfs_cwd[1] = '\0';
+            current_drive_mounted = 1;
+        }
+    } else {
+        serial_print("Error: Current drive doesn't work!");
+    }
 
     // Now safe to use local variables
     struct VMemDesign vmem_design = {
@@ -224,20 +238,24 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
             } else {
                 char* _path = cmd + 3;
                 char path[PBFS_MAX_PATH_LEN];
-                path_normalize(_path, path, PBFS_MAX_PATH_LEN);
 
-                if (_path[0] == '.') {
+                if (_path[0] == '.' || _path[0] != '/') {
                     // Relative
                     path_join(path, g_pbfs_cwd, _path, PBFS_MAX_PATH_LEN);
+                } else if (_path[0] == '.' && _path[1] == '.' && _path[2] == '/') {
+                    // TODO: Implement
+                } else {
+                    path_normalize(_path, path, PBFS_MAX_PATH_LEN);
                 }
 
                 PBFS_DMM_Entry entry;
                 uint64_t tmplba = 0;
-                if (pbfs_find_entry(path, &entry, &tmplba, &g_pbfs_mnt) != PBFS_RES_SUCCESS || !(entry.type & METADATA_FLAG_DIR)) {
+                int out = pbfs_find_entry(path, &entry, &tmplba, &g_pbfs_mnt);
+                if ((out != PBFS_RES_SUCCESS && out != -1) || (!(entry.type & METADATA_FLAG_DIR) && out != -1)) {
                     vmem_print(vmem_design, "Error: No such directory!\n");
                     *lines += 1;
                 } else {
-                    strcpy(g_pbfs_cwd, path);
+                    strncpy(g_pbfs_cwd, path, PBFS_MAX_PATH_LEN);
                 }
             }
         }
@@ -250,17 +268,18 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
                 vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
                 *lines += 1;
             } else {
-                char* _path = cmd + 3;
+                char* _path = cmd + 6;
                 char path[PBFS_MAX_PATH_LEN];
                 path_normalize(_path, path, PBFS_MAX_PATH_LEN);
 
-                if (_path[0] == '.') {
+                if (_path[0] == '.' || _path[0] != '/') {
                     path_join(path, g_pbfs_cwd, _path, PBFS_MAX_PATH_LEN);
                 }
 
                 PBFS_DMM_Entry entry;
                 uint64_t tmplba = 0;
-                if (pbfs_find_entry(path, &entry, &tmplba, &g_pbfs_mnt) == PBFS_RES_SUCCESS) {
+                int out = pbfs_find_entry(path, &entry, &tmplba, &g_pbfs_mnt);
+                if (out == PBFS_RES_SUCCESS || out == -1) {
                     vmem_print(vmem_design, "Error: File or Directory already exists!\n");
                     *lines += 1;
                 } else {

@@ -45,7 +45,6 @@ $(DISK): $(MBR_BOOTLOADER_STAGE1) $(MBR_BOOTLOADER_STAGE2) $(MBR_BOOTLOADER_STAG
 		-bs 512 -tb 16384 -dn AOS_DISK -rkt -rbp 1024 2048 \
 		-c -f \
 		--mbr -btl $(MBR_BOOTLOADER_STAGE1) \
-		--permissions rw -ad /root \
 		-k $(AOS_KERNEL) AOS++
 	@echo "Filling in the Bootloader partition..."
 	$(DD) if=$(MBR_BOOTLOADER_STAGE2) of=$(DISK) bs=512 seek=1024 conv=notrunc

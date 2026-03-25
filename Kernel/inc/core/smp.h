@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include <inc/core/kexceptions.h>
 #include <inc/core/kfuncs.h>
+#include <sys/cdefs.h>
 
 enum thread_status {
     THREAD_STATUS_READY,
@@ -13,6 +14,7 @@ enum thread_status {
 
 enum core_status {
     CORE_STATUS_READY,
+    CORE_STATUS_RESERVED,
     CORE_STATUS_RUNNING
 };
 
@@ -37,6 +39,7 @@ struct core_state {
 
     uint8_t shutdown_core;
 
+    uint8_t reserve_core;
     enum core_status status;
 
     struct thread_state* cur_thread;
@@ -44,6 +47,7 @@ struct core_state {
     struct thread_state* ready_list;
     uint64_t next_tid;
     spinlock_t queue_lock;
+    spinlock_t command_lock;
 
     void* stack;
 } __attribute__((packed));
@@ -52,6 +56,11 @@ void smp_init(void) __attribute__((used));
 void smp_push_task(uint32_t core_idx, void (*entry)(void)) __attribute__((used));
 void smp_push_task_bsp(void (*entry)(void)) __attribute__((used));
 void smp_yield(void) __attribute__((used));
+
+uint8_t smp_get_first_free_core(uint32_t* out) __attribute__((used));
+uint8_t smp_get_core_status(uint32_t core_idx, enum core_status* out) __attribute__((used));
+void smp_reserve_core(uint32_t core_idx) __attribute__((used));
+void smp_unreserve_core(uint32_t core_idx) __attribute__((used));
 
 void smp_timer_handler(void) __attribute__((used));
 void smp_ipi_handler(void) __attribute__((used));

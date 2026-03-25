@@ -161,8 +161,11 @@ void start_vshell(struct pyrion_ctx* display_ctx) {
 
     pyrion_viewport(vshell_ctx, &vshell_viewport);
     pyrion_conf(vshell_ctx, 0, 0, 0xFFFFFFFF, 0x171717FF);
+    serial_print("[VSHELL] Pyrion Enabled, and set, clearing....\n");
     pyrion_clear(vshell_ctx, 0x171717FF);
+    serial_print("[VSHELL] Vshell initialized!\n");
     pyrion_builtin_print(vshell_ctx, "Welcome to AOS++ Visible Shell!\n");
+    serial_print("[VSHELL] Vshell is active!\n");
 
     char cmd_buf[512];
     int cmd_len = 0;

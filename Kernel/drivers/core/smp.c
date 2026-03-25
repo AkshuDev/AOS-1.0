@@ -168,7 +168,7 @@ static void ap_kernel_entry(void) {
 
             thread_context_switch(prev, next);
         } else {
-            core->status = CORE_STATUS_READY;
+            core->status = core->reserve_core ? CORE_STATUS_RESERVED : CORE_STATUS_READY;
             asm volatile("sti");
             asm volatile("hlt");
             core->status = CORE_STATUS_RUNNING;
@@ -242,6 +242,52 @@ void smp_push_task_bsp(void (*entry)(void)) {
     }
 }
 
+uint8_t smp_get_first_free_core(uint32_t* out) {
+    for (uint32_t i = 0; i < 256; i++){
+        if (cores[i] == NULL) continue;
+
+        if (cores[i]->status == CORE_STATUS_READY) {
+            *out = cores[i]->core_idx;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+uint8_t smp_get_core_status(uint32_t core_idx, enum core_status *out) {
+    if (core_idx > 255 || cores[core_idx] == NULL) return 0;
+    *out = cores[core_idx]->status;
+    return 1;
+}
+
+void smp_reserve_core(uint32_t core_idx) {
+    if (core_idx > 255 || cores[core_idx] == NULL) return;
+    struct core_state* target = cores[core_idx];
+    uint64_t flags = spin_lock_irqsave(&target->command_lock);
+
+    target->reserve_core = 1;
+    if (target->status != CORE_STATUS_RUNNING) {
+        serial_printf("[SMP] Sending Awake command for core %d\n", core_idx);
+        send_wakeup_ipi(target->lapic_id, 0x40);
+    }
+
+    spin_unlock_irqrestore(&target->command_lock, flags);
+}
+
+void smp_unreserve_core(uint32_t core_idx) {
+    if (core_idx > 255 || cores[core_idx] == NULL) return;
+    struct core_state* target = cores[core_idx];
+    uint64_t flags = spin_lock_irqsave(&target->command_lock);
+
+    target->reserve_core = 0;
+    if (target->status != CORE_STATUS_RUNNING) {
+        serial_printf("[SMP] Sending Awake command for core %d\n", core_idx);
+        send_wakeup_ipi(target->lapic_id, 0x40);
+    }
+
+    spin_unlock_irqrestore(&target->command_lock, flags);
+}
+
 void smp_init(void) {
     uint8_t apic_ids[256];
     uint64_t core_count = 0;
@@ -298,6 +344,7 @@ void smp_init(void) {
         ap_core_state->idle_thread->status = THREAD_STATUS_RUNNING;
         ap_core_state->ready_list = NULL;
         ap_core_state->queue_lock = 0;
+        ap_core_state->command_lock = 0;
         ap_core_state->stack = (void*)((uintptr_t)ap_stack + 16384);
         ap_core_state->status = CORE_STATUS_READY;
         ap_core_state->next_tid = 0;

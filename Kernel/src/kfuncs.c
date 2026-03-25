@@ -79,7 +79,9 @@ char* strcpy(char* dest, char* src) {
 }
 
 char* strncpy(char* dest, char* src, size_t n) {
-    return (char*)memcpy(dest, src, n);
+    size_t n1 = strlen(src);
+    size_t n2 = n1 > n ? n : n1;
+    return (char*)memcpy(dest, src, n2);
 }
 
 uint32_t str_to_uint(const char* str) {

@@ -48,7 +48,11 @@ static struct page_table* alloc_page_table(uint64_t* phys_out) {
 
     volatile struct page_table* tbl = NULL;
     
-    tbl = (volatile struct page_table*)phys;
+    if (pager_ready != 1)
+        tbl = (volatile struct page_table*)phys;
+    else {
+        tbl = (volatile struct page_table*)(AOS_DIRECT_MAP_BASE + phys);
+    }
     if (!tbl) { serial_print("[PAGER] Failed to allocate page table\n"); return NULL; }
  
     for (int i = 0; i < 512; i++) {
@@ -64,13 +68,12 @@ static void load_cr3(uint64_t pml4_phys) {
     asm volatile ("mov %0, %%cr3" :: "r"(pml4_phys) : "memory");
 }
 
-static int bits_needed(unsigned int n) {
-    if (n == 0) return 1;
-    int count = 0;
-    while (n > 0) {
-        n >>= 1;
+static uint64_t bits_needed(uint64_t n) {
+    uint64_t count = 0;
+    do {
         count++;
-    }
+        n >>= 1;
+    } while (n);
     return count;
 }
 
@@ -102,20 +105,20 @@ void pager_init(void) {
     for (int i = 0; i < e820->entry_count; i++) {
         struct bs1_e820_entry* e = &e820->entries[i];
         uint64_t end_addr = e->base + e->len;
-        if (end_addr > max_phys_addr)
-            max_phys_addr = end_addr;
-
+        
         if (e->len == 0) continue;
         if (e->type == E820_TYPE_RAM) {
             serial_printf("E820: %p - %p (%llu MB) (Type RAM)\n", e->base, end_addr, e->len / 1024 / 1024);
             uint64_t start = e->base;
             // Don't use the first 64MB!
-            if (start < 0x1000000 * 64) {
+            if (start < 0x100000 * 64) {
                 if (e->len <= (0x200000 - start)) continue; // Too small
                 start = 0x200000;
             }
             base_phys[phys_idx] = start;
             limit_phys[phys_idx] = end_addr;
+            if (end_addr > max_phys_addr)
+                max_phys_addr = end_addr;
             phys_idx++;
         } else {
             serial_printf("E820: %p - %p (Type %d)\n", e->base, end_addr, e->type);
@@ -129,8 +132,14 @@ void pager_init(void) {
     asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
     cpu_phys_bits = eax & 0xFF;
 
-    if (bits_needed(max_phys_addr) > cpu_phys_bits) {
-        
+    uint64_t bits_req = bits_needed(max_phys_addr);
+
+    if (bits_req > cpu_phys_bits) {
+        if (cpu_phys_bits >= 64)
+            max_phys_addr = ~0ULL;
+        else
+            max_phys_addr = (1ULL << cpu_phys_bits) - 1;
+        serial_printf("[PAGER] CPU Doesn't Support required %lu bits, hence maximum memory used will be %lu bits or %lu GB\n", bits_req, cpu_phys_bits, max_phys_addr / (1024 * 1024 * 1024));
     }
 
     avmf_init((uint64_t*)base_phys, (uint64_t*)limit_phys, phys_idx);
@@ -144,9 +153,30 @@ void pager_init(void) {
         }
     }
     serial_print("[PAGER] Allocated Virtual Memory for Page Tables\n");
-    pager_map_range(AOS_DIRECT_MAP_BASE, 0x0, max_phys_addr, PAGE_PRESENT | PAGE_RW);
+    uint64_t last_map_end = 0;
+    for (int i = 0; i < e820->entry_count; i++) {
+        struct bs1_e820_entry* e = &e820->entries[i];
+        if (e->len < 1) continue;
+
+        uint64_t start = e->base;
+        uint64_t len = e->len;
+        if (e->base > last_map_end) {
+            start = last_map_end;
+            len = (e->base - last_map_end) + e->len;
+        }
+
+        uint64_t end_addr = start + len;
+        if (end_addr & ~((1ULL << cpu_phys_bits) - 1)) {
+            serial_printf("[PAGER] Warning: Physical address %p exceeds CPU limit of %lu bits! Skipping...\n", end_addr, cpu_phys_bits);
+            break; // since now every addr will be larger
+        }
+        serial_printf("[PAGER] Mapping Direct Map (0x%lx-0x%lx) to 0x%lx\n", start, end_addr, AOS_DIRECT_MAP_BASE + e->base);
+        pager_map_range(AOS_DIRECT_MAP_BASE + start, start, len, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
+
+        last_map_end = end_addr;
+    }
     serial_print("[PAGER] Mapped Direct Map\n");
-    pager_map_range(0x0, 0x0, 0x1000000 * 64, PAGE_PRESENT | PAGE_RW); // Identity Map the Kernel (64 MB)
+    pager_map_range(0x0, 0x0, 0x100000 * 64, PAGE_PRESENT | PAGE_RW); // Identity Map the Kernel (64 MB)
     serial_print("[PAGER] Mapped Kernel\n");
 
     pager_load(kernel_pml4);
@@ -157,8 +187,8 @@ void pager_init(void) {
 
 struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags) {
     if (phys & ~((1ULL << cpu_phys_bits) - 1)) {
-        serial_printf("[PAGER] ERROR: Physical address %p exceeds CPU limit of %d bits!\n", phys, cpu_phys_bits);
-        return NULL; 
+        serial_printf("[PAGER] ERROR: Physical address %p exceeds CPU limit of %lu bits!\n", phys, cpu_phys_bits);
+        return NULL;
     }
 
     struct page_table* pml4 = kernel_pml4;

@@ -78,7 +78,7 @@ void pyrion_viewport(struct pyrion_ctx* ctx, struct pyrion_rect* viewport) {
     }
 
     serial_printf("[Pyrion] Setting Viewport: W-%u H-%u X-%u Y-%u\n", viewport->width, viewport->height, viewport->x, viewport->y);
-    ctx->fb_info.addr = avmf_alloc(viewport->width * viewport->height * sizeof(uint32_t), MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, &ctx->fb_info.phys_addr);
+    ctx->fb_info.addr = avmf_alloc(viewport->width * viewport->height * (ctx->fb_info.bpp / 8), MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, &ctx->fb_info.phys_addr);
     if (ctx->fb_info.addr == NULL) return;
     ctx->fb_info.width = viewport->width;
     ctx->fb_info.height = viewport->height;
