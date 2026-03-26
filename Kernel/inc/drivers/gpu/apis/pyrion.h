@@ -1,13 +1,15 @@
 #pragma once
 
 #include <inttypes.h>
-#include <inc/drivers/gpu/gpu.h>
 #include <inc/drivers/core/framebuffer.h>
 
-enum pyrion_color_formats {
-    PYRION_CFORMAT_B8G8R8A8,
-    PYRION_CFORMAT_A8B8G8R8,
-    PYRION_CFORMAT_R8G8B8A8
+enum pyrion_color_format {
+    PYRION_COLORF_RGBA,
+    PYRION_COLORF_BGRA,
+    PYRION_COLORF_ABGR,
+    PYRION_COLORF_ARGB,
+    PYRION_COLORF_RGB, // A is always 0xFF
+    PYRION_COLORF_BGR, // A is always 0xFF
 };
 
 struct pyrion_rect {
@@ -24,20 +26,61 @@ struct pyrion_display_info {
     uint8_t bpp;
     uint32_t pitch;
     uint32_t size;
-    enum pyrion_color_formats color_format;
     uint8_t padding;
+};
+
+struct pyrion_font {
+    uint32_t* atlas;
+    uint64_t atlas_phys;
+    uint32_t res_id;
+    uint32_t w;
+    uint32_t h;
+    uint32_t total_h;
 };
 
 struct pyrion_ctx {
     uint64_t ctx_id;
     uint64_t res_id;
+
     uint64_t ctx_phys;
+
+    FB_Cursor_t fb_info;
+    struct pyrion_display_info display_info;
+    enum pyrion_color_format cformat;
+
+    uint8_t font_ready;
+    struct pyrion_font font;
+    
+    void* driver_data;
+    uint64_t driver_data_phys;
 
     struct pyrion_rect viewport;
     uint8_t valid;
 };
 
-void pyrion_init(void) __attribute__((used));
+struct pyrion_api {
+    void (*init)(void);
+    void (*finish)(void);
+    
+    struct pyrion_ctx* (*create_ctx)(void);
+    void (*destroy_ctx)(struct pyrion_ctx* ctx);
+
+    void (*flush)(struct pyrion_ctx* ctx);
+    void (*viewport)(struct pyrion_ctx* ctx, struct pyrion_rect* viewport);
+
+    void (*clear)(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+    void (*pixel)(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+    void (*draw_rect)(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+
+    uint32_t (*upload_font)(struct pyrion_ctx* ctx, uint64_t atlas_phys, uint32_t* atlas, uint32_t atlas_w, uint32_t atlas_total_h);
+    void (*destroy_font)(uint32_t font_res_id, void* font_mem);
+
+    void (*draw_char)(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, uint32_t w, uint32_t h, uint32_t font_res_id);
+};
+
+#include <inc/drivers/gpu/gpu.h>
+
+void pyrion_init(struct gpu_device* device) __attribute__((used));
 void pyrion_finish(void) __attribute__((used));
 void pyrion_conf(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t fg, uint32_t bg) __attribute__((used));
 

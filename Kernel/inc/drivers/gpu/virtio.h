@@ -87,6 +87,10 @@ enum virtio_gpu_ctrl_type {
 #define VIRTIO_GPU_FORMAT_R8G8B8A8_UNORM 67
 #define VIRTIO_GPU_FORMAT_A8B8G8R8_UNORM 121
 
+#define VIRTIO_GPU_PIPE_TEXTURE_2D 2
+
+#define VIRGL_CMD_HEADER(op, obj, len) (((op) << 16) | ((obj) << 8) | (len))
+
 struct virtio_rect {
     uint32_t x;
     uint32_t y;
@@ -253,8 +257,103 @@ struct virtio_gpu_resource_create_3d {
 	uint32_t padding;
 } __attribute__((packed));
 
+struct virtio_gpu_cmd_submit_3d {
+	struct virtio_gpu_ctrl_hdr hdr;
+	uint32_t size;
+	uint32_t padding;
+} __attribute__((packed));
+
 void virtio_init(struct gpu_device* gpu) __attribute__((used));
 void virtio_init_resources(struct gpu_device* gpu, int resource_id) __attribute__((used));
-void virtio_flush(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, uint32_t h, int resource_id) __attribute__((used));
+void virtio_flush(uint32_t x, uint32_t y, uint32_t w, uint32_t h, int resource_id) __attribute__((used));
 void virtio_set_mode(struct gpu_device* gpu, uint32_t w, uint32_t h, uint32_t bpp) __attribute__((used));
 void virtio_switch_off(struct gpu_device* gpu) __attribute__((used));
+
+// Virgl
+enum virtio_virgl_object_types {
+   VIRTIO_VIRGL_OBJECT_NULL,
+   VIRTIO_VIRGL_OBJECT_BLEND,
+   VIRTIO_VIRGL_OBJECT_RASTERIZER,
+   VIRTIO_VIRGL_OBJECT_DSA,
+   VIRTIO_VIRGL_OBJECT_SHADER,
+   VIRTIO_VIRGL_OBJECT_VERTEX_ELEMENTS,
+   VIRTIO_VIRGL_OBJECT_SAMPLER_VIEW,
+   VIRTIO_VIRGL_OBJECT_SAMPLER_STATE,
+   VIRTIO_VIRGL_OBJECT_SURFACE,
+   VIRTIO_VIRGL_OBJECT_QUERY,
+   VIRTIO_VIRGL_OBJECT_STREAMOUT_TARGET,
+   VIRTIO_VIRGL_OBJECT_MSAA_SURFACE,
+   VIRTIO_VIRGL_MAX_OBJECTS,
+};
+
+enum virtio_virgl_context_cmd {
+   VIRTIO_VIRGL_CCMD_NOP = 0,
+   VIRTIO_VIRGL_CCMD_CREATE_OBJECT = 1,
+   VIRTIO_VIRGL_CCMD_BIND_OBJECT,
+   VIRTIO_VIRGL_CCMD_DESTROY_OBJECT,
+   VIRTIO_VIRGL_CCMD_SET_VIEWPORT_STATE,
+   VIRTIO_VIRGL_CCMD_SET_FRAMEBUFFER_STATE,
+   VIRTIO_VIRGL_CCMD_SET_VERTEX_BUFFERS,
+   VIRTIO_VIRGL_CCMD_CLEAR,
+   VIRTIO_VIRGL_CCMD_DRAW_VBO,
+   VIRTIO_VIRGL_CCMD_RESOURCE_INLINE_WRITE,
+   VIRTIO_VIRGL_CCMD_SET_SAMPLER_VIEWS,
+   VIRTIO_VIRGL_CCMD_SET_INDEX_BUFFER,
+   VIRTIO_VIRGL_CCMD_SET_CONSTANT_BUFFER,
+   VIRTIO_VIRGL_CCMD_SET_STENCIL_REF,
+   VIRTIO_VIRGL_CCMD_SET_BLEND_COLOR,
+   VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE,
+   VIRTIO_VIRGL_CCMD_BLIT,
+   VIRTIO_VIRGL_CCMD_RESOURCE_COPY_REGION,
+   VIRTIO_VIRGL_CCMD_BIND_SAMPLER_STATES,
+   VIRTIO_VIRGL_CCMD_BEGIN_QUERY,
+   VIRTIO_VIRGL_CCMD_END_QUERY,
+   VIRTIO_VIRGL_CCMD_GET_QUERY_RESULT,
+   VIRTIO_VIRGL_CCMD_SET_POLYGON_STIPPLE,
+   VIRTIO_VIRGL_CCMD_SET_CLIP_STATE,
+   VIRTIO_VIRGL_CCMD_SET_SAMPLE_MASK,
+   VIRTIO_VIRGL_CCMD_SET_STREAMOUT_TARGETS,
+   VIRTIO_VIRGL_CCMD_SET_RENDER_CONDITION,
+   VIRTIO_VIRGL_CCMD_SET_UNIFORM_BUFFER,
+   VIRTIO_VIRGL_CCMD_SET_SUB_CTX,
+   VIRTIO_VIRGL_CCMD_CREATE_SUB_CTX,
+   VIRTIO_VIRGL_CCMD_DESTROY_SUB_CTX,
+   VIRTIO_VIRGL_CCMD_BIND_SHADER,
+   VIRTIO_VIRGL_CCMD_SET_TESS_STATE,
+   VIRTIO_VIRGL_CCMD_SET_MIN_SAMPLES,
+   VIRTIO_VIRGL_CCMD_SET_SHADER_BUFFERS,
+   VIRTIO_VIRGL_CCMD_SET_SHADER_IMAGES,
+   VIRTIO_VIRGL_CCMD_MEMORY_BARRIER,
+   VIRTIO_VIRGL_CCMD_LAUNCH_GRID,
+   VIRTIO_VIRGL_CCMD_SET_FRAMEBUFFER_STATE_NO_ATTACH,
+   VIRTIO_VIRGL_CCMD_TEXTURE_BARRIER,
+   VIRTIO_VIRGL_CCMD_SET_ATOMIC_BUFFERS,
+   VIRTIO_VIRGL_CCMD_SET_DEBUG_FLAGS,
+   VIRTIO_VIRGL_CCMD_GET_QUERY_RESULT_QBO,
+   VIRTIO_VIRGL_CCMD_TRANSFER3D,
+   VIRTIO_VIRGL_CCMD_END_TRANSFERS,
+   VIRTIO_VIRGL_CCMD_COPY_TRANSFER3D,
+   VIRTIO_VIRGL_CCMD_SET_TWEAKS,
+   VIRTIO_VIRGL_CCMD_CLEAR_TEXTURE,
+   VIRTIO_VIRGL_CCMD_PIPE_RESOURCE_CREATE,
+   VIRTIO_VIRGL_CCMD_PIPE_RESOURCE_SET_TYPE,
+   VIRTIO_VIRGL_CCMD_GET_MEMORY_INFO,
+   VIRTIO_VIRGL_CCMD_SEND_STRING_MARKER,
+   VIRTIO_VIRGL_MAX_COMMANDS
+};
+
+// Pyrion
+#include <inc/drivers/gpu/apis/pyrion.h>
+
+void pyrion_init_virtio(void) __attribute__((used));
+void pyrion_finish_virtio(void) __attribute__((used));
+struct pyrion_ctx* pyrion_create_ctx_virtio(void) __attribute__((used));
+void pyrion_destroy_ctx_virtio(struct pyrion_ctx* ctx) __attribute__((used));
+void pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* viewport) __attribute__((used));
+void pyrion_flush_virtio(struct pyrion_ctx* ctx) __attribute__((used));
+void pyrion_clear_virtio(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));
+void pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));
+void pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, uint32_t w, uint32_t h, uint32_t font_res_id) __attribute__((used));
+void pyrion_destroy_font_virtio(uint32_t font_res_id, void* font_mem) __attribute__((used));
+uint32_t pyrion_upload_font_virtio(struct pyrion_ctx* ctx, uint64_t atlas_phys, uint32_t* atlas, uint32_t atlas_w, uint32_t atlas_total_h) __attribute__((used));
+void pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));

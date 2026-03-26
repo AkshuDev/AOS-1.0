@@ -87,6 +87,23 @@ void get_framebuffer_info_virtio(PCIe_FB* fb, pcie_device_t* device, gpu_device_
     gpu->swap_buffers = NULL;
     gpu->flush = virtio_flush;
     gpu->switch_off = virtio_switch_off;
+
+    gpu->pyrion.init = pyrion_init_virtio;
+    gpu->pyrion.finish = pyrion_finish_virtio;
+
+    gpu->pyrion.create_ctx = pyrion_create_ctx_virtio;
+    gpu->pyrion.destroy_ctx = pyrion_destroy_ctx_virtio;
+
+    gpu->pyrion.flush = pyrion_flush_virtio;
+    gpu->pyrion.viewport = pyrion_viewport_virtio;
+
+    gpu->pyrion.clear = pyrion_clear_virtio;
+    gpu->pyrion.pixel = pyrion_pixel_virtio;
+    gpu->pyrion.draw_rect = pyrion_rect_virtio;
+
+    gpu->pyrion.upload_font = pyrion_upload_font_virtio;
+    gpu->pyrion.destroy_font = pyrion_destroy_font_virtio;
+
     gpu->active = 0;
 }
 
