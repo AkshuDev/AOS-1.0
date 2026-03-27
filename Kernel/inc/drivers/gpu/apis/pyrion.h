@@ -78,7 +78,7 @@ struct pyrion_api {
     void (*draw_char)(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, uint32_t w, uint32_t h, uint32_t font_res_id);
 };
 
-#include <inc/drivers/gpu/gpu.h>
+struct gpu_device;
 
 void pyrion_init(struct gpu_device* device) __attribute__((used));
 void pyrion_finish(void) __attribute__((used));

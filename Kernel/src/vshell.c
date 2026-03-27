@@ -134,7 +134,7 @@ static void vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len) {
                 pyrion_builtin_printc(vshell_ctx, '\n');
             }
         } else if (strcmp(cmd_buf, "clear") == 0) {
-            pyrion_clear(vshell_ctx, vshell_ctx->fb_cursor.bg_color);
+            pyrion_clear(vshell_ctx, vshell_ctx->fb_info.bg_color);
             pyrion_set_cursor(vshell_ctx, 0, 0); 
         } else {
             pyrion_builtin_print(vshell_ctx, "Unknown Command: ");

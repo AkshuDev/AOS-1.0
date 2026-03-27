@@ -2,7 +2,6 @@
 
 #include <inttypes.h>
 #include <asm.h>
-#include <fonts.h>
 #include <inc/core/pcie.h>
 
 #include <inc/mm/avmf.h>
@@ -10,6 +9,8 @@
 
 #include <inc/drivers/gpu/apis/pyrion.h>
 #include <inc/drivers/gpu/gpu.h>
+
+extern uint8_t font8x16[256][16];
 
 static struct gpu_device* gdevice = NULL;
 

@@ -36,10 +36,10 @@ prot_mode:
     or eax, 1 << 5
     mov cr4, eax
 
-    ; Enable Long Mode (EFER.LME)
+    ; Enable Long Mode (EFER.LME and EFER.NXE)
     mov ecx, 0xC0000080
     rdmsr
-    or eax, 1 << 8
+    or eax, (1 << 8) | (1 << 11)
     wrmsr
 
     ; Enable Paging
@@ -51,6 +51,10 @@ prot_mode:
     ; must calculate the physical address of gdt64
     mov eax, 0x8000 + (gdt64 - smp_trampoline_start)
     mov [gdt64_descriptor - smp_trampoline_start + 0x8000 + 2], eax
+
+    mov eax, 0x8000 + (tss64_desc - smp_trampoline_start) ; Same for TSS Descriptor
+    mov [tss64_desc - smp_trampoline_start + 0x8000 + 2], eax
+
     lgdt [gdt64_descriptor - smp_trampoline_start + 0x8000]
 
     ; Jump to 64-bit mode
@@ -63,6 +67,20 @@ long_mode_entry:
     mov ds, ax
     mov es, ax
     mov ss, ax
+
+    mov rsp, [0x510] ; Set stack before for CPU, but later refresh it to avoid memory issues
+
+    ; Load TSS
+    mov rbx, [0x510]
+    mov [ap_tss + 8], rbx ; RSP0
+
+    mov ax, 0x18
+    ltr ax
+
+    xor rax, rax
+    xor rbx, rbx
+    xor rcx, rcx
+    xor rdx, rdx
 
     ; Load the stack and jump into the Kernel
     mov rsp, [0x510] ; Stack provided at 0x510
@@ -85,10 +103,36 @@ gdt64:
     dq 0x0000000000000000 ; NULL
     dq 0x00AF9A000000FFFF ; 64-bit CODE (0x08)
     dq 0x00AF92000000FFFF ; 64-bit DATA (0x10)
+    dq 0x0040890000000000; TSS Entry 1
+    dq 0x0000000000000000 ; TSS Entry 2
 gdt64_end:
 
 gdt64_descriptor:
     dw gdt64_end - gdt64 - 1
+    dq 0 ; To be patched at runtime
+
+ALIGN 16
+ap_tss:
+    dq 0 ; Reserved
+    dq 0 ; RSP0 (will be patched during runtime)
+    dq 0 ; RSP1
+    dq 0 ; RSP2
+    dq 0 ; Reserved
+    dq 0 ; IST1
+    dq 0 ; IST2
+    dq 0 ; IST3
+    dq 0 ; IST4
+    dq 0 ; IST5
+    dq 0 ; IST6
+    dq 0 ; IST7
+    dq 0 ; Reserved
+    dw 0 ; Reserved
+    dw 0 ; IO Map Base
+ap_tss_end:
+
+ALIGN 16
+tss64_desc:
+    dq ap_tss_end - ap_tss - 1
     dq 0 ; To be patched at runtime
 
 smp_trampoline_end:

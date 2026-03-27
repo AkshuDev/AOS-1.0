@@ -35,12 +35,6 @@ void aospp_start(void) {
     serial_print("[AOS++] Initializing GPU Driver...\n");
     if (gpu_device.init != NULL) gpu_device.init(&gpu_device);
 
-    // Map framebuffer
-    gpu_framebuffer.virt = avmf_alloc(gpu_framebuffer.size, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &(gpu_framebuffer.phys));
-    if (gpu_framebuffer.virt == 0) {
-        serial_print("[AOS++] Allocation failed for framebuffer!\n");
-        return;
-    }
     if (gpu_device.init_resources != NULL) gpu_device.init_resources(&gpu_device, 1);
     serial_print("[AOS++] Initializing Pyrion...\n");
     pyrion_init(&gpu_device);

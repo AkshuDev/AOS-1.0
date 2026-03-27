@@ -185,6 +185,7 @@ void smp_ipi_handler(void) {
 }
 
 void smp_timer_handler(void) {
+    serial_print("[SMP] IDT works?\n");
     lapic_write(0xB0, 0);
 }
 
