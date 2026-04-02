@@ -77,10 +77,23 @@ void kernel_main(void) {
     );
 
     serial_init();
-    idt_init();
     // Reserve MMIO region at 0xF0000000, kernel starts at 0x100000
     serial_print("AOS++ LOADED!\n");
     pager_init(); // Inits AVMF Too
+
+    idt_init();
+
+    // Enable SSE
+    uint64_t cr;
+    asm volatile("mov %%cr0, %0" : "=r"(cr));
+    cr &= ~(1 << 2); // Clear EM (Emulation) bit
+    cr |= (1 << 1); // Set MP (Monitor Coproccessor) bit
+    asm volatile("mov %0, %%cr0" : : "r"(cr));
+    cr = 0;
+    asm volatile("mov %%cr4, %0" : "=r"(cr));
+    cr |= (1 << 9); // Set OSFXSR (FXSAVE/FXRSTOR support)
+    cr |= (1 << 10); // Set OSXMMEXCPT (Unmasked Exception support)
+    asm volatile("mov %0, %%cr4" :: "r"(cr));
 
     acpi_init();
     if (pcie_init() == 0) {

@@ -17,6 +17,8 @@
 #include <PBFS/headers/pbfs-fs.h>
 #undef PBFS_NDRIVERS
 
+#include <ambrc.h>
+
 void pm_print_hex(struct VMemDesign* cursor, unsigned int val) {
     char hex[9];
     const char *digits = "0123456789ABCDEF";
@@ -102,13 +104,11 @@ void draw_menu_frame(struct VMemDesign* cursor) {
     // Draw id
     const char* id = "AOS Bootloader V1.0";
     int id_x = (IO_VMEM_MAX_COLS - strlen(id)) / 2;
-    vmem_set_cursor(id_x, 0);
     cursor->x = id_x;
     cursor->y = 0;
     vmem_print(cursor, id);
 
     // Draw Top
-    vmem_set_cursor(start_x, start_y);
     cursor->x = start_x;
     cursor->y = start_y;
     vmem_printc(cursor, 0xC9); // ╔
@@ -117,18 +117,15 @@ void draw_menu_frame(struct VMemDesign* cursor) {
 
     // Draw Sides
     for(int i = 1; i < height - 2; i++) {
-        vmem_set_cursor(start_x, start_y + i);
         cursor->x = start_x;
         cursor->y = start_y + i;
         vmem_printc(cursor, 0xBA); // ║
-        vmem_set_cursor(start_x + width - 1, start_y + i);
         cursor->x = start_x + width - 1;
         cursor->y = start_y + i;
         vmem_printc(cursor, 0xBA); // ║
     }
 
     // Draw Bottom
-    vmem_set_cursor(start_x, start_y + height - 2);
     cursor->x = start_x;
     cursor->y = start_y + height - 2;
     vmem_printc(cursor, 0xC8); // ╚
@@ -170,24 +167,28 @@ int flush_f(struct block_device* dev) {
 void stage3(void) __attribute__((section(".entry"), used)); 
 void stage3(void) {
     enable_a20();
+    init_backup_ambrc();
+    struct ambrc* ambrc = get_ambrc();
+
     struct VMemDesign cursor = {
         .x = 0,
         .y = 0,
-        .fg = VMEM_COLOR_WHITE,
-        .bg = VMEM_COLOR_BLACK,
+        .fg = ambrc->display.fg_color,
+        .bg = ambrc->display.bg_color,
         .serial_out = 1
     };
 
     acpi_init();
 
-    vmem_set_cursor(0, 0);
+    vmem_disable_cursor();
+
     vmem_clear_screen(&cursor);
     vmem_print(&cursor, "Welcome To AOS Bootloader!\n");
     
     unsigned char *mem = (unsigned char *)0x100000;
     *mem = 0xAA;
     if (*mem != 0xAA) {
-        cursor.fg = VMEM_COLOR_RED;
+        cursor.fg = ambrc->display.error_fg_color;
         vmem_print(&cursor, "A20 line disabled!\n");
         for (;;) asm("hlt");
     }
@@ -257,33 +258,35 @@ void stage3(void) {
     const char* help_text = "Use UP/DOWN to select, ENTER to boot.";
     size_t help_text_len = strlen(help_text);
     size_t help_text_x = (IO_VMEM_MAX_COLS - help_text_len) / 2;
-    uint64_t entry_count_fit = entry_count > (IO_VMEM_MAX_COLS - 4) ? (IO_VMEM_MAX_COLS - 4) : entry_count;
+    uint64_t entry_count_fit = entry_count > (IO_VMEM_MAX_COLS - 5) ? (IO_VMEM_MAX_COLS - 5) : entry_count;
+    uint64_t ambrc_entry = entry_count_fit+1;
 
     while (running) {
-        for (int i = 0; i < entry_count_fit; i++) {
-            vmem_set_cursor(1, 4 + i);
+        for (int i = 0; i < ambrc_entry; i++) {
             cursor.x = 1;
             cursor.y = 4 + i;
             if(i == selected) {
-                cursor.fg = VMEM_COLOR_BLACK;
-                cursor.bg = VMEM_COLOR_WHITE; // Highlight bar
+                cursor.fg = ambrc->display.selected_fg_color;
+                cursor.bg = ambrc->display.selected_bg_color; // Highlight bar
             } else {
-                cursor.fg = VMEM_COLOR_WHITE;
-                cursor.bg = VMEM_COLOR_BLACK;
+                cursor.fg = ambrc->display.fg_color;
+                cursor.bg = ambrc->display.bg_color;
             }
 
             if(i < entry_count_fit) {
                 size_t len = strlen(os_entries[i].name);
                 vmem_print(&cursor, os_entries[i].name);
                 for (uint32_t j=0;j<(IO_VMEM_MAX_COLS-len);j++) vmem_printc(&cursor, ' ');
+            } else if (i == ambrc_entry-1) {
+                vmem_print(&cursor, "AOS Bootloader Settings");
+                for (uint32_t j=0;j<(IO_VMEM_MAX_COLS-24);j++) vmem_printc(&cursor, ' ');
             } else {
                 vmem_print(&cursor, "                "); // Clear empty slots
             }
         }
 
-        cursor.fg = VMEM_COLOR_WHITE;
-        cursor.bg = VMEM_COLOR_BLACK;
-        vmem_set_cursor(help_text_x, 2);
+        cursor.fg = ambrc->display.fg_color;
+        cursor.bg = ambrc->display.bg_color;
         cursor.x = help_text_x;
         cursor.y = 2;
         vmem_print(&cursor, help_text);
@@ -292,26 +295,41 @@ void stage3(void) {
         if(scancode == 0x48) { // Up Arrow
             if(selected > 0) selected--;
         } else if(scancode == 0x50) { // Down Arrow
-            if(selected < entry_count_fit - 1) selected++;
+            if(selected < ambrc_entry-1) selected++;
         } else if(scancode == 0x1C) { // Enter
-            running = 0;
+            if (selected == ambrc_entry-1) {
+                start_ambrc(&cur_drive);
+                cur_drive.read_blk(cur_drive.cur_port, 2046, 2, (void*)0x500);
+                ambrc = get_ambrc();
+
+                cursor.bg = ambrc->display.bg_color;
+                cursor.fg = ambrc->display.fg_color;
+                cursor.x = 0;
+                cursor.y = 0;
+                vmem_disable_cursor();
+
+                vmem_clear_screen(&cursor);
+                draw_menu_frame(&cursor);
+                selected = 0;
+            } else {
+                running = 0;
+            }
         }
     }
 
     vmem_clear_screen(&cursor);
-    vmem_set_cursor(0, 0);
-    cursor.bg = VMEM_COLOR_BLACK;
-    cursor.fg = VMEM_COLOR_WHITE;
+    cursor.fg = ambrc->display.fg_color;
+    cursor.bg = ambrc->display.bg_color;
     cursor.serial_out = 1;
     vmem_printf(&cursor, "Loading %s...\n", os_entries[selected].name);
 
-    if (!cur_drive.read_blk(cur_drive.cur_port, uint128_to_u64(os_entries[selected].lba), uint128_to_u32(os_entries[selected].count), AOS_KERNEL_LOC)) {
+    if (!cur_drive.read_blk(cur_drive.cur_port, uint128_to_u64(os_entries[selected].lba), uint128_to_u32(os_entries[selected].count), (void*)ambrc->kernel_info[selected].load_addr)) {
         vmem_print(&cursor, "Failed to read kernel, Disk error!\n");
         for (;;) asm volatile("hlt");
     }
 
     vmem_print(&cursor, "Jumping to Kernel...\n");
-    stage3_jump_to_kernel((void(*)(void))AOS_KERNEL_LOC, AOS_KERNEL_STACK_TOP);
+    stage3_jump_to_kernel((void(*)(void))((void*)ambrc->kernel_info[selected].entry_point), AOS_KERNEL_STACK_TOP);
 
     __builtin_unreachable(); // Tell GCC control never returns 
 }

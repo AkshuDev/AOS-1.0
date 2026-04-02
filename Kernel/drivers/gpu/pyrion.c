@@ -3,31 +3,43 @@
 #include <inttypes.h>
 #include <asm.h>
 #include <inc/core/pcie.h>
+#include <inc/core/kfuncs.h>
 
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
 
 #include <inc/drivers/gpu/apis/pyrion.h>
 #include <inc/drivers/gpu/gpu.h>
+#include <inc/drivers/io/io.h>
 
 extern uint8_t font8x16[256][16];
 
 static struct gpu_device* gdevice = NULL;
 
 static uint32_t* create_font_atlas_rgba(uint64_t* out_phys) {
-    uint32_t width = 8;
-    uint32_t height = 256 * 16;
-    size_t size = width * height * sizeof(uint32_t);
+    uint32_t atlas_w = 128; // 16 chars * 8 pixels
+    uint32_t atlas_h = 256; // 16 rows * 16 pixels
+    size_t size = atlas_w * atlas_h * sizeof(uint32_t);
 
     uint32_t* atlas = (uint32_t*)avmf_alloc(size, MALLOC_TYPE_USER, PAGE_PRESENT | PAGE_RW, out_phys);
-    
+    if (!atlas) {
+        serial_printf("[PYRION] Font Alloc failed!\n");
+        return NULL;
+    }
+    memset(atlas, 0, size); // Clear with transparency
+
     for (int char_idx = 0; char_idx < 256; char_idx++) {
+        // Calculate the character's position in the 16x16 grid
+        int grid_x = (char_idx % 16) * 8;
+        int grid_y = (char_idx / 16) * 16;
+
         for (int row = 0; row < 16; row++) {
             uint8_t row_data = font8x16[char_idx][row];
             for (int col = 0; col < 8; col++) {
-                // Bits are usually stored MSB-first in these fonts
                 int bit = (row_data >> (7 - col)) & 1;
-                atlas[(char_idx * 16 + row) * 8 + col] = bit ? 0xFFFFFFFF : 0x00000000;
+                // Offset into the 128-wide buffer
+                uint32_t pixel_idx = (grid_y + row) * atlas_w + (grid_x + col);
+                atlas[pixel_idx] = bit ? 0xFFFFFFFF : 0x00000000;
             }
         }
     }
@@ -181,12 +193,24 @@ void pyrion_builtin_printc(struct pyrion_ctx *ctx, char c) {
 
     if (ctx->font_ready != 1) {
         ctx->font.atlas = create_font_atlas_rgba(&ctx->font.atlas_phys);
-        if (!ctx->font.atlas) return;
+        if (!ctx->font.atlas) {
+            serial_print("[PYRION] Failed to create font!\n");
+            return;
+        }
         ctx->font.h = 16;
         ctx->font.w = 8;
-        ctx->font.total_h = 16 * 256;
-        ctx->font.res_id = gdevice->pyrion.upload_font(ctx, ctx->font.atlas_phys, ctx->font.atlas, ctx->font.w, ctx->font.total_h);
+        ctx->font.total_h = 16*8;
+        uint32_t atlas_total_w = 128;
+        uint32_t atlas_total_h = 256;
+        serial_print("[PYRION] Uploading Font...\n");
+        uint32_t res_id = gdevice->pyrion.upload_font(ctx, ctx->font.atlas_phys, ctx->font.atlas, atlas_total_w, atlas_total_h);
+        if (res_id < 1) {
+            serial_print("[PYRION] Failed to upload font!\n");
+            return;
+        }
+        ctx->font.res_id = res_id;
         ctx->font_ready = 1;
+        serial_print("[PYRION] Font uploaded!\n");
     }
 
     if (c == '\n') {
@@ -198,8 +222,10 @@ void pyrion_builtin_printc(struct pyrion_ctx *ctx, char c) {
         return;
     }
     
-    uint32_t atlas_y = (uint32_t)((uint8_t)c * 16);
-    gdevice->pyrion.draw_char(ctx, ctx->fb_info.x, ctx->fb_info.y, 0, atlas_y, ctx->font.w, ctx->font.h, ctx->font.res_id);
+    uint8_t idx = (uint8_t)c;
+    uint32_t atlas_x = (idx % 16) * 8;
+    uint32_t atlas_y = (idx / 16) * 16;
+    gdevice->pyrion.draw_char(ctx, ctx->fb_info.x, ctx->fb_info.y, atlas_x, atlas_y, ctx->font.w, ctx->font.h, ctx->font.res_id);
 
     ctx->fb_info.x += ctx->font.w;
 
@@ -339,5 +365,5 @@ void pyrion_builtin_printf(struct pyrion_ctx *ctx, const char *fmt, ...) {
 }
 
 void pyrion_switch_off(void) {
-
+    gdevice->switch_off(gdevice);
 }

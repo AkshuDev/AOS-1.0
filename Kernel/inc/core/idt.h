@@ -20,8 +20,8 @@ typedef struct {
     uint64_t base;
 } __attribute__((packed)) idt_ptr_t;
 
-extern idt_entry_t idt[IDT_SIZE];
-extern idt_ptr_t idt_ptr;
+extern idt_entry_t* idt;
+extern idt_ptr_t* idt_ptr;
 
 void idt_init(void) __attribute__((used));
 void idt_load_local(void) __attribute__((used));

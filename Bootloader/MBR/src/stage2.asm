@@ -138,6 +138,24 @@ init_pm64:
     and rsp, -16
     mov rbp, rsp
 
+    mov rax, ap_tss
+    mov rcx, gdt64 + 24
+
+    mov [rax + 4], rsp ; RSP0
+
+    mov word [rcx + 2], ax
+    shr rax, 16
+    mov byte [rcx + 4], al
+    shr rax, 8
+    mov byte [rcx + 7], al
+    shr rax, 8
+    mov dword [rcx + 8], eax
+
+    mov dword [rcx + 12], 0
+
+    mov ax, 0x18
+    ltr ax
+
     xor rax, rax
     xor rcx, rcx
     xor rdx, rdx
@@ -152,6 +170,10 @@ init_pm64:
     xor r13, r13
     xor r14, r14
     xor r15, r15
+
+    mov rsp, 0x08000000 ; 128MB
+    and rsp, -16
+    mov rbp, rsp
 
     mov rax, STAGE3
     jmp rax
@@ -190,9 +212,11 @@ gdt_descriptor:
     dd gdt_start
 
 gdt64:
-    dq 0x0000000000000000
-    dq 0x00AF9A000000FFFF
-    dq 0x00AF92000000FFFF
+    dq 0x0000000000000000 ; NULL
+    dq 0x00AF9A000000FFFF ; 64-bit CODE (0x08)
+    dq 0x00AF92000000FFFF ; 64-bit DATA (0x10)
+    dq 0x0000890000006700 ; TSS Entry 1
+    dq 0x0000000000000000 ; TSS Entry 2
 gdt64_descriptor:
     dw gdt64_end - gdt64 - 1
     dq gdt64
@@ -201,6 +225,30 @@ gdt64_end:
 gdtr_temp:
     dw 0
     dd 0
+
+ALIGN 16
+ap_tss:
+    dd 0 ; Reserved
+    dq 0 ; RSP0 (will be patched during runtime)
+    dq 0 ; RSP1
+    dq 0 ; RSP2
+    dq 0 ; Reserved
+    dq 0 ; IST1
+    dq 0 ; IST2
+    dq 0 ; IST3
+    dq 0 ; IST4
+    dq 0 ; IST5
+    dq 0 ; IST6
+    dq 0 ; IST7
+    dq 0 ; Reserved
+    dd 0 ; Reserved
+    dw 0 ; IO Map Base
+ap_tss_end:
+
+ALIGN 16
+tss64_desc:
+    dq ap_tss_end - ap_tss - 1
+    dq 0 ; To be patched at runtime
 
 CODE_SEG equ 0x08
 DATA_SEG equ 0x10

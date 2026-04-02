@@ -132,13 +132,51 @@ static uint8_t ap_init_core_state(struct core_state* state) {
 static void ap_kernel_entry(void) {
     uint32_t lapic_id = get_lapic_id();
     uint64_t kernel_stack = *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x510);
+    struct core_state* core = *(struct core_state**)(AOS_DIRECT_MAP_BASE + 0x520);
+
+    core->gdt[0] = 0x0000000000000000;
+    core->gdt[1] = 0x00AF9A000000FFFF;
+    core->gdt[2] = 0x00AF92000000FFFF;
+
+    memset(&core->tss, 0, sizeof(struct tss_entry));
+
+    uint64_t emergency_stack = avmf_alloc(0x1000, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL);
+    uint64_t emergency_memory_stack = avmf_alloc(0x1000, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL);
+    if (emergency_stack) {
+        core->tss.ist1 = emergency_stack + 0x1000;
+    } else {
+        serial_printf("[CORE %d] Failed to allocate Emergency Stack!\n", lapic_id);
+    }
+    if (emergency_memory_stack) {
+        core->tss.ist2 = emergency_memory_stack + 0x1000;
+    } else {
+        serial_printf("[CORE %d] Failed to allocate Emergency Memory Stack!\n", lapic_id);
+    }
+
+    core->tss.rsp0 = (uint64_t)kernel_stack;
+    core->tss.io_map_base = sizeof(struct tss_entry);
+
+    struct gdt_tss_descriptor* private_desc = (struct gdt_tss_descriptor*)&core->gdt[3];
+    private_desc->limit_low = sizeof(struct tss_entry) - 1;
+    private_desc->base_low = ((uintptr_t)&core->tss) & 0xFFFF;
+    private_desc->base_mid = (((uintptr_t)&core->tss) >> 16) & 0xFF;
+    private_desc->access = 0x89; // Present, TSS, Not busy
+    private_desc->limit_high_flags = 0;
+    private_desc->base_high_mid = (((uintptr_t)&core->tss) >> 24) & 0xFF;
+    private_desc->base_high = (((uintptr_t)&core->tss) >> 32) & 0xFFFFFFFF;
+    private_desc->reserved = 0;
+
+    core->gdt_desc.limit = (sizeof(uint64_t) * 5) - 1;
+    core->gdt_desc.base = (uint64_t)&core->gdt;
+
+    asm volatile("lgdt %0" : : "m"(core->gdt_desc));
+    asm volatile("ltr %%ax" : : "a"(0x18));
 
     lapic_write(0xF0, 0x1FF); 
     lapic_write(0x80, 0);
 
     idt_load_local();
 
-    struct core_state* core = *(struct core_state**)(AOS_DIRECT_MAP_BASE + 0x520);
     ap_init_core_state(core);
 
     serial_printf("[SMP] Core %d online!\n", lapic_id);
@@ -152,6 +190,7 @@ static void ap_kernel_entry(void) {
         asm volatile("" : : : "memory");
         asm volatile("cli");
         if (core->shutdown_core == 1) {
+            avmf_free(emergency_stack);
             break;
         } else if (*(struct thread_state* volatile*)&core->ready_list != NULL) {
             asm volatile("sti");
@@ -185,7 +224,6 @@ void smp_ipi_handler(void) {
 }
 
 void smp_timer_handler(void) {
-    serial_print("[SMP] IDT works?\n");
     lapic_write(0xB0, 0);
 }
 
@@ -300,10 +338,8 @@ void smp_init(void) {
     uint8_t bsp_apic_id = get_lapic_id();
 
     uintptr_t trampoline_len = (uintptr_t)&smp_trampoline_end - (uintptr_t)&smp_trampoline_start;
-    memcpy((void*)(AOS_DIRECT_MAP_BASE + 0x8000), &smp_trampoline_start, trampoline_len);
     uint64_t current_cr3;
     asm volatile("mov %%cr3, %0" : "=r"(current_cr3));
-    *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x500) = current_cr3;
 
     for (uint32_t i = 0; i < (uint32_t)core_count; i++) {
         if (cores[i] != NULL) {
@@ -350,7 +386,9 @@ void smp_init(void) {
         ap_core_state->status = CORE_STATUS_READY;
         ap_core_state->next_tid = 0;
         ap_core_state->shutdown_core = 0;
-
+        
+        memcpy((void*)(AOS_DIRECT_MAP_BASE + 0x8000), &smp_trampoline_start, trampoline_len);
+        *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x500) = current_cr3;
         *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x510) = (uintptr_t)ap_stack + 16384;
         *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x518) = (uintptr_t)ap_kernel_entry;
         *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x520) = (uintptr_t)ap_state;

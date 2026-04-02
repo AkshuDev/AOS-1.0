@@ -3,6 +3,10 @@
 
 #include <inc/core/idt.h>
 #include <inc/core/kexceptions.h>
+#include <inc/drivers/io/io.h>
+
+#include <inc/mm/avmf.h>
+#include <inc/mm/pager.h>
 
 extern void aos_system_exception_asm_0(void);
 extern void aos_system_exception_asm_1(void);
@@ -42,8 +46,8 @@ extern void aos_int_smp_ipi(void);
 extern void aos_int_avmss(void); // AOS Video Memory Safety Shell
 extern void aos_int_gpu_switch_off(void);
 
-idt_entry_t idt[IDT_SIZE];
-idt_ptr_t idt_ptr;
+idt_entry_t* idt = NULL;
+idt_ptr_t* idt_ptr = NULL;
 
 void set_idt_entry(int num, uint64_t offset, uint16_t selector, uint8_t type_attr) {
     idt[num].offset_low = offset & 0xFFFF;
@@ -55,14 +59,37 @@ void set_idt_entry(int num, uint64_t offset, uint16_t selector, uint8_t type_att
     idt[num].ist = 0;
 }
 
+static void set_idt_entry_ist(int num, uint64_t offset, uint16_t selector, uint8_t type_attr, uint8_t ist_index) {
+    idt[num].offset_low = offset & 0xFFFF;
+    idt[num].offset_mid = (offset >> 16) & 0xFFFF;
+    idt[num].offset_high = (offset >> 32) & 0xFFFFFFFF;
+    idt[num].selector = selector;
+    idt[num].zero = 0;
+    idt[num].type_attr = type_attr;
+    idt[num].ist = ist_index;
+}
+
 void idt_load_local(void) {
-    asm volatile("lidt %0" : : "m"(idt_ptr));
+    if (!idt || !idt_ptr) return;
+    asm volatile("lidt %0" : : "m"(*idt_ptr));
 }
 
 void idt_init(void) {
-    idt_ptr.limit = sizeof(idt_entry_t) * IDT_SIZE - 1;
-    idt_ptr.base = (uint64_t)&idt;
+    idt = (idt_entry_t*)avmf_alloc(sizeof(idt_entry_t) * IDT_SIZE, MALLOC_TYPE_SENSITIVE, PAGE_PRESENT | PAGE_RW | PAGE_GLOBAL, NULL);
+    if (!idt) {
+        serial_print("[IDT] Failed to allocate memory for idt!\n");
+        return;
+    }
+    idt_ptr = (idt_ptr_t*)avmf_alloc(sizeof(idt_ptr_t), MALLOC_TYPE_SENSITIVE, PAGE_PRESENT | PAGE_RW | PAGE_GLOBAL, NULL);
+    if (!idt_ptr) {
+        serial_print("[IDT] Failed to allocate memory for idt_ptr!\n");
+        return;
+    }
 
+    idt_ptr->limit = sizeof(idt_entry_t) * IDT_SIZE - 1;
+    idt_ptr->base = (uint64_t)idt;
+
+    // Normal entries
     set_idt_entry(0, (uint64_t)aos_system_exception_asm_0, 0x08, 0x8E);
     set_idt_entry(1, (uint64_t)aos_system_exception_asm_1, 0x08, 0x8E);
     set_idt_entry(2, (uint64_t)aos_system_exception_asm_2, 0x08, 0x8E);
@@ -95,12 +122,13 @@ void idt_init(void) {
     set_idt_entry(29, (uint64_t)aos_system_exception_asm_29, 0x08, 0x8E);
     set_idt_entry(30, (uint64_t)aos_system_exception_asm_30, 0x08, 0x8E);
     set_idt_entry(31, (uint64_t)aos_system_exception_asm_31, 0x08, 0x8E);
-
+    
+    // Normal
     set_idt_entry(0x30, (uint64_t)aos_int_smp_timer, 0x08, 0x8E);
     set_idt_entry(0x40, (uint64_t)aos_int_smp_ipi, 0x08, 0x8E);
     set_idt_entry(0x50, (uint64_t)aos_int_avmss, 0x08, 0x8E);
     set_idt_entry(0x51, (uint64_t)aos_int_gpu_switch_off, 0x08, 0x8E);
 
-    asm volatile("lidt %0" : : "m"(idt_ptr));
+    asm volatile("lidt %0" : : "m"(*idt_ptr));
     asm volatile ("sti");
 }

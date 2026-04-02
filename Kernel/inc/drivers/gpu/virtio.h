@@ -89,7 +89,10 @@ enum virtio_gpu_ctrl_type {
 
 #define VIRTIO_GPU_PIPE_TEXTURE_2D 2
 
-#define VIRGL_CMD_HEADER(op, obj, len) (((op) << 16) | ((obj) << 8) | (len))
+#define VIRTIO_GPU_BIND_SAMPLER_VIEW (1 << 0)
+#define VIRTIO_GPU_BIND_RENDER_TARGET (1 << 1)
+
+#define VIRGL_CMD_HEADER(op, obj, len) (((op) << 24) | ((obj) << 16) | (len))
 
 struct virtio_rect {
     uint32_t x;
@@ -196,6 +199,17 @@ struct virtio_gpu_transfer_to_host_2d {
     uint32_t padding;
 } __attribute__((packed));
 
+struct virtio_gpu_transfer_to_host_3d {
+	struct virtio_gpu_ctrl_hdr hdr;
+	uint32_t x, y, z;
+    uint32_t w, h, d;
+	uint64_t offset;
+	uint32_t resource_id;
+	uint32_t level;
+	uint32_t stride;
+	uint32_t layer_stride;
+} __attribute__((packed));
+
 struct virtio_gpu_resource_flush {
     struct virtio_gpu_ctrl_hdr hdr;
     struct virtio_rect r;
@@ -239,6 +253,12 @@ struct virtio_gpu_ctx_create {
 
 struct virtio_gpu_ctx_destroy {
 	struct virtio_gpu_ctrl_hdr hdr;
+} __attribute__((packed));
+
+struct virtio_gpu_ctx_resource {
+	struct virtio_gpu_ctrl_hdr hdr;
+	uint32_t resource_id;
+	uint32_t padding;
 } __attribute__((packed));
 
 struct virtio_gpu_resource_create_3d {

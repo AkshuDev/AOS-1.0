@@ -150,7 +150,7 @@ uint64_t avmf_alloc_virt(uint64_t size, MemoryAllocType type) {
     uint64_t true_size = align4k(size);
 
     if (!heap_ptr) {serial_print("[AVMF] Internal Error During VMemory Allocation!\n"); return 0;}
-    if (*heap_ptr + true_size > heap_end) {serial_print("[AVMF] Not Enough VMemory for Allocation!\n"); return 0;}
+    if (*heap_ptr + true_size > heap_end) {serial_printf("[AVMF] Not Enough VMemory for Allocation (required: %lx-%lx max-%lx)\n", *heap_ptr, *heap_ptr + true_size, heap_end); return 0;}
     
     uint64_t ptr = *heap_ptr;
     uint64_t rflags = spin_lock_irqsave(&avmf_lock);
@@ -161,44 +161,17 @@ uint64_t avmf_alloc_virt(uint64_t size, MemoryAllocType type) {
 }
 
 uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, int flags, uint64_t* phys_out) {
-    uint64_t* heap_ptr = NULL;
-    uint64_t heap_end = 0;
-    switch (type) {
-        case MALLOC_TYPE_USER:
-            heap_ptr = &heap_user;
-            heap_end = AOS_DIRECT_MAP_BASE;
-            break;
-        case MALLOC_TYPE_KERNEL:
-            heap_ptr = &heap_kernel;
-            heap_end = AOS_DRIVER_SPACE_BASE;
-            break;
-        case MALLOC_TYPE_DRIVER:
-            heap_ptr = &heap_driver;
-            heap_end = AOS_SENSITIVE_SPACE_BASE;
-            break;
-        case MALLOC_TYPE_SENSITIVE:
-            heap_ptr = &heap_sensitive;
-            heap_end = 0;
-            break;
-        default:
-            serial_print("[AVMF] Invalid VMemory Allocation Type!\n");
-            return 0;
-    }
+    uint64_t virt = avmf_alloc_virt(size, type);
+    if (virt == 0) return 0;
     uint64_t true_size = align4k(size);
-
-    if (!heap_ptr) {serial_print("[AVMF] Internal Error During VMemory Allocation!\n"); return 0;}
-    if (*heap_ptr + true_size > heap_end) {serial_print("[AVMF] Not Enough VMemory for Allocation!\n"); return 0;}
 
     uint64_t phys = avmf_alloc_phys_contiguous(true_size);
     if (!phys) {serial_printf("[AVMF] Unable to retrieve physical address of VMemory Allocation for Size: 0x%llx bytes\n", true_size); return 0;}
 
-    if (!avmf_alloc_region((uint64_t)*heap_ptr, phys, true_size, flags)) {serial_print("[AVMF] Failed to Allocate Internal Region for VMemory!\n"); return 0;}
-    pager_map_range((uint64_t)*heap_ptr, phys, true_size, flags);
-    uint64_t rflags = spin_lock_irqsave(&avmf_lock);
-    *heap_ptr += true_size;
+    if (!avmf_alloc_region((uint64_t)virt, phys, true_size, flags)) {serial_print("[AVMF] Failed to Allocate Internal Region for VMemory!\n"); return 0;}
+    pager_map_range((uint64_t)virt, phys, true_size, flags);
     if (phys_out != NULL) *phys_out = phys;
-    spin_unlock_irqrestore(&avmf_lock, rflags);
-    return (uint64_t)(*heap_ptr - true_size);
+    return virt;
 }
 
 void avmf_free(uint64_t virt) {

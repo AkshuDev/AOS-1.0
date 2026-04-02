@@ -31,8 +31,46 @@ struct thread_state {
     struct thread_state* next;
 } __attribute__((packed));
 
+struct gdt_tss_descriptor {
+    uint16_t limit_low;
+    uint16_t base_low;
+    uint8_t base_mid;
+    uint8_t access;
+    uint8_t limit_high_flags;
+    uint8_t base_high_mid;
+    uint32_t base_high;
+    uint32_t reserved;
+} __attribute__((packed));
+
+struct gdt_ptr {
+    uint16_t limit;
+    uint64_t base;
+} __attribute__((packed));
+
+struct tss_entry {
+    uint32_t reserved;
+    uint64_t rsp0;
+    uint64_t rsp1;
+    uint64_t rsp2;
+    uint64_t reserved2;
+    uint64_t ist1;
+    uint64_t ist2;
+    uint64_t ist3;
+    uint64_t ist4;
+    uint64_t ist5;
+    uint64_t ist6;
+    uint64_t ist7;
+    uint64_t reserved3;
+    uint32_t reserved4;
+    uint16_t io_map_base;
+} __attribute__((packed));
+
 struct core_state {
     struct core_state* self;
+
+    uint64_t gdt[7];
+    struct tss_entry tss;
+    struct gdt_ptr gdt_desc;
 
     uint32_t lapic_id;
     uint32_t core_idx;

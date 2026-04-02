@@ -133,7 +133,7 @@ get_smp() {
 
 get_gpu() {
     case "$gpu_type" in
-        virtio) echo "-device virtio-gpu-pci -vga virtio" ;;
+        virtio) echo "-device virtio-vga-gl -display gtk,gl=on -vga none" ;;
         vmware) echo "-vga vmware" ;;
         bochs) echo "-vga std" ;;
         *)

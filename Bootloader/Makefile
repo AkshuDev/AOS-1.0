@@ -19,13 +19,13 @@ UEFI_BUILD_DIR := $(UEFI_DIR)/build
 UEFI_BIN_DIR := $(UEFI_DIR)/bin
 UEFI_SRC_DIR := $(UEFI_DIR)/src
 
-CFLAGS := -ffreestanding -mno-red-zone -O0 -fno-stack-protector -fno-pic -nostdlib -m64 -I ../PBFS -I ../Headers -I ../Kernel -w
+CFLAGS := -ffreestanding -mno-red-zone -O0 -fno-stack-protector -fno-pic -nostdlib -m64 -I ../PBFS -I ../Headers -I ../Kernel -I MBR/inc -w
 UEFI_CFLAGS := -mabi=ms \
 		-ffreestanding -fshort-wchar \
 		-mno-red-zone -fno-stack-protector \
 		-g -O0 \
 		-nostdlib -w -shared \
-		-I ../PBFS -I ../Headers -I ../Kernel -I ../PBFS/PBFS/PEFI/includes
+		-I ../PBFS -I ../Headers -I ../Kernel -I ../PBFS/PBFS/PEFI/includes -I UEFI/inc
 
 LDFLAGS_UEFI = -shared \
         -Wl,--subsystem,10 \
@@ -58,7 +58,8 @@ MBR_BTL_DRIVERS_SRC := $(MBR_SRC_DIR)/pcie.c \
 					$(MBR_SRC_DIR)/acpi.c \
 					$(MBR_SRC_DIR)/drive.c \
 					$(MBR_SRC_DIR)/drivers/sata.c \
-					$(MBR_SRC_DIR)/kfuncs.c
+					$(MBR_SRC_DIR)/kfuncs.c \
+					$(MBR_SRC_DIR)/ambrc.c
 MBR_DRIVERS_O := $(patsubst $(KERNEL)/%.c,$(MBR_BUILD_DIR)/%.o,$(MBR_DRIVERS_SRC))
 MBR_BTL_DRIVERS_O := $(patsubst $(MBR_SRC_DIR)/%.c,$(MBR_BUILD_DIR)/%.o,$(MBR_BTL_DRIVERS_SRC))
 

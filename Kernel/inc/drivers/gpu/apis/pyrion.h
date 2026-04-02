@@ -53,6 +53,7 @@ struct pyrion_ctx {
     
     void* driver_data;
     uint64_t driver_data_phys;
+    uint64_t driver_var;
 
     struct pyrion_rect viewport;
     uint8_t valid;

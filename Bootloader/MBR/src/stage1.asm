@@ -63,6 +63,12 @@ start:
     mov si, dap_s3
     int 0x13
     jc disk_error
+
+    mov ah, 0x42 ; extended load
+    mov dl, [disk]
+    mov si, dap_ambrc ; Load DAP
+    int 0x13
+    jc disk_error
     
     jmp 0x1000:0x0000 ; Jump to stage 2
 
@@ -104,9 +110,17 @@ dap_s2:
 dap_s3:
     db 0x10 ; size (16 bytes)
     db 0 ; reserved
-    dw 105 ; sectors to read
+    dw 123 ; sectors to read
     dw 0x0000 ; dest offset
     dw 0x1500 ; dest segment
     dq 2048 ; starting lba
+
+dap_ambrc: ; AOS Master Boot Record Config
+    db 0x10 ; size (16 bytes)
+    db 0 ; reserved
+    dw 2 ; sectors to read
+    dw 0x0500 ; dest offset
+    dw 0x0000 ; dest segment
+    dq 2046 ; starting lba
 
 times 512 - ($ - $$) db 0 ; PBFS CLI will take care of the rest!

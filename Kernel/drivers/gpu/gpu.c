@@ -104,6 +104,8 @@ void get_framebuffer_info_virtio(PCIe_FB* fb, pcie_device_t* device, gpu_device_
     gpu->pyrion.upload_font = pyrion_upload_font_virtio;
     gpu->pyrion.destroy_font = pyrion_destroy_font_virtio;
 
+    gpu->pyrion.draw_char = pyrion_draw_char_virtio;
+
     gpu->active = 0;
 }
 

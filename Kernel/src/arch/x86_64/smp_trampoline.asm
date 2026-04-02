@@ -52,9 +52,6 @@ prot_mode:
     mov eax, 0x8000 + (gdt64 - smp_trampoline_start)
     mov [gdt64_descriptor - smp_trampoline_start + 0x8000 + 2], eax
 
-    mov eax, 0x8000 + (tss64_desc - smp_trampoline_start) ; Same for TSS Descriptor
-    mov [tss64_desc - smp_trampoline_start + 0x8000 + 2], eax
-
     lgdt [gdt64_descriptor - smp_trampoline_start + 0x8000]
 
     ; Jump to 64-bit mode
@@ -72,7 +69,21 @@ long_mode_entry:
 
     ; Load TSS
     mov rbx, [0x510]
-    mov [ap_tss + 8], rbx ; RSP0
+
+    mov rax, 0x8000 + (ap_tss - smp_trampoline_start)
+    mov rcx, 0x8000 + (gdt64 - smp_trampoline_start) + 24
+
+    mov [rax + 4], rbx ; RSP0
+
+    mov word [rcx + 2], ax
+    shr rax, 16
+    mov byte [rcx + 4], al
+    shr rax, 8
+    mov byte [rcx + 7], al
+    shr rax, 8
+    mov dword [rcx + 8], eax
+
+    mov dword [rcx + 12], 0
 
     mov ax, 0x18
     ltr ax
@@ -103,7 +114,7 @@ gdt64:
     dq 0x0000000000000000 ; NULL
     dq 0x00AF9A000000FFFF ; 64-bit CODE (0x08)
     dq 0x00AF92000000FFFF ; 64-bit DATA (0x10)
-    dq 0x0040890000000000; TSS Entry 1
+    dq 0x0000890000006700 ; TSS Entry 1
     dq 0x0000000000000000 ; TSS Entry 2
 gdt64_end:
 
@@ -113,7 +124,7 @@ gdt64_descriptor:
 
 ALIGN 16
 ap_tss:
-    dq 0 ; Reserved
+    dd 0 ; Reserved
     dq 0 ; RSP0 (will be patched during runtime)
     dq 0 ; RSP1
     dq 0 ; RSP2
@@ -126,7 +137,7 @@ ap_tss:
     dq 0 ; IST6
     dq 0 ; IST7
     dq 0 ; Reserved
-    dw 0 ; Reserved
+    dd 0 ; Reserved
     dw 0 ; IO Map Base
 ap_tss_end:
 

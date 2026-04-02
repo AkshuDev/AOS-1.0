@@ -28,6 +28,7 @@ static struct page_table* kernel_pml4 = NULL;
 static struct page_table* mapped_pml4 = NULL;
 static uint8_t pager_ready = 0;
 static uint64_t cpu_phys_bits = 0;
+static uint64_t cpu_virt_bits = 0;
 
 static void* pager_phys_to_virt(uint64_t phys) {
     if (!pager_ready) {
@@ -131,6 +132,7 @@ void pager_init(void) {
     ecx = 0;
     asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
     cpu_phys_bits = eax & 0xFF;
+    cpu_virt_bits = (eax >> 8) & 0xFF;
 
     uint64_t bits_req = bits_needed(max_phys_addr);
 
