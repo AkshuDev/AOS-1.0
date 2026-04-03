@@ -23,14 +23,16 @@ struct ambrc_display {
     enum VMemColors ambrc_selected_fg_color;
 
     enum VMemColors error_fg_color;
+
+    uint32_t splash_duration;
 } __attribute__((packed));
 
 struct ambrc_boot_info {
     uint16_t default_os_idx; // value+1 = idx,0=not present
     uint16_t safe_os_idx; // value+1 = idx,0=not present
     uint16_t panic_os_idx; // value+1 = idx,0=not present
-
-    uint8_t safe_mode_flags; // 0=empty
+    
+    uint16_t crash_verification_mode; // 0 = None, 1 = Only TSC, 2 = Only Kernel, 3 = Both TSC and Kernel
 } __attribute__((packed));
 
 struct ambrc_kernel_info {
@@ -52,9 +54,6 @@ struct ambrc {
     struct ambrc_kernel_info kernel_info[AMBRC_MAX_KERNELS];
     // Checksum
     uint32_t crc32;
-
-    // Reserved
-    char res[757]
 } __attribute__((packed));
 
 extern struct ambrc backup_ambrc;

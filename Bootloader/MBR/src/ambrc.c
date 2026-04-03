@@ -1,25 +1,13 @@
 // AOS Master Boot Record Config
-
 #include <system.h>
 
 #include <inc/core/kfuncs.h>
 #include <inc/drivers/io/io.h>
-#include <inc/core/acpi.h>
 #include <inc/drivers/io/drive.h>
 
-#include <stddef.h>
-
-#ifdef PBFS_WDRIVERS
-    #undef PBFS_WDRIVERS
-#endif
-#define PBFS_NDRIVERS
-#include <PBFS/headers/pbfs.h>
-#include <PBFS/headers/pbfs_structs.h>
-#include <PBFS/headers/pbfs_structs_64.h>
-#include <PBFS/headers/pbfs-fs.h>
-#undef PBFS_NDRIVERS
-
 #include <ambrc.h>
+
+#define ALIGN_UP(num, align) (((num) + ((align) - 1)) & ~((align) - 1))
 
 struct ambrc backup_ambrc = {
     .magic=AMBRC_MAGIC,
@@ -32,13 +20,36 @@ struct ambrc backup_ambrc = {
         .ambrc_bg_color = VMEM_COLOR_BLACK,
         .ambrc_fg_color = VMEM_COLOR_WHITE,
         .ambrc_selected_bg_color = VMEM_COLOR_WHITE,
-        .ambrc_selected_fg_color = VMEM_COLOR_BLACK
+        .ambrc_selected_fg_color = VMEM_COLOR_BLACK,
+        .splash_duration = 3
     },
     .boot_info=(struct ambrc_boot_info){
         .default_os_idx=0,
         .safe_os_idx=0,
         .panic_os_idx=0,
-        .safe_mode_flags=0
+        .crash_verification_mode=3
+    }
+};
+
+struct ambrc def_ambrc = {
+    .magic=AMBRC_MAGIC,
+    .version=CURRENT_AMBRC_VERSION,
+    .display=(struct ambrc_display){
+        .bg_color = VMEM_COLOR_BLACK,
+        .fg_color = VMEM_COLOR_WHITE,
+        .selected_bg_color = VMEM_COLOR_WHITE,
+        .selected_fg_color = VMEM_COLOR_BLACK,
+        .ambrc_bg_color = VMEM_COLOR_BLACK,
+        .ambrc_fg_color = VMEM_COLOR_WHITE,
+        .ambrc_selected_bg_color = VMEM_COLOR_WHITE,
+        .ambrc_selected_fg_color = VMEM_COLOR_BLACK,
+        .splash_duration = 3
+    },
+    .boot_info=(struct ambrc_boot_info){
+        .default_os_idx=0,
+        .safe_os_idx=0,
+        .panic_os_idx=0,
+        .crash_verification_mode=3
     }
 };
 
@@ -84,6 +95,10 @@ void init_backup_ambrc(void) {
     for (int i = 0; i < AMBRC_MAX_KERNELS; i++) memcpy(&backup_ambrc.kernel_info[i], &kinfo, sizeof(struct ambrc_kernel_info));
 
     backup_ambrc.crc32 = calculate_crc32((const uint8_t*)&backup_ambrc, sizeof(struct ambrc));
+
+    for (int i = 0; i < AMBRC_MAX_KERNELS; i++) memcpy(&def_ambrc.kernel_info[i], &kinfo, sizeof(struct ambrc_kernel_info));
+
+    def_ambrc.crc32 = calculate_crc32((const uint8_t*)&def_ambrc, sizeof(struct ambrc));
 }
 
 struct ambrc* get_ambrc(void) {
@@ -193,6 +208,16 @@ static enum VMemColors str_to_vmemc(const char* str) {
     return VMEM_COLOR_WHITE;
 }
 
+static const char* crash_verification_mode_to_str(uint8_t mode) {
+    switch (mode) {
+        case 0: return "None";
+        case 1: return "Only TSC";
+        case 2: return "Only Kernel";
+        case 3: return "Both TSC and Kernel";
+        default: return "Unknown";
+    }
+}
+
 static void ambrc_draw_data(struct ambrc* ambrc, struct VMemDesign* design, uint64_t selected, uint64_t data_selected) {
     const uint8_t start_x = 14;
     const uint8_t start_y = 3;
@@ -203,7 +228,7 @@ static void ambrc_draw_data(struct ambrc* ambrc, struct VMemDesign* design, uint
 
     switch (selected) {
         case 0: { // Display Tab
-            const char* labels[9] = {
+            const char* labels[] = {
                 "BG Color",
                 "FG Color",
                 "Sel BG",
@@ -212,9 +237,10 @@ static void ambrc_draw_data(struct ambrc* ambrc, struct VMemDesign* design, uint
                 "AMBRC FG Color",
                 "AMBRC Sel BG",
                 "AMBRC Sel FG",
-                "Error FG"
+                "Error FG",
+                "Splash Duration"
             };
-            const size_t label_lens[9] = {
+            const size_t label_lens[] = {
                 9,
                 9,
                 7,
@@ -223,7 +249,8 @@ static void ambrc_draw_data(struct ambrc* ambrc, struct VMemDesign* design, uint
                 15,
                 13,
                 13,
-                9
+                9,
+                16
             };
             const char* label_values[9];
             label_values[0] = vmemc_to_str(ambrc->display.bg_color);
@@ -236,7 +263,7 @@ static void ambrc_draw_data(struct ambrc* ambrc, struct VMemDesign* design, uint
             label_values[7] = vmemc_to_str(ambrc->display.ambrc_selected_fg_color);
             label_values[8] = vmemc_to_str(ambrc->display.error_fg_color);
 
-            for (int i = 0; i < 8; i++) {
+            for (int i = 0; i < 10; i++) {
                 design->x = start_x;
                 design->y = start_y + i;
                 
@@ -248,35 +275,48 @@ static void ambrc_draw_data(struct ambrc* ambrc, struct VMemDesign* design, uint
                     design->fg = ambrc->display.ambrc_fg_color;
                 }
 
-                if (label_lens[i] + strlen(label_values[i]) + 3 > pane_width) {
-                    if (label_lens[i] + strlen(label_values[i]) + 1 < pane_width)
-                        vmem_printf(design, "%s:%s", labels[i], label_values[i]);
-                    continue;
+                if (i != 9) {
+                    if (label_lens[i] + strlen(label_values[i]) + 3 > pane_width) {
+                        if (label_lens[i] + strlen(label_values[i]) + 1 < pane_width)
+                            vmem_printf(design, "%s:%s", labels[i], label_values[i]);
+                        continue;
+                    }
+                    vmem_printf(design, "%s : %s", labels[i], label_values[i]);
+                    for(int s = 0; s < (pane_width - (label_lens[i] + 3 + strlen(label_values[i]))); s++) vmem_printc(design, ' ');
+                } else {
+                    if (label_lens[i] + 5 > pane_width) {
+                        if (label_lens[i] + 3 < pane_width)
+                            vmem_printf(design, "%s:%u", labels[i], ambrc->display.splash_duration);
+                        continue;
+                    }
+                    vmem_printf(design, "%s : %d", labels[i], ambrc->display.splash_duration);
+                    for(int s = 0; s < (pane_width - (label_lens[i] + 5)); s++) vmem_printc(design, ' ');
                 }
-                vmem_printf(design, "%s : %s", labels[i], label_values[i]);
-                for(int s = 0; s < (pane_width - (label_lens[i] + 3 + strlen(label_values[i]))); s++) vmem_printc(design, ' ');
             }
             break;
         }
 
         case 1: { // Boot Info Tab
-            const char* labels[3] = {
+            const char* labels[] = {
                 "Def OS Idx",
                 "Safe OS Idx",
                 "Panic OS Idx",
+                "Crash Verif. Mode"
             };
-            const size_t label_lens[3] = {
+            const size_t label_lens[] = {
                 11,
                 12,
-                13
+                13,
+                18
             };
-            const uint32_t label_values[3] = {
+            const uint32_t label_values[] = {
                 ambrc->boot_info.default_os_idx,
                 ambrc->boot_info.safe_os_idx,
-                ambrc->boot_info.panic_os_idx
+                ambrc->boot_info.panic_os_idx,
+                ambrc->boot_info.crash_verification_mode
             };
 
-            for (int i = 0; i < 3; i++) {
+            for (int i = 0; i < 4; i++) {
                 design->x = start_x;
                 design->y = start_y + i;
                 
@@ -288,13 +328,25 @@ static void ambrc_draw_data(struct ambrc* ambrc, struct VMemDesign* design, uint
                     design->fg = ambrc->display.ambrc_fg_color;
                 }
 
-                if (label_lens[i] + 2 + 3 > pane_width) {
-                    if (label_lens[i] + 2 + 1 < pane_width)
-                        vmem_printf(design, "%s:%d", labels[i], label_values[i]);
-                    continue;
+                if (i != 3) {
+                    if (label_lens[i] + 5 > pane_width) {
+                        if (label_lens[i] + 3 < pane_width)
+                            vmem_printf(design, "%s:%d", labels[i], label_values[i]);
+                        continue;
+                    }
+                    vmem_printf(design, "%s : %d", labels[i], label_values[i]);
+                    for(int s = 0; s < (pane_width - (label_lens[i] + 5)); s++) vmem_printc(design, ' ');
+                } else {
+                    const char* mode = crash_verification_mode_to_str(label_values[i]);
+                    size_t mode_len = strlen(mode);
+                    if (label_lens[i] + mode_len + 3 > pane_width) {
+                        if (label_lens[i] + mode_len + 1 < pane_width)
+                            vmem_printf(design, "%s:%s", labels[i], mode);
+                        continue;
+                    }
+                    vmem_printf(design, "%s : %s", labels[i], mode);
+                    for(int s = 0; s < (pane_width - (label_lens[i] + mode_len + 3)); s++) vmem_printc(design, ' ');
                 }
-                vmem_printf(design, "%s : %d", labels[i], label_values[i]);
-                for(int s = 0; s < (pane_width - (label_lens[i] + 3 + 2)); s++) vmem_printc(design, ' ');
             }
             break;
         }
@@ -353,21 +405,124 @@ static void ambrc_draw_data(struct ambrc* ambrc, struct VMemDesign* design, uint
     }
 }
 
+static void ambrc_reset_tab(struct ambrc* ambrc, uint64_t tab) {
+    switch (tab) {
+        case 0: // Reset Display
+            memcpy(&ambrc->display, &def_ambrc.display, sizeof(struct ambrc_display));
+            break;
+        case 1: // Reset Boot Info
+            memcpy(&ambrc->boot_info, &def_ambrc.boot_info, sizeof(struct ambrc_boot_info));
+            break;
+        case 2: // Reset Current Kernel Info
+            memcpy(&ambrc->kernel_info[active_k_idx], &def_ambrc.kernel_info[active_k_idx], sizeof(struct ambrc_kernel_info));
+            break;
+        default: break;
+    }
+}
+
+static void ambrc_display_popup(struct ambrc* ambrc, struct VMemDesign* design, const char* popup_msg) {
+    size_t pmsg_len = ALIGN_UP(strlen(popup_msg), 2);
+    uint32_t box_w = pmsg_len + 2 > IO_VMEM_MAX_COLS ? IO_VMEM_MAX_COLS : pmsg_len + 2;
+    uint32_t box_h = 12;
+    uint32_t start_x = (IO_VMEM_MAX_COLS / 2) - (box_w / 2);
+    uint32_t start_y = (IO_VMEM_MAX_ROWS / 2) - (box_h / 2);
+
+    if (pmsg_len > box_w) {
+        int x = ((start_x + box_w) / 2) - (pmsg_len / 2);
+        int y = start_y + 2;
+        char* s = popup_msg;
+        int width = 0;
+        while (*s) {
+            if (width > box_w) {
+                x = ((start_x + box_w) / 2) - (pmsg_len / 2);
+                y++;
+                if (y > box_h) {
+                    if (++box_h > IO_VMEM_MAX_ROWS) return;
+                }
+                width = 0;
+            }
+            s++;
+            width++;
+        }
+    }
+
+    design->bg = ambrc->display.ambrc_bg_color;
+    design->fg = ambrc->display.ambrc_fg_color;
+    design->x = start_x;
+    design->y = start_y;
+
+    // Draw top
+    vmem_printc(design, 0xC9);
+    for(int i = 0; i < box_w - 2; i++) vmem_printc(design, 0xCD);
+    vmem_printc(design, 0xBB);
+
+    // Draw Sides
+    for(int i = 1; i < box_h - 1; i++) {
+        design->x = start_x;
+        design->y = start_y + i;
+        vmem_printc(design, 0xBA);
+
+        for(int j = 0; j < box_w - 2; j++) vmem_printc(design, ' ');
+
+        design->x = start_x + box_w - 1;
+    design->y = start_y + i;
+        vmem_printc(design, 0xBA);
+    }
+
+    // Draw Bottom
+    design->x = start_x;
+    design->y = start_y + box_h - 1;
+    vmem_printc(design, 0xC8);
+    for(int i = 0; i < box_w - 2; i++) vmem_printc(design, 0xCD);
+    vmem_printc(design, 0xBC);
+
+    if (pmsg_len > box_w - 2) {
+        design->x = ((start_x + (box_w / 2)) - (pmsg_len / 2)) + 1;
+        design->y = start_y + 2;
+        char* s = popup_msg;
+        int width = 0;
+        while (*s) {
+            if (width > box_w - 1) {
+                design->x = ((start_x + (box_w / 2)) - (pmsg_len / 2)) + 1;
+                design->y++;
+                width = 0;
+            }
+            vmem_printc(design, *s);
+            s++;
+            width++;
+        }
+    } else {
+        design->x = ((start_x + (box_w / 2)) - (pmsg_len / 2)) + 1;
+        design->y = start_y + 2;
+        vmem_print(design, popup_msg);
+    }
+}
+
 static void ambrc_set_data(struct ambrc* ambrc, uint64_t tab, uint64_t row, int8_t dir) {
     switch (tab) {
         case 0: { // Display Tab - Cycle Colors
+            if (row == 9) {
+                if (dir > 0) ambrc->display.splash_duration++;
+                else if (dir < 0 && ambrc->display.splash_duration > 0) ambrc->display.splash_duration--;
+                break;
+            }
             enum VMemColors* color_ptr = (enum VMemColors*)&ambrc->display;
             color_ptr[row] = (enum VMemColors)((color_ptr[row] + dir) & 0xF); // Wrap 0-15
             break;
         }
         case 1: { // Boot Info Tab - Increment/Decrement Indexes
             uint16_t* val_ptr;
-            if (row == 0) val_ptr = &ambrc->boot_info.default_os_idx;
-            else if (row == 1) val_ptr = &ambrc->boot_info.safe_os_idx;
-            else val_ptr = &ambrc->boot_info.panic_os_idx;
+            uint64_t max = AMBRC_MAX_KERNELS;
+            switch (row) {
+                case 0: val_ptr = &ambrc->boot_info.default_os_idx; break;
+                case 1: val_ptr = &ambrc->boot_info.safe_os_idx; break;
+                case 2: val_ptr = &ambrc->boot_info.panic_os_idx; break;
+                case 3: val_ptr = &ambrc->boot_info.crash_verification_mode; max = 3; break;
+                default: return;
+            }
             
-            // Bounds check for max kernels
-            if (dir > 0 && *val_ptr < AMBRC_MAX_KERNELS) (*val_ptr)++;
+            // Bounds check
+            if (dir > 0 && *val_ptr < max) (*val_ptr)++;
             else if (dir < 0 && *val_ptr > 0) (*val_ptr)--;
             break;
         }
@@ -402,7 +557,7 @@ static void ambrc_handle_data(struct ambrc* ambrc, struct VMemDesign* design, ui
         }
         case 0x50: { // Down Arrow
             // Bounds check based on tab
-            uint64_t max_row = (tab == 0) ? 8 : (tab == 1) ? 2 : (AMBRC_MAX_KERNELS - 1);
+            uint64_t max_row = (tab == 0) ? 9 : (tab == 1) ? 3 : (AMBRC_MAX_KERNELS - 1);
             if (*row < max_row) (*row)++;
             break;
         }
@@ -414,50 +569,38 @@ static void ambrc_handle_data(struct ambrc* ambrc, struct VMemDesign* design, ui
             ambrc_set_data(ambrc, tab, *row, -1);
             break;
         }
+        case 0x13: { // R
+            ambrc_display_popup(ambrc, design, "Are you sure you want to reset? (y/N)");
+            uint8_t valid = 0;
+            while (!valid) {
+                uint8_t scancode = ps2_read_scan();
+                switch (scancode) {
+                    case 0x15: valid=1; break; // 'Y' key
+                    case 0x31: // 'N' key
+                    case 0x01: // ESC also acts as no
+                        vmem_clear_screen(design);
+                        ambrc_draw_base(design);
+                        ambrc_draw_tabs(ambrc, design, tab);
+                        ambrc_draw_data(ambrc, design, tab, *row);
+                        return;
+                    default: valid=0; break;
+                }
+            }
+            ambrc_reset_tab(ambrc, tab);
+            vmem_clear_screen(design);
+            ambrc_draw_base(design);
+            ambrc_draw_tabs(ambrc, design, tab);
+            ambrc_draw_data(ambrc, design, tab, *row);
+            return;
+        }
         default: return;
     }
     ambrc_draw_data(ambrc, design, tab, *row);
 }
 
 static void ambrc_handle_changes(struct ambrc* ambrc, struct VMemDesign* design, uint8_t* running) {
-    uint32_t box_w = 34;
-    uint32_t box_h = 12;
-    uint32_t start_x = (IO_VMEM_MAX_COLS / 2) - (box_w / 2);
-    uint32_t start_y = (IO_VMEM_MAX_ROWS / 2) - (box_h / 2);
-
-    design->bg = ambrc->display.ambrc_bg_color;
-    design->fg = ambrc->display.ambrc_fg_color;
-    design->x = start_x;
-    design->y = start_y;
-
-    // Draw top
-    vmem_printc(design, 0xC9);
-    for(int i = 0; i < box_w - 2; i++) vmem_printc(design, 0xCD);
-    vmem_printc(design, 0xBB);
-
-    // Draw Sides
-    for(int i = 1; i < box_h - 1; i++) {
-        design->x = start_x;
-        design->y = start_y + i;
-        vmem_printc(design, 0xBA);
-
-        for(int j = 0; j < box_w - 2; j++) vmem_printc(design, ' ');
-
-        design->x = start_x + box_w - 1;
-    design->y = start_y + i;
-        vmem_printc(design, 0xBA);
-    }
-
-    // Draw Bottom
-    design->x = start_x;
-    design->y = start_y + box_h - 1;
-    vmem_printc(design, 0xC8);
-    for(int i = 0; i < box_w - 2; i++) vmem_printc(design, 0xCD);
-    vmem_printc(design, 0xBC);
-
-    design->x = start_x + 3;
-    design->y = start_y + 2;
-    vmem_print(design, "Save changes to disk? (y/n/C)");
+    if (!changes_made) return;
+    ambrc_display_popup(ambrc, design, "Save changes to disk? (y/n/C)");
 
     uint8_t valid = 0;
     while (!valid) {

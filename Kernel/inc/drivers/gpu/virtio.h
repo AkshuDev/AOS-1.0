@@ -90,9 +90,14 @@ enum virtio_gpu_ctrl_type {
 #define VIRTIO_GPU_PIPE_TEXTURE_2D 2
 
 #define VIRTIO_GPU_BIND_SAMPLER_VIEW (1 << 0)
+#define VIRTIO_GPU_BIND_SCANOUT (1 << 0)
 #define VIRTIO_GPU_BIND_RENDER_TARGET (1 << 1)
+#define VIRTIO_GPU_BIND_COMMAND_BUFFER (1 << 2)
+#define VIRTIO_GPU_BIND_VERTEX_BUFFER (1 << 3)
 
 #define VIRGL_CMD_HEADER(op, obj, len) (((op) << 24) | ((obj) << 16) | (len))
+
+#define VIRTIO_GPU_RESOURCE_FLAG_Y_0_TOP (1 << 0)
 
 struct virtio_rect {
     uint32_t x;

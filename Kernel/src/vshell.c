@@ -159,6 +159,7 @@ void start_vshell(struct pyrion_ctx* display_ctx) {
     vshell_ctx = pyrion_create_ctx();
     if (!vshell_ctx) return;
 
+    vshell_ctx->cformat = PYRION_COLORF_RGBA;
     pyrion_viewport(vshell_ctx, &vshell_viewport);
     pyrion_conf(vshell_ctx, 0, 0, 0xFFFFFFFF, 0x171717FF);
     serial_print("[VSHELL] Pyrion Enabled, and set, clearing....\n");

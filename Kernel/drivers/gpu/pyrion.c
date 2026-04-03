@@ -21,7 +21,7 @@ static uint32_t* create_font_atlas_rgba(uint64_t* out_phys) {
     uint32_t atlas_h = 256; // 16 rows * 16 pixels
     size_t size = atlas_w * atlas_h * sizeof(uint32_t);
 
-    uint32_t* atlas = (uint32_t*)avmf_alloc(size, MALLOC_TYPE_USER, PAGE_PRESENT | PAGE_RW, out_phys);
+    uint32_t* atlas = (uint32_t*)avmf_alloc(size, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, out_phys);
     if (!atlas) {
         serial_printf("[PYRION] Font Alloc failed!\n");
         return NULL;

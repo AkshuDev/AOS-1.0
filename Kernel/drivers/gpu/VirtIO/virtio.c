@@ -514,7 +514,7 @@ struct pyrion_ctx* pyrion_create_ctx_virtio(void) {
     if (!ctx->driver_data) return NULL;
     memset(ctx->driver_data, 0, 0x1000);
 
-    virtio_create_context(slot);
+    virtio_create_context(ctx->ctx_id);
     
     ctx->viewport.x = 0; ctx->viewport.y=0; ctx->viewport.width=0; ctx->viewport.height; ctx->viewport.color = 0;
     ctx->valid = 1;
@@ -548,17 +548,23 @@ void pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* viewport
     c3d->resource_id = res_id;
     c3d->target = VIRTIO_GPU_PIPE_TEXTURE_2D;
     c3d->format = VIRTIO_GPU_FORMAT_A8B8G8R8_UNORM;
-    c3d->bind = VIRTIO_GPU_BIND_RENDER_TARGET;
+    c3d->bind = VIRTIO_GPU_BIND_RENDER_TARGET | VIRTIO_GPU_BIND_SCANOUT;
     c3d->width = viewport->width;
     c3d->height = viewport->height;
     c3d->depth = 1;
     c3d->last_level = 0;
     c3d->nr_samples = 0;
-    c3d->flags = 0;
+    c3d->flags = VIRTIO_GPU_RESOURCE_FLAG_Y_0_TOP;
 
     virtio_submit_sync(c3d, cmd_buf_phys[slot], sizeof(*c3d), resp_buf[slot], resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
 
     // Attach backing
+    ctx->driver_data2 = (void*)avmf_alloc(viewport->width * viewport->height * 4, MALLOC_TYPE_SENSITIVE, PAGE_PRESENT | PAGE_RW, &ctx->driver_data_phys2);
+    if (!ctx->driver_data2) {
+        serial_print("[VIRTIO] Failed to allocate for backing!\n");
+        return;
+    }
+
     while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
     slot = main_buf_slot % MAX_CMD_RESP_BUFS;
 
@@ -572,7 +578,7 @@ void pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* viewport
     attb->att.hdr.type = VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING;
     attb->att.resource_id = res_id;
     attb->att.nr_entries = 1;
-    attb->entry.addr = (uint64_t)ctx->driver_data_phys; 
+    attb->entry.addr = (uint64_t)ctx->driver_data_phys2;
     attb->entry.length = viewport->width * viewport->height * 4;
 
     virtio_submit_sync(attb, cmd_buf_phys[slot], sizeof(*attb), resp_buf[slot], resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
@@ -589,11 +595,27 @@ void pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* viewport
     
     virtio_submit_sync(att, cmd_buf_phys[slot], sizeof(*att), resp_buf[slot], resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
 
+    // Set scanout
+    while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
+    slot = main_buf_slot % MAX_CMD_RESP_BUFS;
+
+    struct virtio_gpu_set_scanout* scanout = (struct virtio_gpu_set_scanout*)cmd_buf[slot];
+    memset(scanout, 0, sizeof(*scanout));
+    scanout->hdr.type = VIRTIO_GPU_CMD_SET_SCANOUT;
+    scanout->resource_id = res_id;
+    scanout->scanout_id = 0; // The first monitor
+    scanout->r.width = viewport->width;
+    scanout->r.height = viewport->height;
+    scanout->r.x = 0;
+    scanout->r.y = 0;
+
+    virtio_submit_sync(scanout, cmd_buf_phys[slot], sizeof(*scanout), resp_buf[slot], resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
+
     ctx->res_id = res_id;
     ctx->viewport = *viewport;
 
     uint32_t surf_args[6] = {
-        ctx->res_id,
+        ctx->res_id + MAX_PYRION_CONTEXTS,
         ctx->res_id,
         VIRTIO_GPU_FORMAT_A8B8G8R8_UNORM,
         VIRTIO_GPU_BIND_RENDER_TARGET,
@@ -604,24 +626,32 @@ void pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* viewport
     uint32_t fb_args[3] = {
         1,
         0,
-        ctx->res_id
+        ctx->res_id + MAX_PYRION_CONTEXTS
     };
     pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_FRAMEBUFFER_STATE, VIRTIO_VIRGL_OBJECT_NULL, fb_args, 3);
 
-    float scale_x = (float)viewport->width / 2.0f;
-    float scale_y = (float)viewport->height / 2.0f;
-    uint32_t view_args[6];
-    ((float*)view_args)[0] = scale_x; // scale x
-    ((float*)view_args)[1] = scale_y; // scale y
-    ((float*)view_args)[2] = 1.0f; // scale z
-    ((float*)view_args)[3] = scale_x; //translate x
-    ((float*)view_args)[4] = scale_y; // translate y
-    ((float*)view_args)[5] = 0.0f; // translate z
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_VIEWPORT_STATE, VIRTIO_VIRGL_OBJECT_NULL, view_args, 6);
+    float width = (float)viewport->width;
+    float height = (float)viewport->height;
 
-    uint32_t dummy_vbs[4] = {0, 0, 0, 0};
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_VERTEX_BUFFERS, VIRTIO_VIRGL_OBJECT_NULL, dummy_vbs, 4);
+    float view_args[6];
+    ((float*)view_args)[0] = width / 2.0f; // Scale X
+    ((float*)view_args)[1] = height / 2.0f; // Scale Y
+    ((float*)view_args)[2] = 0.5f; // Scale Z (Depth)
+    ((float*)view_args)[3] = width / 2.0f; // Translate X
+    ((float*)view_args)[4] = height / 2.0f; // Translate Y
+    ((float*)view_args)[5] = 0.5f; // Translate Z
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_VIEWPORT_STATE, VIRTIO_VIRGL_OBJECT_NULL, (uint32_t*)view_args, 6);
 
+    uint32_t init_scissor[2] = {0, (viewport->height << 16) | viewport->width};
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, init_scissor, 2);
+
+    uint32_t rast_handle = ctx->res_id + (MAX_PYRION_CONTEXTS * 2);
+    uint32_t rast_args[9] = {0};
+    rast_args[0] = rast_handle;
+    rast_args[1] = 0x00000001;
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CREATE_OBJECT, VIRTIO_VIRGL_OBJECT_RASTERIZER, rast_args, 9);
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_BIND_OBJECT, VIRTIO_VIRGL_OBJECT_RASTERIZER, &rast_handle, 1);
+    
     pyrion_flush_virtio(ctx);
 }
 
@@ -704,6 +734,7 @@ void pyrion_flush_virtio(struct pyrion_ctx* ctx) {
     }
     
     ctx->driver_var = 0;
+
     while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
     slot = main_buf_slot % MAX_CMD_RESP_BUFS;
     struct virtio_gpu_transfer_to_host_3d* t = (struct virtio_gpu_transfer_to_host_3d*)cmd_buf[slot];
@@ -737,12 +768,10 @@ void pyrion_flush_virtio(struct pyrion_ctx* ctx) {
 }
 
 void pyrion_clear_virtio(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    float color[4] = {r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f};
     uint32_t args[5];
     args[0] = 0x7;
-    args[1] = *(uint32_t*)&r;
-    args[2] = *(uint32_t*)&g;
-    args[3] = *(uint32_t*)&b;
-    args[4] = *(uint32_t*)&a;
+    memcpy(&args[1], color, sizeof(color));
 
     pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CLEAR, VIRTIO_VIRGL_OBJECT_NULL, args, 5);
 }
@@ -754,14 +783,17 @@ void pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint8_t
 
     pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, 2);
     
+    float color[4] = {r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f};
     uint32_t args[5];
     args[0] = 0x7;
-    args[1] = *(uint32_t*)&r;
-    args[2] = *(uint32_t*)&g;
-    args[3] = *(uint32_t*)&b;
-    args[4] = *(uint32_t*)&a;
+    memcpy(&args[1], color, sizeof(color));
 
     pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CLEAR, VIRTIO_VIRGL_OBJECT_NULL, args, 5);
+
+    scissor_args[0] = (ctx->viewport.y << 16) | ctx->viewport.x;
+    scissor_args[1] = ((ctx->viewport.y + ctx->viewport.height) << 16) | (ctx->viewport.x + ctx->viewport.width);
+
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, 2);
 }
 
 void pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, uint32_t w, uint32_t h, uint32_t font_res_id) {
@@ -897,12 +929,15 @@ void pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t
 
     pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, 2);
     
+    float color[4] = {r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f};
     uint32_t args[5];
     args[0] = 0x7;
-    args[1] = *(uint32_t*)&r;
-    args[2] = *(uint32_t*)&g;
-    args[3] = *(uint32_t*)&b;
-    args[4] = *(uint32_t*)&a;
+    memcpy(&args[1], color, sizeof(color));
 
     pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CLEAR, VIRTIO_VIRGL_OBJECT_NULL, args, 5);
+
+    scissor_args[0] = (ctx->viewport.y << 16) | ctx->viewport.x;
+    scissor_args[1] = ((ctx->viewport.y + ctx->viewport.height) << 16) | (ctx->viewport.x + ctx->viewport.width);
+
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, 2);
 }

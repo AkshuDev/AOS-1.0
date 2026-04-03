@@ -59,7 +59,9 @@ MBR_BTL_DRIVERS_SRC := $(MBR_SRC_DIR)/pcie.c \
 					$(MBR_SRC_DIR)/drive.c \
 					$(MBR_SRC_DIR)/drivers/sata.c \
 					$(MBR_SRC_DIR)/kfuncs.c \
-					$(MBR_SRC_DIR)/ambrc.c
+					$(MBR_SRC_DIR)/ambrc.c \
+					$(MBR_SRC_DIR)/keyboard.c \
+					$(MBR_SRC_DIR)/panic_shell.c
 MBR_DRIVERS_O := $(patsubst $(KERNEL)/%.c,$(MBR_BUILD_DIR)/%.o,$(MBR_DRIVERS_SRC))
 MBR_BTL_DRIVERS_O := $(patsubst $(MBR_SRC_DIR)/%.c,$(MBR_BUILD_DIR)/%.o,$(MBR_BTL_DRIVERS_SRC))
 

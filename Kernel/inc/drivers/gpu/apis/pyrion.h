@@ -52,7 +52,9 @@ struct pyrion_ctx {
     struct pyrion_font font;
     
     void* driver_data;
+    void* driver_data2;
     uint64_t driver_data_phys;
+    uint64_t driver_data_phys2;
     uint64_t driver_var;
 
     struct pyrion_rect viewport;
