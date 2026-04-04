@@ -21,7 +21,8 @@ struct ambrc backup_ambrc = {
         .ambrc_fg_color = VMEM_COLOR_WHITE,
         .ambrc_selected_bg_color = VMEM_COLOR_WHITE,
         .ambrc_selected_fg_color = VMEM_COLOR_BLACK,
-        .splash_duration = 3
+        .splash_duration = 3,
+        .show_settings_at_top = 0
     },
     .boot_info=(struct ambrc_boot_info){
         .default_os_idx=0,
@@ -43,7 +44,8 @@ struct ambrc def_ambrc = {
         .ambrc_fg_color = VMEM_COLOR_WHITE,
         .ambrc_selected_bg_color = VMEM_COLOR_WHITE,
         .ambrc_selected_fg_color = VMEM_COLOR_BLACK,
-        .splash_duration = 3
+        .splash_duration = 3,
+        .show_settings_at_top = 0
     },
     .boot_info=(struct ambrc_boot_info){
         .default_os_idx=0,
@@ -238,6 +240,7 @@ static void ambrc_draw_data(struct ambrc* ambrc, struct VMemDesign* design, uint
                 "AMBRC Sel BG",
                 "AMBRC Sel FG",
                 "Error FG",
+                "Show Settings at Top",
                 "Splash Duration"
             };
             const size_t label_lens[] = {
@@ -250,6 +253,7 @@ static void ambrc_draw_data(struct ambrc* ambrc, struct VMemDesign* design, uint
                 13,
                 13,
                 9,
+                21,
                 16
             };
             const char* label_values[9];
@@ -262,8 +266,9 @@ static void ambrc_draw_data(struct ambrc* ambrc, struct VMemDesign* design, uint
             label_values[6] = vmemc_to_str(ambrc->display.ambrc_selected_bg_color);
             label_values[7] = vmemc_to_str(ambrc->display.ambrc_selected_fg_color);
             label_values[8] = vmemc_to_str(ambrc->display.error_fg_color);
+            label_values[9] = ambrc->display.show_settings_at_top ? "True" : "False";
 
-            for (int i = 0; i < 10; i++) {
+            for (int i = 0; i < sizeof(labels) / sizeof(const char*); i++) {
                 design->x = start_x;
                 design->y = start_y + i;
                 
@@ -275,7 +280,7 @@ static void ambrc_draw_data(struct ambrc* ambrc, struct VMemDesign* design, uint
                     design->fg = ambrc->display.ambrc_fg_color;
                 }
 
-                if (i != 9) {
+                if (i != 10) {
                     if (label_lens[i] + strlen(label_values[i]) + 3 > pane_width) {
                         if (label_lens[i] + strlen(label_values[i]) + 1 < pane_width)
                             vmem_printf(design, "%s:%s", labels[i], label_values[i]);
@@ -301,22 +306,25 @@ static void ambrc_draw_data(struct ambrc* ambrc, struct VMemDesign* design, uint
                 "Def OS Idx",
                 "Safe OS Idx",
                 "Panic OS Idx",
+                "Timeout",
                 "Crash Verif. Mode"
             };
             const size_t label_lens[] = {
                 11,
                 12,
                 13,
+                8,
                 18
             };
             const uint32_t label_values[] = {
                 ambrc->boot_info.default_os_idx,
                 ambrc->boot_info.safe_os_idx,
                 ambrc->boot_info.panic_os_idx,
+                ambrc->boot_info.timeout,
                 ambrc->boot_info.crash_verification_mode
             };
 
-            for (int i = 0; i < 4; i++) {
+            for (int i = 0; i < 5; i++) {
                 design->x = start_x;
                 design->y = start_y + i;
                 
@@ -328,7 +336,7 @@ static void ambrc_draw_data(struct ambrc* ambrc, struct VMemDesign* design, uint
                     design->fg = ambrc->display.ambrc_fg_color;
                 }
 
-                if (i != 3) {
+                if (i != 4) {
                     if (label_lens[i] + 5 > pane_width) {
                         if (label_lens[i] + 3 < pane_width)
                             vmem_printf(design, "%s:%d", labels[i], label_values[i]);
@@ -502,6 +510,9 @@ static void ambrc_set_data(struct ambrc* ambrc, uint64_t tab, uint64_t row, int8
     switch (tab) {
         case 0: { // Display Tab - Cycle Colors
             if (row == 9) {
+                ambrc->display.show_settings_at_top = !ambrc->display.show_settings_at_top;
+                break;
+            } else if (row == 10) {
                 if (dir > 0) ambrc->display.splash_duration++;
                 else if (dir < 0 && ambrc->display.splash_duration > 0) ambrc->display.splash_duration--;
                 break;
@@ -517,7 +528,8 @@ static void ambrc_set_data(struct ambrc* ambrc, uint64_t tab, uint64_t row, int8
                 case 0: val_ptr = &ambrc->boot_info.default_os_idx; break;
                 case 1: val_ptr = &ambrc->boot_info.safe_os_idx; break;
                 case 2: val_ptr = &ambrc->boot_info.panic_os_idx; break;
-                case 3: val_ptr = &ambrc->boot_info.crash_verification_mode; max = 3; break;
+                case 3: val_ptr = &ambrc->boot_info.timeout; max = 64; break;
+                case 4: val_ptr = &ambrc->boot_info.crash_verification_mode; max = 3; break;
                 default: return;
             }
             
@@ -557,7 +569,7 @@ static void ambrc_handle_data(struct ambrc* ambrc, struct VMemDesign* design, ui
         }
         case 0x50: { // Down Arrow
             // Bounds check based on tab
-            uint64_t max_row = (tab == 0) ? 9 : (tab == 1) ? 3 : (AMBRC_MAX_KERNELS - 1);
+            uint64_t max_row = (tab == 0) ? 10 : (tab == 1) ? 4 : (AMBRC_MAX_KERNELS - 1);
             if (*row < max_row) (*row)++;
             break;
         }

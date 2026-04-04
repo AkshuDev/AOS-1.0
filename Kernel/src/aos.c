@@ -311,9 +311,14 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
         *lines += 1;
     }
     *lines += 1;
-    if (*lines > 25) {
-        vmem_clear_screen(vmem_design);
-        *lines = 0;
+    if (*lines > IO_VMEM_MAX_ROWS) {
+        vmem_scroll_up(vmem_design, 0, IO_VMEM_MAX_ROWS, IO_VMEM_MAX_COLS);
+        vmem_design->x = 0;
+        vmem_design->y = IO_VMEM_MAX_ROWS - 2;
+        for (int i = 0; i < IO_VMEM_MAX_COLS; i++) vmem_printc(vmem_design, ' ');
+        vmem_design->x = 0;
+        vmem_design->y = IO_VMEM_MAX_ROWS - 2;
+        *lines--;
     }
 }
 

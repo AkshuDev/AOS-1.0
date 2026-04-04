@@ -50,6 +50,7 @@ void vmem_clear_screen(struct VMemDesign* design) __attribute__((used));
 void vmem_printc(struct VMemDesign* design, char c) __attribute__((used));
 void vmem_print(struct VMemDesign* design, const char* str) __attribute__((used));
 void vmem_printf(struct VMemDesign* design, const char* fmt, ...) __attribute__((used));
+void vmem_scroll_up(struct VMemDesign* design, uint32_t top, uint32_t bottom, uint32_t width) __attribute__((used));
 
 int ata_read_sectors(struct ATA_DP* dp, void* buffer, uint8_t drive) __attribute__((used));
 int ata_write_sectors(struct ATA_DP* dp, const void* buffer, uint8_t drive) __attribute__((used));

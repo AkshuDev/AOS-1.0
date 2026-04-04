@@ -432,6 +432,23 @@ void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
     va_end(args);
     spin_unlock_irqrestore(&vmemf_lock, rflags);
 }
+void vmem_scroll_up(struct VMemDesign* design, uint32_t top, uint32_t bottom, uint32_t width) {
+    uint16_t* vmem = (uint16_t*)IO_VMEM;
+    uint32_t stride = IO_VMEM_MAX_COLS; 
+
+    for (size_t y = top; y < bottom - 1; y++) {
+        for (size_t x = 0; x < width; x++) {
+            vmem[y * stride + x] = vmem[(y + 1) * stride + x];
+        }
+    }
+
+    uint16_t blank_attr = (uint8_t)design->fg | (uint8_t)(design->bg << 4);
+    uint16_t blank_char = (uint16_t)' ' | (uint16_t)(blank_attr << 8);
+
+    for (size_t x = 0; x < width; x++) {
+        vmem[(bottom - 1) * stride + x] = blank_char;
+    }
+}
 
 // ATA stuff
 // I/O port addresses for the primary ATA bus.

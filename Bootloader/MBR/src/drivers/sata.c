@@ -292,6 +292,81 @@ static int sata_issue_cmd(struct sata_port_state* state, int write, uint64_t lba
     return 1;
 }
 
+static int sata_issue_identity_cmd(struct sata_port_state* state, void* buffer) {
+    serial_print("[AHCI] Issueing command!\n");
+    
+    struct sata_hba_port* port = state->port;
+
+    port->is = 0xFFFFFFFF;
+    if (!sata_busy_wait(port))
+        return 0;
+
+    int slot = sata_find_cmdslot(port);
+    if (slot < 0) {
+        serial_print("[AHCI] No free command slot\n");
+        return 0;
+    }
+    serial_printf("[AHCI] Found Slot: %d\n", slot);
+
+    struct sata_hba_cmd_hdr* cmd = &state->cmd_hdrs[slot];
+    memset(cmd, 0, sizeof(struct sata_hba_cmd_hdr));
+
+    cmd->cfl = sizeof(struct sata_fis_reg_h2d) / sizeof(uint32_t);
+    cmd->w = 0;
+    cmd->p = 1;
+    cmd->c = 1;
+    cmd->prdtl = 1;
+
+    struct sata_hba_cmd_table* table = (struct sata_hba_cmd_table*)((uint64_t)cmd->ctba | ((uint64_t)cmd->ctbau << 32));
+    memset(table, 0, sizeof(struct sata_hba_cmd_table));
+
+    table->prdt_entry[0].dba = (uint32_t)((uint64_t)buffer & 0xFFFFFFFF);
+    table->prdt_entry[0].dbau = (uint32_t)((uint64_t)buffer >> 32);
+    table->prdt_entry[0].dbc = (1 * 512) - 1;
+    table->prdt_entry[0].ioc = 1;
+
+    struct sata_fis_reg_h2d* fis = (struct sata_fis_reg_h2d*)&table->cfis;
+
+    fis->fis_type = 0x27;
+    fis->c = 1;
+    fis->command = 0xEC;
+
+    fis->device = 0;
+    fis->countl = 0;
+    fis->counth = 0;
+
+    fis->lba0 = 0;
+    fis->lba1 = 0;
+    fis->lba2 = 0;
+    fis->lba3 = 0;
+    fis->lba4 = 0;
+    fis->lba5 = 0;
+
+    asm volatile("mfence" ::: "memory");
+    port->ci = 1 << slot;
+    int timeout = 1000000;
+    while (1) {
+        if (timeout == 0) break;
+        if (!(port->ci & (1 << slot)))
+            break;
+
+        if (port->is & (1 << 30)) {
+            serial_print("[AHCI] Disk error\n");
+            return 0;
+        }
+
+        timeout--;
+    }
+
+    if (timeout == 0) {
+        serial_print("[AHCI] Disk/Device Error (timeout)\n");
+        return 0;
+    }
+
+    serial_print("[AHCI] Command finished!\n");
+    return 1;
+}
+
 int sata_init(void) {
     if (pcie_find_ex(
         &sata_device.bus, &sata_device.slot, &sata_device.func,
@@ -471,9 +546,8 @@ static int sata_get_info(int port_id, struct sata_identify* id) {
     if (!state->active) return 0;
 
     char buffer[512];
-    if (!buffer) return 0;
 
-    if (!sata_issue_cmd(state, 0, 0, 1, buffer)) {
+    if (!sata_issue_identity_cmd(state, buffer)) {
         return 0;
     }
 
@@ -485,6 +559,13 @@ int sata_get_block_device(int port_id, struct block_device* out) {
     struct sata_identify iden = {0};
     if (sata_get_info(port_id, &iden) != 1) return 0;
     uint32_t block_count = ((uint32_t)iden.lba_cap_48[1] << 16) | iden.lba_cap_48[0];
+
+    serial_printf("[SATA] LBA48 Words: %04x %04x %04x %04x\n",
+    iden.lba_cap_48[0], iden.lba_cap_48[1], iden.lba_cap_48[2], iden.lba_cap_48[3]);
+
+    serial_printf("[SATA] Blocks: %llu, Size: %llu GB\n",
+    block_count, block_count * 512ULL / (1024*1024*1024));
+    
     out->block_count = block_count;
     out->block_size = 512;
     char* model = (char*)alloc_4k_page();;

@@ -14,6 +14,9 @@
 #define EBDA_SEG_PTR 0x40E
 #define MADT_TYPE_LAPIC 0
 
+#define CMOS_BYTE_IDX_KERNEL_INFO 0x1B
+#define CMOS_KERNEL_INFO_KERNEL_ACTIVE (1 << 0)
+
 static struct acpi_mcfg* mcfg_table = NULL;
 static struct acpi_madt* madt_table = NULL;
 static struct acpi_fadt* fadt_table = NULL;
@@ -291,6 +294,17 @@ static void acpi_triple_fault_reboot(void) {
 
 void acpi_reboot(void) {
     smp_shutdown();
+    asm_outb(0x70, CMOS_BYTE_IDX_KERNEL_INFO | 0x80); // select CMOS byte
+    asm_outb(0x71, 0); // write value
+
+    volatile uint8_t verify;
+    do {
+        asm_outb(0x70, CMOS_BYTE_IDX_KERNEL_INFO | 0x80);
+        verify = asm_inb(0x71);
+    } while (verify != 0);
+
+    asm_outb(0x70, 0);
+
     if (!fadt_table) {
         acpi_8042_reboot();
         acpi_pci_reboot();
@@ -298,6 +312,7 @@ void acpi_reboot(void) {
 
         for (;;) {asm volatile("hlt");}
     }
+
     uint64_t virt = avmf_alloc_virt(1, MALLOC_TYPE_KERNEL);
     if (virt == 0) {
         acpi_8042_reboot();
@@ -322,5 +337,16 @@ void acpi_reboot(void) {
 }
 
 void acpi_shutdown() {
-    asm volatile("cli ; hlt");
+    asm_outb(0x70, CMOS_BYTE_IDX_KERNEL_INFO | 0x80); // select CMOS byte
+    asm_outb(0x71, 0); // write value
+
+    volatile uint8_t verify;
+    do {
+        asm_outb(0x70, CMOS_BYTE_IDX_KERNEL_INFO | 0x80);
+        verify = asm_inb(0x71);
+    } while (verify != 0);
+
+    asm_outb(0x70, 0);
+    
+    asm volatile("cli\n\thlt");
 }
