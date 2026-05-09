@@ -21,11 +21,6 @@ static void set_sata(struct drive_device* out) {
     out->cur_port = port_id;
 
     sata_get_pcie(out->pcie_device);
-    out->init = sata_init;
-    out->read_blk = sata_read_blk;
-    out->write_blk = sata_write_blk;
-    out->flush = sata_flush;
-    out->get_block_device = sata_get_block_device;
     sata_get_block_device(port_id, &out->block_dev);
     out->name = out->block_dev.name;
 
@@ -33,7 +28,8 @@ static void set_sata(struct drive_device* out) {
 }
 
 int get_available_drives(struct drive_device* out) {
-    serial_print("[Drive Controller] Trying to find drives...\n");
+    serial_print("[Drive Controller] Trying to find registered drives...\n");
+    
     if (sata_init() == 1) {
         serial_print("[Drive Controller] Found SATA!\n");
         set_sata(out);

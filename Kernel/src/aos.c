@@ -7,6 +7,7 @@
 #include <inc/drivers/io/io.h>
 #include <inc/core/pcie.h>
 #include <inc/core/smp.h>
+#include <inc/core/module.h>
 
 #include <inc/drivers/io/drive.h>
 
@@ -96,6 +97,10 @@ void kernel_main(void) {
     asm volatile("mov %0, %%cr4" :: "r"(cr));
 
     acpi_init();
+    if (modules_init() == 0) {
+        serial_print("[AOS] Driver/Module Initialization failed! Shutting down!\n");
+        for (;;) asm("hlt");
+    }
     if (pcie_init() == 0) {
         serial_print("[AOS] PCIe Initialization failed! Shutting Down!\n");
         for (;;) asm("hlt");
@@ -302,6 +307,38 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
                         *lines += 1;
                     } else {
                         bd_flush(&current_drive.block_dev);
+                    }
+                }
+            }
+        }
+    } else if (strncmp(cmd, "ls ", 3) == 0) {
+        if (current_drive_works == 0) {
+            vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
+            *lines += 1;
+        } else {
+            if (current_drive_mounted == 0) {
+                vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
+                *lines += 1;
+            } else {
+                char* _path = cmd + 6;
+                char path[PBFS_MAX_PATH_LEN];
+                path_normalize(_path, path, PBFS_MAX_PATH_LEN);
+
+                if (_path[0] == '.' || _path[0] != '/') {
+                    path_join(path, g_pbfs_cwd, _path, PBFS_MAX_PATH_LEN);
+                }
+
+                PBFS_DMM_Entry items[256];
+                size_t item_count;
+                int out = pbfs_list_items(&g_pbfs_mnt, path, items, 256, &item_count);
+                if (out != PBFS_RES_SUCCESS) {
+                    vmem_printf(vmem_design, "Error: %s\n", pbfs_get_err_str(out));
+                    *lines += 1;
+                } else {
+                    vmem_printf(vmem_design, "Listing: %s\n", path);
+                    for (size_t i = 0; i < item_count; i++) {
+                        vmem_printf(vmem_design, "%s (lba %llu)\n", items[i].name, uint128_to_u64(items[i].lba));
+                        *lines++;
                     }
                 }
             }
