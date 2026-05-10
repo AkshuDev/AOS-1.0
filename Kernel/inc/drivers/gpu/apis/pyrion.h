@@ -44,6 +44,8 @@ struct pyrion_ctx {
 
     uint64_t ctx_phys;
 
+    FB_Info_t fb;
+
     FB_Cursor_t fb_info;
     struct pyrion_display_info display_info;
     enum pyrion_color_format cformat;

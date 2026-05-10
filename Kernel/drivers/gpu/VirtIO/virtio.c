@@ -18,6 +18,7 @@
 
 static uint8_t vq_buf[0x1000] __attribute__((aligned(4096)));
 static struct virtqueue virtq;
+static uint8_t acceleration_present;
 
 static struct virtio_gpu_ctrl_hdr* cmd_buf[MAX_CMD_RESP_BUFS];
 static struct virtio_gpu_resp_display_info* resp_buf[MAX_CMD_RESP_BUFS];
@@ -258,8 +259,11 @@ void virtio_init(struct gpu_device* gpu) {
     uint32_t features = common_cfg->device_feature;
 
     if (!(features & (1 << 0))) { // VIRTIO_GPU_F_VIRGL is bit 0
-        serial_print("[VIRTIO] Host does not support 3D/VirGL! Your LOSS cause this driver doesn't work without 3D/Virgl\n\tTip: If you can open AOS Safety Shell, use PACI and download a better driver\n");
-        return;
+        gpu->acceleration_present = 0;
+        acceleration_present = 0;
+    } else {
+        gpu->acceleration_present = 1;
+        acceleration_present = 1;
     }
     common_cfg->driver_feature = features;
 
@@ -500,6 +504,10 @@ static void pyrion_push_virgl(struct pyrion_ctx* ctx, uint32_t opcode, uint32_t 
     ctx->driver_var += (1 + arg_count) * sizeof(uint32_t);
 }
 
+static uint32_t rgba_to_u32(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    return ((uint32_t)r << 24) | ((uint32_t)g << 16) | ((uint32_t)b << 8) | ((uint32_t)a);
+}
+
 struct pyrion_ctx* pyrion_create_ctx_virtio(void) {
     serial_print("[Pyrion] Creating Context...\n");
 
@@ -614,6 +622,21 @@ void pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* viewport
     ctx->res_id = res_id;
     ctx->viewport = *viewport;
 
+    if (acceleration_present != 1) {
+        serial_print("[VIRTIO] No Acceleration in Viewport/Context!\n");
+        FB_Info_t* fb = (FB_Info_t*)avmf_alloc(viewport->width * viewport->height * sizeof(uint32_t), MALLOC_TYPE_SENSITIVE, PAGE_RW | PAGE_PRESENT, &ctx->fb.phys_addr);
+        if (!fb) {
+            serial_print("[VIRTIO] Failed to allocate framebuffer\n");
+            return;
+        }
+        ctx->fb.addr = (uint64_t)fb;
+        ctx->fb.width = viewport->width;
+        ctx->fb.height = viewport->height;
+        ctx->fb.bpp = sizeof(uint32_t) * 8;
+        ctx->fb.pitch = viewport->width * sizeof(uint32_t);
+        return;
+    }
+
     uint32_t surf_args[6] = {
         ctx->res_id + MAX_PYRION_CONTEXTS,
         ctx->res_id,
@@ -657,6 +680,11 @@ void pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* viewport
 
 void pyrion_flush_virtio(struct pyrion_ctx* ctx) {
     if (ctx == NULL || ctx->valid != 1) return;
+
+    if (acceleration_present != 1) {
+        virtio_flush(ctx->viewport.x, ctx->viewport.y, ctx->viewport.width, ctx->viewport.height, ctx->res_id);
+        return;
+    }
 
     uint32_t stream_size = ctx->driver_var;
     if (stream_size == 0) return;
@@ -768,6 +796,12 @@ void pyrion_flush_virtio(struct pyrion_ctx* ctx) {
 }
 
 void pyrion_clear_virtio(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    if (acceleration_present != 1) {
+        if (!ctx->fb.addr) return;
+        fb_clear(&ctx->fb, rgba_to_u32(r, g, b, a));
+        return;
+    }
+
     float color[4] = {r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f};
     uint32_t args[5];
     args[0] = 0x7;
@@ -777,6 +811,11 @@ void pyrion_clear_virtio(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8_t b
 }
 
 void pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    if (acceleration_present != 1) {
+        if (!ctx->fb.addr) return;
+        fb_put_pixel(&ctx->fb, x, y, rgba_to_u32(r, g, b, a));
+        return;
+    }
     uint32_t scissor_args[2];
     scissor_args[0] = (y << 16) | x;
     scissor_args[1] = ((y + 1) << 16) | (x + 1);
@@ -797,6 +836,11 @@ void pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint8_t
 }
 
 void pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, uint32_t w, uint32_t h, uint32_t font_res_id) {
+    if (acceleration_present != 1) {
+        if (!ctx->fb.addr) return;
+        fb_printc(&ctx->fb, &ctx->fb_info, '-');
+        return;
+    }
     uint32_t args[13];
     args[0] = ctx->res_id; // Destination (The Window)
     args[1] = 0; // Dest level
@@ -923,6 +967,11 @@ uint32_t pyrion_upload_font_virtio(struct pyrion_ctx* ctx, uint64_t atlas_phys, 
 }
 
 void pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    if (acceleration_present != 1) {
+        if (!ctx->fb.addr) return;
+        fb_draw_rect(&ctx->fb, x, y, w, h, rgba_to_u32(r, g, b, a));
+        return;
+    }
     uint32_t scissor_args[2];
     scissor_args[0] = (y << 16) | x;
     scissor_args[1] = ((y + h) << 16) | (x + w);

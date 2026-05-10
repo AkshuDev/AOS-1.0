@@ -20,6 +20,8 @@ typedef struct gpu_device {
     pcie_device_t* pcie_device;
     PCIe_FB* framebuffer;
 
+    uint8_t acceleration_present;
+
     // Function pointers
     void (*init)(struct gpu_device* gpu);
     void (*init_resources)(struct gpu_device* gpu, int resource_id);
