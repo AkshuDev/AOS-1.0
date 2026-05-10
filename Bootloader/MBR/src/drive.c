@@ -34,7 +34,7 @@ static void set_sata(struct drive_device* out) {
 
 int get_available_drives(struct drive_device* out) {
     serial_print("[Drive Controller] Trying to find drives...\n");
-    if (sata_init() == 1) {
+    if (sata_init(NULL) == 1) {
         serial_print("[Drive Controller] Found SATA!\n");
         set_sata(out);
         return 1;

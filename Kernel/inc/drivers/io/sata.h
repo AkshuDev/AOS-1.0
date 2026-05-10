@@ -1,7 +1,9 @@
 #pragma once
 
-#include <inc/core/pcie.h>
 #include <inttypes.h>
+
+#include <inc/core/pcie.h>
+#include <inc/core/module.h>
 
 #ifdef PBFS_WDRIVERS
     #undef PBFS_WDRIVERS
@@ -240,7 +242,7 @@ struct sata_port_state {
     struct sata_hba_port* port;
 };
 
-int sata_init(void) __attribute__((used));
+int sata_init(struct AOS_Module* m) __attribute__((used));
 void sata_get_pcie(pcie_device_t* out) __attribute__((used));
 int sata_read_blk(int port_id, uint64_t lba, uint32_t count, void* buffer) __attribute__((used));
 int sata_write_blk(int port_id, uint64_t lba, uint32_t count, void* buffer) __attribute__((used));

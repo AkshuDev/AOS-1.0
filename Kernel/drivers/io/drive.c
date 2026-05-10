@@ -1,10 +1,14 @@
 #include <inttypes.h>
+
+#include <inc/core/kfuncs.h>
 #include <inc/core/pcie.h>
 
 #include <inc/drivers/io/sata.h>
 
 #include <inc/drivers/io/drive.h>
 #include <inc/drivers/io/io.h>
+
+#include <inc/core/module.h>
 
 static void set_sata(struct drive_device* out) {
     uint8_t avail_ports[32] = {0};
@@ -30,10 +34,32 @@ static void set_sata(struct drive_device* out) {
 int get_available_drives(struct drive_device* out) {
     serial_print("[Drive Controller] Trying to find registered drives...\n");
     
-    if (sata_init() == 1) {
-        serial_print("[Drive Controller] Found SATA!\n");
-        set_sata(out);
-        return 1;
+    struct AOS_Module* reg_driver = module_get_first_applicable_registered_driver(PCI_CLASS_MASS_STORAGE, 0, 0, 0, 0, 0, 0, 0, 0);
+    if (!reg_driver) {
+        serial_print("[Drive Controller] No registered drives!\n");
+        return 0;
+    } else if (reg_driver->hdr.type != MODULE_TYPE_DRIVER) {
+        serial_print("[Drive Controller] No registered drivers for drives!\n");
+        return 0;
     }
-    return 0;
+
+    switch (reg_driver->Modules.driver_module.type) {
+        case MODULE_DRIVER_TYPE_SATA: {
+            if (sata_init(reg_driver) != 1) {
+                serial_print("[Drive Controller] SATA Initialization failed!\n");
+                return 0;
+            }
+            set_sata(&reg_driver->Modules.driver_module.DriverConnections.drive_connector);
+            break;
+        }
+        default: {
+            serial_print("[Drive Controller] No supported drives found!\n");
+            return 0;
+        }
+    }
+
+    memcpy(out, &reg_driver->Modules.driver_module.DriverConnections.drive_connector, sizeof(drive_device_t));
+
+    serial_printf("[Drive Controller] Using '%s' driver\n", reg_driver->hdr.name);
+    return 1;
 }

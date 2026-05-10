@@ -3,6 +3,8 @@
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
 
+#include <inc/core/kfuncs.h>
+
 #include <inc/drivers/io/io.h>
 
 #include <inc/drivers/io/sata.h>
@@ -39,9 +41,10 @@ uint8_t modules_init(void) {
         .name = "AOS-inb-driver-SATA",
         .signature = AOS_MODULE_SIGN(id),
         .version = AOS_MODULE_PACK_VERSION(1, 0, 0),
-        .type = MODULE_TYPE_DRIVER
+        .type = MODULE_TYPE_DRIVER,
+        .registered = 0
     };
-    modules[module_count].Modules.driver_module = (struct AOS_ModuleDriver){
+    modules[id].Modules.driver_module = (struct AOS_ModuleDriver){
         .type = MODULE_DRIVER_TYPE_SATA,
         
         .target_class = MASS_STORAGE_CLASS,
@@ -73,12 +76,13 @@ uint8_t modules_init(void) {
         .name = "AOS-inb-driver-gpu-VIRTIO",
         .signature = AOS_MODULE_SIGN(id),
         .version = AOS_MODULE_PACK_VERSION(1, 0, 0),
-        .type = MODULE_TYPE_DRIVER
+        .type = MODULE_TYPE_DRIVER,
+        .registered = 0
     };
-    modules[module_count].Modules.driver_module = (struct AOS_ModuleDriver){
+    modules[id].Modules.driver_module = (struct AOS_ModuleDriver){
         .type = MODULE_DRIVER_TYPE_GPU,
         
-        .target_class = PCI_CLASS_DISPLAY,
+        .target_class = PCI_VGA_DISPLAY,
         .target_subclass = PCI_SUBCLASS_VGA,
         .target_progifclass = 0,
         .target_use_progifclass = 0,
@@ -134,46 +138,54 @@ uint8_t module_register(struct AOS_Module* module) {
         }
         registered_module_cap += 16;
         if (registered_modules) {
-            
+            memcpy(nptr, registered_modules, sizeof(struct AOS_Module*)*registered_module_count);
+            avmf_free((uint64_t)registered_modules);
         }
+        registered_modules = nptr;
     }
+    registered_modules[registered_module_count++] = module;
+    module->hdr.registered = 1;
+    return 1;
 }
 
-struct AOS_Module* module_get_first_applicable_driver(uint8_t class, uint8_t subclass, uint8_t progif, uint8_t revision, uint16_t vendor) {
+struct AOS_Module* module_get_first_applicable_driver(uint8_t class, uint8_t subclass, uint8_t use_subclass, uint8_t progif, uint8_t use_progif, uint8_t revision, uint8_t use_revision, uint16_t vendor, uint8_t use_vendor) {
     for (size_t i = 0; i < module_count; i++) {
         struct AOS_Module* mod = &modules[i];
         if (mod->hdr.type != MODULE_TYPE_DRIVER) continue;
         
-        if (mod->Modules.driver_module.target_class == class && mod->Modules.driver_module.target_subclass == subclass) {
-            if (mod->Modules.driver_module.target_use_progifclass == 1) {
+        if (mod->Modules.driver_module.target_class == class) {
+            if (use_subclass == 1 && mod->Modules.driver_module.target_subclass != subclass) continue;
+            if (use_progif == 1 && mod->Modules.driver_module.target_use_progifclass == 1) {
                 if (mod->Modules.driver_module.target_progifclass != progif) continue;
             }
-            if (mod->Modules.driver_module.target_use_revision == 1) {
+            if (use_revision == 1 && mod->Modules.driver_module.target_use_revision == 1) {
                 if (mod->Modules.driver_module.target_revision != revision) continue;
             }
-            if (mod->Modules.driver_module.target_use_vendor == 1) {
-                if (mod->Modules.driver_module.target_vendor != progif) continue;
+            if (use_vendor == 1 && mod->Modules.driver_module.target_use_vendor == 1) {
+                if (mod->Modules.driver_module.target_vendor != vendor) continue;
             }
+            
             return mod;
         }
     }
     return NULL;
 }
 
-struct AOS_Module* module_get_first_applicable_registered_driver(uint8_t class, uint8_t subclass, uint8_t progif, uint8_t revision, uint16_t vendor) {
+struct AOS_Module* module_get_first_applicable_registered_driver(uint8_t class, uint8_t subclass, uint8_t use_subclass, uint8_t progif, uint8_t use_progif, uint8_t revision, uint8_t use_revision, uint16_t vendor, uint8_t use_vendor) {
     for (size_t i = 0; i < registered_module_count; i++) {
         struct AOS_Module* mod = registered_modules[i];
         if (mod->hdr.type != MODULE_TYPE_DRIVER) continue;
         
-        if (mod->Modules.driver_module.target_class == class && mod->Modules.driver_module.target_subclass == subclass) {
-            if (mod->Modules.driver_module.target_use_progifclass == 1) {
+        if (mod->Modules.driver_module.target_class == class) {
+            if (use_subclass == 1 && mod->Modules.driver_module.target_subclass != subclass) continue;
+            if (use_progif == 1 && mod->Modules.driver_module.target_use_progifclass == 1) {
                 if (mod->Modules.driver_module.target_progifclass != progif) continue;
             }
-            if (mod->Modules.driver_module.target_use_revision == 1) {
+            if (use_revision == 1 && mod->Modules.driver_module.target_use_revision == 1) {
                 if (mod->Modules.driver_module.target_revision != revision) continue;
             }
-            if (mod->Modules.driver_module.target_use_vendor == 1) {
-                if (mod->Modules.driver_module.target_vendor != progif) continue;
+            if (use_vendor == 1 && mod->Modules.driver_module.target_use_vendor == 1) {
+                if (mod->Modules.driver_module.target_vendor != vendor) continue;
             }
             return mod;
         }
@@ -181,3 +193,10 @@ struct AOS_Module* module_get_first_applicable_registered_driver(uint8_t class, 
     return NULL;
 }
 
+uint8_t module_already_initialized(struct AOS_Module* module) {
+    for (size_t i = 0; i < registered_module_count; i++) {
+        struct AOS_Module* mod = registered_modules[i];
+        if (mod == module) return 1;
+    }
+    return 0;
+}

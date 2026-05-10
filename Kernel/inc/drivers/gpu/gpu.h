@@ -38,3 +38,4 @@ void svga_write(uintptr_t mmio_base, uint32_t index, uint32_t value, uint32_t sv
 uint32_t svga_read(uintptr_t mmio_base, uint32_t index, uint32_t svga_index_port, uint32_t svga_value_port) __attribute__((used));
 
 uint64_t gpu_get_framebuffer_and_info(PCIe_FB* fb, pcie_device_t* dev, gpu_device_t* gpu) __attribute__((used));
+uint8_t gpu_find_gpu(PCIe_FB* fb, pcie_device_t* dev, gpu_device_t* gpu) __attribute__((used));

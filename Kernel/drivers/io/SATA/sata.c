@@ -2,6 +2,8 @@
 #include <inttypes.h>
 #include <asm.h>
 
+#include <inc/core/module.h>
+
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
 
@@ -319,14 +321,12 @@ static int sata_issue_cmd(struct sata_port_state* state, int write, uint64_t lba
     return 1;
 }
 
-int sata_init(void) {
-    if (pcie_find_ex(
-        &sata_device.bus, &sata_device.slot, &sata_device.func,
-        (uint32_t*)&sata_device.bar0,
-        MASS_STORAGE_CLASS, SATA_SUBCLASS, AHCI_PROGIF, 0, 0
-    ) != 1) {
-        return 0;
-    }
+int sata_init(struct AOS_Module* m) {
+    if (m->hdr.type != MODULE_TYPE_DRIVER) return 0;
+    if (m->Modules.driver_module.type != MODULE_DRIVER_TYPE_SATA) return 0;
+    if (m->hdr.registered != 1) return 0;
+
+    sata_device = m->Modules.driver_module.pcie_device;
 
     sata_map_bar();
     if (hba_mem == NULL) return 0;

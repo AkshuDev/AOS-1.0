@@ -395,7 +395,7 @@ void stage3(void) {
 
     if (get_available_drives(&cur_drive) == 1) {
         if (cur_drive.active != 1) {
-            if (cur_drive.init != NULL) cur_drive.init();
+            if (cur_drive.init != NULL) cur_drive.init(NULL);
         }
         if (cur_drive.read_blk == NULL) {
             vmem_print(&cursor, "No read function for drive?\n");

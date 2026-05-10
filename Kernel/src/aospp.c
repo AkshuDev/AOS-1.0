@@ -30,7 +30,10 @@ void aos_start_vshell(void) {
 
 void aospp_start(void) {
     serial_print("[AOS++] Searching for GPU...\n");
-    (void)gpu_get_framebuffer_and_info(&gpu_framebuffer, &pcie_gpu_device, &gpu_device); // FB is useless, we query device directly, this is for legacy
+    if (gpu_find_gpu(&gpu_framebuffer, &pcie_gpu_device, &gpu_device) != 1) {
+        serial_print("[AOS++] Failed to find/detect any GPU!\n");
+        return;
+    }
 
     serial_print("[AOS++] Initializing GPU Driver...\n");
     if (gpu_device.init != NULL) gpu_device.init(&gpu_device);

@@ -6,6 +6,8 @@
 #include <inc/core/acpi.h>
 #include <inc/drivers/io/io.h>
 
+#include <inc/core/module.h>
+
 #include <inc/mm/pager.h>
 
 static struct acpi_mcfg* mcfg_table = NULL;
@@ -14,7 +16,7 @@ static int mcfg_num_segs = 0;
 uint8_t pcie_init() {
     mcfg_table = acpi_get_mcfg();
     if (mcfg_table == NULL) {
-        serial_print("[PCIE] Did not get MCFG Table! Using PCI\n");
+        serial_print("[PCIe] Did not get MCFG Table! Using PCI\n");
         return 1;
     }
     mcfg_num_segs = (mcfg_table->header.length - sizeof(struct acpi_mcfg) - 8) / sizeof(struct acpi_mcfg_entry);
@@ -27,6 +29,52 @@ uint8_t pcie_init() {
         uint64_t virt_base = PCIE_VIRT_BASE + ((uint64_t)e->pcie_segment << 28);
         pager_map_range(virt_base, e->base_addr, size, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
     }
+    
+    serial_print("[PCIe] Registering Modules...\n");
+    for (uint16_t b = 0; b < PCI_MAX_BUS; b++) {
+        for (uint8_t s = 0; s < PCI_MAX_SLOT; s++) {
+            for (uint8_t f = 0; f < PCI_MAX_FUNC; f++) {
+                uint32_t data = pcie_read(b, s, f, 0);
+                uint16_t vendor = data & 0xFFFF;
+                uint32_t class_data = pcie_read(b, s, f, 0x08);
+                uint8_t class = (class_data >> 24) & 0xFF;
+                uint8_t class_sub = (class_data >> 16) & 0xFF;
+                uint8_t class_progif = (class_data >> 8) & 0xFF;
+                uint8_t revision = (class_data & 0xFF);
+
+                struct AOS_Module* m = module_get_first_applicable_driver(class, class_sub, 1, class_progif, 1, revision, 1, vendor, 1);
+                if (!m || m->hdr.type != MODULE_TYPE_DRIVER) continue;
+                if (module_already_initialized(m)) continue;
+                serial_printf("[PCIe] Registering Module %s, Got for Class:%d SClass:%d Progif:%d\n", m->hdr.name, class, class_sub, class_progif);
+
+                m->Modules.driver_module.pcie_device.bus = b;
+                m->Modules.driver_module.pcie_device.slot = s;
+                m->Modules.driver_module.pcie_device.func = f;
+                m->Modules.driver_module.pcie_device.bar0 = pcie_read(b, s, f, 0x10);
+                m->Modules.driver_module.pcie_device.class_code = class;
+                m->Modules.driver_module.pcie_device.subclass = class_sub;
+                m->Modules.driver_module.pcie_device.vendor_id = vendor;
+                m->Modules.driver_module.pcie_device.prog_if = class_progif;
+                m->Modules.driver_module.pcie_device.device_id = (class_data >> 16) & 0xFFFF;
+
+                switch (m->Modules.driver_module.type) {
+                    case MODULE_DRIVER_TYPE_SATA: {
+                        m->Modules.driver_module.DriverConnections.drive_connector.pcie_device = &m->Modules.driver_module.pcie_device;
+                        break;
+                    }
+                    case MODULE_DRIVER_TYPE_GPU: {
+                        m->Modules.driver_module.DriverConnections.gpu_connector.pcie_device = &m->Modules.driver_module.pcie_device;
+                        break;
+                    }
+                    default: break;
+                }
+
+                module_register(m);
+            }
+        }
+    }
+    serial_print("[PCIe] Modules Registered\n");
+
     return 1;
 }
 
@@ -60,7 +108,7 @@ uint32_t pcie_read(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
 }
 
 int pcie_find(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint16_t target_vendor, uint8_t use_vendor) {
-    for (uint8_t b = 0; b < PCI_MAX_BUS; b++) {
+    for (uint16_t b = 0; b < PCI_MAX_BUS; b++) {
         for (uint8_t s = 0; s < PCI_MAX_SLOT; s++) {
             for (uint8_t f = 0; f < PCI_MAX_FUNC; f++) {
                 uint32_t data = pcie_read(b, s, f, 0);
@@ -83,7 +131,7 @@ int pcie_find(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_
 
 int pcie_find_ex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint8_t target_subclass, uint8_t target_progifclass, uint16_t target_vendor, uint8_t use_vendor) {
     // Pci find Extended
-    for (uint8_t b = 0; b < PCI_MAX_BUS; b++) {
+    for (uint16_t b = 0; b < PCI_MAX_BUS; b++) {
         for (uint8_t s = 0; s < PCI_MAX_SLOT; s++) {
             for (uint8_t f = 0; f < PCI_MAX_FUNC; f++) {
                 uint32_t data = pcie_read(b, s, f, 0);
@@ -112,7 +160,7 @@ int pcie_find_ex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uin
 
 int pcie_find_rex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint8_t target_subclass, uint8_t target_progifclass, uint8_t target_revision, uint16_t target_vendor, uint8_t use_vendor) {
     // Pci find Revision-Extended
-    for (uint8_t b = 0; b < PCI_MAX_BUS; b++) {
+    for (uint16_t b = 0; b < PCI_MAX_BUS; b++) {
         for (uint8_t s = 0; s < PCI_MAX_SLOT; s++) {
             for (uint8_t f = 0; f < PCI_MAX_FUNC; f++) {
                 uint32_t data = pcie_read(b, s, f, 0);

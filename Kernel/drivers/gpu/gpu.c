@@ -2,6 +2,9 @@
 #include <asm.h>
 
 #include <inc/core/pcie.h>
+#include <inc/core/module.h>
+#include <inc/core/kfuncs.h>
+
 #include <inc/drivers/gpu/gpu.h>
 #include <inc/drivers/io/io.h>
 #include <inc/mm/avmf.h>
@@ -78,35 +81,8 @@ void get_framebuffer_info_virtio(PCIe_FB* fb, pcie_device_t* device, gpu_device_
     fb->phys = fb_base;
     fb->mmio_base = mmio_base;
 
-    gpu->name = "VirtIo";
     gpu->pcie_device = device;
     gpu->framebuffer = fb;
-    gpu->init = virtio_init;
-    gpu->init_resources = virtio_init_resources;
-    gpu->set_mode = virtio_set_mode;
-    gpu->swap_buffers = NULL;
-    gpu->flush = virtio_flush;
-    gpu->switch_off = virtio_switch_off;
-
-    gpu->pyrion.init = pyrion_init_virtio;
-    gpu->pyrion.finish = pyrion_finish_virtio;
-
-    gpu->pyrion.create_ctx = pyrion_create_ctx_virtio;
-    gpu->pyrion.destroy_ctx = pyrion_destroy_ctx_virtio;
-
-    gpu->pyrion.flush = pyrion_flush_virtio;
-    gpu->pyrion.viewport = pyrion_viewport_virtio;
-
-    gpu->pyrion.clear = pyrion_clear_virtio;
-    gpu->pyrion.pixel = pyrion_pixel_virtio;
-    gpu->pyrion.draw_rect = pyrion_rect_virtio;
-
-    gpu->pyrion.upload_font = pyrion_upload_font_virtio;
-    gpu->pyrion.destroy_font = pyrion_destroy_font_virtio;
-
-    gpu->pyrion.draw_char = pyrion_draw_char_virtio;
-
-    gpu->active = 0;
 }
 
 uint64_t gpu_get_framebuffer_and_info(PCIe_FB* fb, pcie_device_t* dev, gpu_device_t* gpu) {
@@ -179,4 +155,31 @@ uint64_t gpu_get_framebuffer_and_info(PCIe_FB* fb, pcie_device_t* dev, gpu_devic
     }
 
     return 0;
+}
+
+uint8_t gpu_find_gpu(PCIe_FB* fb, pcie_device_t* dev, gpu_device_t* gpu) {
+    struct AOS_Module* m = module_get_first_applicable_registered_driver(PCI_VGA_DISPLAY, PCI_SUBCLASS_VGA, 1, 0, 0, 0, 0, 0, 0);
+
+    if (!m) {
+        serial_print("[GPU Controller] Did not find any registered GPUs!\n");
+        return 0;
+    }
+    if (m->hdr.type != MODULE_TYPE_DRIVER || m->Modules.driver_module.type != MODULE_DRIVER_TYPE_GPU) {
+        serial_print("[GPU Controller] Did not find any registered GPU drivers!\n");
+        return 0;
+    }
+
+    pcie_device_t* d = &m->Modules.driver_module.pcie_device;
+    memcpy(dev, d, sizeof(pcie_device_t));
+
+    switch (m->Modules.driver_module.pcie_device.vendor_id) {
+        case VirtIo_VENDORID: {
+            get_framebuffer_info_virtio(fb, d, &m->Modules.driver_module.DriverConnections.gpu_connector);
+            break;
+        }
+        default: break;
+    }
+
+    serial_printf("[GPU Controller] Using '%s' driver!\n", m->hdr.name);
+    return 1;
 }

@@ -48,7 +48,7 @@ static struct pbfs_funcs pbfs_init_funcs = {
     .malloc = kmalloc,
     .free = kfree
 };
-static char g_pbfs_cwd[PBFS_MAX_PATH_LEN] = {0};
+static char g_pbfs_cwd[PBFS_MAX_PATH_LEN] = {'/', 0};
 static struct pbfs_mount g_pbfs_mnt = {0};
 
 // Define a static stack array
@@ -63,6 +63,7 @@ static int bd_write_blk(struct block_device* dev, uint64_t lba, const void* buf)
 static int bd_read(struct block_device* dev, uint64_t lba, uint64_t count, void* buf);
 static int bd_write(struct block_device* dev, uint64_t lba, uint64_t count, const void* buf);
 static int bd_flush(struct block_device* dev);
+static void make_path(char* out, const char* cwd, const char* in);
 
 extern uint64_t stack_top; // From linker script
 
@@ -114,10 +115,6 @@ void kernel_main(void) {
     if (get_available_drives(&current_drive) != 1) {
         serial_print("[AOS] Failed to find any I/O Drives!\n");
     } else {
-        if (current_drive.active != 1) {
-            if (current_drive.init != NULL) current_drive.init();
-        }
-        // else already initialized by the func
         // Print info
         serial_printf("[AOS] Found I/O Drive ->\n\tName: %s\n\tBlock Size: %u\n\tTotal Blocks: %u\n", current_drive.name, current_drive.block_dev.block_size, current_drive.block_dev.block_count);
         // do test read for now
@@ -153,7 +150,7 @@ void kernel_main(void) {
             current_drive_mounted = 1;
         }
     } else {
-        serial_print("Error: Current drive doesn't work!");
+        serial_print("Error: Current drive doesn't work!\n");
     }
 
     // Now safe to use local variables
@@ -256,15 +253,7 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
             } else {
                 char* _path = cmd + 3;
                 char path[PBFS_MAX_PATH_LEN];
-
-                if (_path[0] == '.' || _path[0] != '/') {
-                    // Relative
-                    path_join(path, g_pbfs_cwd, _path, PBFS_MAX_PATH_LEN);
-                } else if (_path[0] == '.' && _path[1] == '.' && _path[2] == '/') {
-                    // TODO: Implement
-                } else {
-                    path_normalize(_path, path, PBFS_MAX_PATH_LEN);
-                }
+                make_path(path, g_pbfs_cwd, _path);
 
                 PBFS_DMM_Entry entry;
                 uint64_t tmplba = 0;
@@ -288,11 +277,7 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
             } else {
                 char* _path = cmd + 6;
                 char path[PBFS_MAX_PATH_LEN];
-                path_normalize(_path, path, PBFS_MAX_PATH_LEN);
-
-                if (_path[0] == '.' || _path[0] != '/') {
-                    path_join(path, g_pbfs_cwd, _path, PBFS_MAX_PATH_LEN);
-                }
+                make_path(path, g_pbfs_cwd, _path);
 
                 PBFS_DMM_Entry entry;
                 uint64_t tmplba = 0;
@@ -311,7 +296,7 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
                 }
             }
         }
-    } else if (strncmp(cmd, "ls ", 3) == 0) {
+    } else if (strncmp(cmd, "ls", 2) == 0) {
         if (current_drive_works == 0) {
             vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
             *lines += 1;
@@ -320,13 +305,16 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
                 vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
                 *lines += 1;
             } else {
-                char* _path = cmd + 6;
-                char path[PBFS_MAX_PATH_LEN];
-                path_normalize(_path, path, PBFS_MAX_PATH_LEN);
-
-                if (_path[0] == '.' || _path[0] != '/') {
-                    path_join(path, g_pbfs_cwd, _path, PBFS_MAX_PATH_LEN);
+                char* _path = NULL;
+                if (strlen(cmd) > 3) {
+                    if (cmd[3] != ' ') {
+                        _path = cmd + 3;
+                    } else {
+                        _path = ".";
+                    }
                 }
+                char path[PBFS_MAX_PATH_LEN];
+                make_path(path, g_pbfs_cwd, _path);
 
                 PBFS_DMM_Entry items[256];
                 size_t item_count;
@@ -336,9 +324,9 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
                     *lines += 1;
                 } else {
                     vmem_printf(vmem_design, "Listing: %s\n", path);
+                    *lines += 1 + item_count;
                     for (size_t i = 0; i < item_count; i++) {
                         vmem_printf(vmem_design, "%s (lba %llu)\n", items[i].name, uint128_to_u64(items[i].lba));
-                        *lines++;
                     }
                 }
             }
@@ -442,6 +430,40 @@ static int bd_flush(struct block_device* dev) {
         return 1;
     }
     return 0;
+}
+
+static void make_path(char* out, const char* cwd, const char* in) {
+    char tmp[PBFS_MAX_PATH_LEN];
+
+    if (!out) return;
+    if (!in || in[0] == '\0') {
+        if (cwd && cwd[0]) {
+            path_normalize(cwd, out, PBFS_MAX_PATH_LEN);
+        } else {
+            strncpy(out, "/", PBFS_MAX_PATH_LEN);
+            out[PBFS_MAX_PATH_LEN - 1] = '\0';
+        }
+        return;
+    }
+    if (in[0] == '/') {
+        strncpy(tmp, in, sizeof(tmp));
+        tmp[sizeof(tmp) - 1] = '\0';
+    } else {
+        if (!cwd || cwd[0] == '\0') {
+            cwd = "/";
+        }
+
+        path_join(tmp, cwd, in, sizeof(tmp));
+    }
+
+    tmp[sizeof(tmp) - 1] = '\0';
+
+    path_normalize(tmp, out, PBFS_MAX_PATH_LEN);
+
+    if (out[0] == '\0') {
+        strncpy(out, "/", PBFS_MAX_PATH_LEN);
+        out[PBFS_MAX_PATH_LEN - 1] = '\0';
+    }
 }
 
 asm(".globl kernel_main");

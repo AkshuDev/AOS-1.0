@@ -10,12 +10,14 @@
 #include <PBFS/headers/pbfs-fs.h>
 #undef PBFS_NDRIVERS
 
+struct AOS_Module;
+
 typedef struct drive_device {
     const char* name;
     pcie_device_t* pcie_device;
 
     // Function pointers
-    int (*init)(void);
+    int (*init)(struct AOS_Module* m);
     int (*read_blk)(int port_id, uint64_t lba, uint32_t count, void* buffer);
     int (*write_blk)(int port_id, uint64_t lba, uint32_t count, void* buffer);
     int (*flush)(int port_id);

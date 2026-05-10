@@ -23,6 +23,8 @@ struct AOS_ModuleHeader {
     int version;
     uint64_t signature;
     enum AOS_ModuleTypes type;
+
+    uint8_t registered;
 };
 
 struct AOS_ModuleDriver {
@@ -36,6 +38,8 @@ struct AOS_ModuleDriver {
     uint8_t target_use_revision;
     uint16_t target_vendor;
     uint8_t target_use_vendor;
+
+    pcie_device_t pcie_device;
 
     union {
         gpu_device_t gpu_connector;
@@ -52,6 +56,7 @@ struct AOS_Module {
 
 uint8_t modules_init(void) __attribute__((used));
 uint8_t module_register(struct AOS_Module* module) __attribute__((used));
+uint8_t module_already_initialized(struct AOS_Module* module) __attribute__((used));
 
-struct AOS_Module* module_get_first_applicable_driver(uint8_t class, uint8_t subclass, uint8_t progif, uint8_t revision, uint16_t vendor) __attribute__((used));
-struct AOS_Module* module_get_first_applicable_registered_driver(uint8_t class, uint8_t subclass, uint8_t progif, uint8_t revision, uint16_t vendor) __attribute__((used));
+struct AOS_Module* module_get_first_applicable_driver(uint8_t class, uint8_t subclass, uint8_t use_subclass, uint8_t progif, uint8_t use_progif, uint8_t revision, uint8_t use_revision, uint16_t vendor, uint8_t use_vendor) __attribute__((used));
+struct AOS_Module* module_get_first_applicable_registered_driver(uint8_t class, uint8_t subclass, uint8_t use_subclass, uint8_t progif, uint8_t use_progif, uint8_t revision, uint8_t use_revision, uint16_t vendor, uint8_t use_vendor) __attribute__((used));
