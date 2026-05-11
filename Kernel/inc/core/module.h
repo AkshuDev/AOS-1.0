@@ -15,7 +15,7 @@ enum AOS_ModuleDriverTypes {
     MODULE_DRIVER_TYPE_HDD,
     MODULE_DRIVER_TYPE_NVMe,
     MODULE_DRIVER_TYPE_GPU,
-    //MODULE_DRIVER_TYPE_xHCI
+    MODULE_DRIVER_TYPE_xHCI
 };
 
 struct AOS_ModuleHeader {

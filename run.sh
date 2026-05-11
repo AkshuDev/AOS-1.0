@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # AOS++/AOS-1.0 Run script for ease of use
 
 show_help() {
@@ -40,6 +42,7 @@ show_help() {
         -web, --internet               Enable user-mode networking
 
     Other:
+        -er, --enable-reboot           Allow rebooting
         -h, --help                     Show this help message
 
     Examples:
@@ -59,6 +62,7 @@ ram="256M"
 logs="guest_errors"
 nographics=0
 internet=0
+enable_reboot=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -75,6 +79,7 @@ while [[ $# -gt 0 ]]; do
         --use-uefi|-uefi) uefi=1 ;;
         --nographics|-nog) nographics=1 ;;
         --internet|-web) internet=1 ;;
+        --enable-reboot|-er) enable_reboot=1 ;;
         --help|-h)
             show_help
             exit 0
@@ -186,6 +191,14 @@ get_display() {
     fi
 }
 
+get_extra_options() {
+    if [[ $enable_reboot -ne 1 ]]; then
+        echo "-no-shutdown -no-reboot"
+    else
+        echo "-no-shutdown"
+    fi
+}
+
 append_uefi_bios() {
     if [[ $uefi -eq 1 ]]; then
         echo "-global driver=cfi.pflash01,property=secure,value=on \
@@ -203,6 +216,7 @@ NET_OPTS="$(get_network)"
 DISPLAY_OPTS="$(get_display)"
 UEFI_OPTS="$(append_uefi_bios)"
 LOG_OPTS="-d $logs"
+EXTRA_OPTS="$(get_extra_options)"
 
 case "$mode" in
     2) # KVM
@@ -243,7 +257,7 @@ case "$mode" in
             $DISPLAY_OPTS \
             -serial stdio \
             $LOG_OPTS \
-            -no-shutdown -no-reboot \
+            $EXTRA_OPTS \
             $UEFI_OPTS
         ;;
 
