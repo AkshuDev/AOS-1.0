@@ -17,6 +17,9 @@ show_help() {
         -gpu, --gpu-type=<type>        Select GPU -
                                         virtio | nvidia | amd | vmware | bochs
 
+        -ega, --enable-gpu-acceleration
+                                        Enable VirGL/OpenGL GPU acceleration
+
     Input Devices:
         -kbd=<type>, --keyboard-type=<type>   Keyboard type: usb | ps2
         -mouse, --mouse                       Enable USB mouse
@@ -49,6 +52,7 @@ mode=1
 uefi=0
 cpu_type="intel"
 gpu_type="virtio"
+gpu_accel=0
 kbd_type="ps2"
 mouse_enabled=0
 ram="256M"
@@ -63,6 +67,7 @@ while [[ $# -gt 0 ]]; do
         --kvm|-kvm) mode=2 ;;
         --cpu-type=*|-cpu=*) cpu_type="${1#*=}" ;;
         --gpu-type=*|-gpu=*) gpu_type="${1#*=}" ;;
+        --enable-gpu-acceleration|-ega) gpu_accel=1 ;;
         --keyboard-type=*|-kbd=*) kbd_type="${1#*=}" ;;
         --mouse|-mouse) mouse_enabled=1 ;;
         --max-ram=*|-ram=*) ram="${1#*=}" ;;
@@ -133,12 +138,23 @@ get_smp() {
 
 get_gpu() {
     case "$gpu_type" in
-        virtio) echo "-device virtio-vga-gl -display gtk,gl=on -vga none" ;;
-        vmware) echo "-vga vmware" ;;
-        bochs) echo "-vga std" ;;
+        virtio)
+            if [[ $gpu_accel -eq 1 ]]; then
+                echo "-device virtio-vga-gl -display gtk,gl=on -vga none"
+            else
+                echo "-device virtio-vga -display gtk -vga none"
+            fi
+            ;;
+        vmware)
+            echo "-vga vmware"
+            ;;
+        bochs)
+            echo "-vga std"
+            ;;
         *)
             echo "[Warning] Unsupported gpu passed, using STD (Bochs)" >&2
-            echo "-vga std" ;;
+            echo "-vga std"
+            ;;
     esac
 }
 

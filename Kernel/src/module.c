@@ -102,23 +102,20 @@ uint8_t modules_init(void) {
             .flush = virtio_flush,
             .switch_off = virtio_switch_off,
 
-            .pyrion.init = pyrion_init_virtio,
-            .pyrion.finish = pyrion_finish_virtio,
-
-            .pyrion.create_ctx = pyrion_create_ctx_virtio,
-            .pyrion.destroy_ctx = pyrion_destroy_ctx_virtio,
-
-            .pyrion.flush = pyrion_flush_virtio,
-            .pyrion.viewport = pyrion_viewport_virtio,
-
-            .pyrion.clear = pyrion_clear_virtio,
-            .pyrion.pixel = pyrion_pixel_virtio,
-            .pyrion.draw_rect = pyrion_rect_virtio,
-
-            .pyrion.upload_font = pyrion_upload_font_virtio,
-            .pyrion.destroy_font = pyrion_destroy_font_virtio,
-
-            .pyrion.draw_char = pyrion_draw_char_virtio,
+            .pyrion = (struct pyrion_api){
+                .init = pyrion_init_virtio,
+                .finish = pyrion_finish_virtio,
+                .create_ctx = pyrion_create_ctx_virtio,
+                .destroy_ctx = pyrion_destroy_ctx_virtio,
+                .flush = pyrion_flush_virtio,
+                .viewport = pyrion_viewport_virtio,
+                .clear = pyrion_clear_virtio,
+                .pixel = pyrion_pixel_virtio,
+                .draw_rect = pyrion_rect_virtio,
+                .upload_font = pyrion_upload_font_virtio,
+                .destroy_font = pyrion_destroy_font_virtio,
+                .draw_char = pyrion_draw_char_virtio
+            },
 
             .active = 0,
         }

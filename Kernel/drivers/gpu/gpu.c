@@ -171,15 +171,19 @@ uint8_t gpu_find_gpu(PCIe_FB* fb, pcie_device_t* dev, gpu_device_t* gpu) {
 
     pcie_device_t* d = &m->Modules.driver_module.pcie_device;
     memcpy(dev, d, sizeof(pcie_device_t));
-
+    memcpy(gpu, &m->Modules.driver_module.DriverConnections.gpu_connector, sizeof(gpu_device_t));
+    
     switch (m->Modules.driver_module.pcie_device.vendor_id) {
         case VirtIo_VENDORID: {
             get_framebuffer_info_virtio(fb, d, &m->Modules.driver_module.DriverConnections.gpu_connector);
             break;
         }
-        default: break;
+        default: {
+            serial_printf("[GPU Controller] Warning: Unknown VendorID (%d) Based Driver!\n", m->Modules.driver_module.pcie_device.vendor_id);
+            break;
+        }
     }
 
-    serial_printf("[GPU Controller] Using '%s' driver!\n", m->hdr.name);
+    serial_printf("[GPU Controller] Using '%s' driver\n", m->hdr.name);
     return 1;
 }
