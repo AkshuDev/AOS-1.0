@@ -25,6 +25,8 @@ static uint64_t avmf_limit[128];
 static uint64_t avmf_base[128];
 static uint64_t avmf_bitmap[BITMAP_SIZE];
 
+static avmf_region_header_t* avmf_start_region;
+
 static uint64_t heap_kernel = AOS_KERNEL_SPACE_BASE;
 static uint64_t heap_driver = AOS_DRIVER_SPACE_BASE;
 static uint64_t heap_user = AOS_USER_SPACE_BASE;
@@ -211,6 +213,21 @@ void avmf_init(uint64_t* base_phys, uint64_t* limit_phys, uint8_t entries) {
     for (uint8_t i = 0; i < ent; i++) {
         avmf_base[i] = base_phys[i];
         avmf_limit[i] = limit_phys[i];
+        
+        // Setup regions
+        avmf_start_region = (struct AVMF_Region_Header*)avmf_base[i];
+        avmf_start_region->base = avmf_base[i] + sizeof(struct AVMF_Region_Header);
+        avmf_start_region->limit = avmf_limit[i];
+        avmf_start_region->signature = AVMF_SIGNATURE;
+        avmf_start_region->version = AVMF_VERSION;
+        avmf_start_region->free_pages = (uint64_t)((avmf_start_region->limit - avmf_start_region->base) / PAGE_SIZE);
+        avmf_start_region->used_pages = 0;
+        avmf_start_region->cache_head = NULL;
+        avmf_start_region->bitmap = (uint8_t*)avmf_bitmap;
+        if (i > 0 && i + 1 < ent)
+            avmf_start_region->next = (struct AVMF_Region_Header*)avmf_base[i+1];
+        else
+            avmf_start_region->next = NULL;
     }
     avmf_head = (avmf_header_t*)NULL;
     spin_unlock_irqrestore(&avmf_lock, rflags);

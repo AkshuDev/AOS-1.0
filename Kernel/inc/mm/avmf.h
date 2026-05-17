@@ -17,6 +17,22 @@ typedef struct AVMF_Header {
     struct AVMF_Header* next;
 } avmf_header_t;
 
+typedef struct AVMF_Region_Header {
+    uint32_t signature; // AVMF
+    uint16_t version;
+    
+    uint64_t base;
+    uint64_t limit;
+
+    uint64_t free_pages;
+    uint64_t used_pages;
+
+    uint8_t* bitmap;
+
+    struct AVMF_Header* cache_head;
+    struct AVMF_Region_Header* next;
+} avmf_region_header_t;
+
 typedef enum {
     MALLOC_TYPE_UNKNOWN = 0,
     MALLOC_TYPE_USER,

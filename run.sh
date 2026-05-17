@@ -2,6 +2,7 @@
 
 # AOS++/AOS-1.0 Run script for ease of use
 
+
 show_help() {
     cat << EOF
     Usage: ./run.sh [OPTIONS]
@@ -14,6 +15,8 @@ show_help() {
     CPU Options:
         -cpu=<type>, --cpu-type=<type> Select CPU type -
                                         intel | amd | intel-server | amd-server
+        -arch=<arch>, --architecture=<arch> Select CPU Architecture -
+                                        x86_64 | ia32 | aarch64
 
     GPU Options:
         -gpu, --gpu-type=<type>        Select GPU -
@@ -29,9 +32,6 @@ show_help() {
     Memory:
         -ram=<size, --max-ram=<size>   Set RAM (e.g., 512M, 2G)
 
-    Firmware:
-        -uefi, --uefi                  Enable UEFI (OVMF)
-
     Logging:
         -log=a,b,c, --logs=a,b,c       QEMU debug logs (comma-separated)
 
@@ -41,9 +41,14 @@ show_help() {
     Networking:
         -web, --internet               Enable user-mode networking
 
+    Firmware:
+        -uefi, --uefi                  Enable UEFI (OVMF)
+
     Other:
         -er, --enable-reboot           Allow rebooting
         -h, --help                     Show this help message
+        -ser=<out>, --serial=<out>     Redirect Serial Output to either 'file:/path/to/file' or 'stdio'
+        -fout=<file>, --file-out        Redirect all output to a file
 
     Examples:
     ./run.sh --high-end --cpu=amd --ram=2G --gpu=virtio --web
@@ -52,7 +57,6 @@ EOF
 }
 
 mode=1
-uefi=0
 cpu_type="intel"
 gpu_type="virtio"
 gpu_accel=0
@@ -63,6 +67,10 @@ logs="guest_errors"
 nographics=0
 internet=0
 enable_reboot=0
+arch="x86_64"
+serial="stdio"
+file_out="none"
+uefi=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -77,9 +85,12 @@ while [[ $# -gt 0 ]]; do
         --max-ram=*|-ram=*) ram="${1#*=}" ;;
         --logs=*|-log=*) logs="${1#*=}" ;;
         --use-uefi|-uefi) uefi=1 ;;
+        --architecture=*|-arch=*) arch="${1#*=}" ;;
         --nographics|-nog) nographics=1 ;;
         --internet|-web) internet=1 ;;
         --enable-reboot|-er) enable_reboot=1 ;;
+        --serial=*|-ser=*) serial="${1#*=}" ;;
+        --file-out=*|-fout=*) file_out="${1#*=}" ;;
         --help|-h)
             show_help
             exit 0
@@ -89,6 +100,18 @@ while [[ $# -gt 0 ]]; do
     esac
     shift
 done
+
+QEMU="qemu-system-x86_64"
+
+if [[ "$arch" == "x86_64" ]]; then
+    QEMU="qemu-system-x86_64"
+elif [[ "$arch" == "ia32" ]]; then
+    QEMU="qemu-system-i386"
+elif [[ "$arch" == "aarch64" ]]; then
+    QEMU="qemu-system-aarch64"
+else
+    QEMU="qemu-system-x86_64"
+fi
 
 get_cpu() {
     local cpu_model=""
@@ -199,6 +222,17 @@ get_extra_options() {
     fi
 }
 
+get_file_options() {
+    case "$file_out" in
+        none)
+            echo ""
+            ;;
+        *)
+            echo "> $file_out 2>&1"
+            ;;
+    esac
+}
+
 append_uefi_bios() {
     if [[ $uefi -eq 1 ]]; then
         echo "-global driver=cfi.pflash01,property=secure,value=on \
@@ -214,14 +248,16 @@ KBD_OPTS="$(get_keyboard)"
 MOUSE_OPTS="$(get_mouse)"
 NET_OPTS="$(get_network)"
 DISPLAY_OPTS="$(get_display)"
-UEFI_OPTS="$(append_uefi_bios)"
 LOG_OPTS="-d $logs"
 EXTRA_OPTS="$(get_extra_options)"
+SERIAL_OPTS="-serial $serial"
+FILE_OPTS="$(get_file_options)"
+UEFI_OPTS="$(append_uefi_bios)"
 
 case "$mode" in
     2) # KVM
-        qemu-system-x86_64 \
-            -m "$ram" \
+        eval "$QEMU \
+            -m $ram \
             -M q35,accel=kvm \
             $CPU_OPTS \
             $SMP_OPTS \
@@ -234,46 +270,47 @@ case "$mode" in
             $MOUSE_OPTS \
             $NET_OPTS \
             $DISPLAY_OPTS \
-            -serial stdio \
+            $SERIAL_OPTS \
             $LOG_OPTS \
-            -no-shutdown \
-            $UEFI_OPTS
+            $EXTRA_OPTS \
+            $UEFI_OPTS $FILE_OPTS"
         ;;
 
     1) # High-End (non-KVM)
-        qemu-system-x86_64 \
-            -m "$ram" \
+        eval "$QEMU \
+            -m $ram \
             -M q35 \
             $CPU_OPTS \
             $SMP_OPTS \
             -drive file=Bin/disk.pbfs,format=raw,if=none,id=drive0 \
             -device ahci,id=ahci \
             -device ide-hd,bus=ahci.0,drive=drive0 \
-            -device intel-iommu \
             $GPU_OPTS \
             $KBD_OPTS \
             $MOUSE_OPTS \
             $NET_OPTS \
             $DISPLAY_OPTS \
-            -serial stdio \
+            $SERIAL_OPTS \
             $LOG_OPTS \
             $EXTRA_OPTS \
-            $UEFI_OPTS
+            $UEFI_OPTS $FILE_OPTS"
         ;;
 
     0) # Low-End
-        qemu-system-x86_64 \
-            -m "$ram" \
+        eval "$QEMU \
+            -m $ram \
+            $CPU_OPTS \
+            $SMP_OPTS \
             -hda Bin/disk.pbfs \
             $GPU_OPTS \
             $KBD_OPTS \
             $MOUSE_OPTS \
             $NET_OPTS \
             $DISPLAY_OPTS \
-            -serial stdio \
+            $SERIAL_OPTS \
             $LOG_OPTS \
-            -no-shutdown -no-reboot \
-            $UEFI_OPTS
+            $EXTRA_OPTS \
+            $UEFI_OPTS $FILE_OPTS"
         ;;
 
     *)
