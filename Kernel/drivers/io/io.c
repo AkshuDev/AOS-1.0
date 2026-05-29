@@ -476,6 +476,7 @@ void vmem_scroll_up(struct VMemDesign* design, uint32_t top, uint32_t bottom, ui
 // ATA Commands
 #define ATA_CMD_READ_PIO_EXT 0x24 // LBA48 Read
 #define ATA_CMD_WRITE_PIO_EXT 0x34 // LBA48 Write
+#define ATA_CMD_IDENTIFY 0xEC // Identiify
 #define ATA_CMD_FLUSH_EXT 0xEA // LBA48 Flush
 
 // ATA Ports
@@ -512,6 +513,82 @@ static inline void _ata_wait_ready(uint16_t io_base) {
         if (!(status & ATA_SR_BSY) && (status & ATA_SR_DRDY))
             return; // Ready!
     }
+}
+
+int ata_exists(void) {
+	uint64_t rflags = spin_lock_irqsave(&ata_lock);
+	int exists = asm_inb(ATA_PRIMARY_STATUS) == 0xFF ? 0 : 1;
+	spin_unlock_irqrestore(&ata_lock, rflags);
+	return exists;
+}
+
+int ata_identify_device(uint8_t drive, ata_identity_t* out_info) {
+    uint16_t buffer[256];
+    uint64_t rflags = spin_lock_irqsave(&ata_lock);
+
+    uint8_t bus = ((drive - 0x80) >> 1) & 1;
+    uint8_t device = (drive & 1); // 0=master, 1=slave
+    uint16_t io = ata_buses[bus].io_base;
+
+    asm_outb(io + 6, 0xA0 | (device << 4));
+    
+    for(int i = 0; i < 4; i++) asm_inb(io + 7);
+
+    asm_outb(io + 2, 0);
+    asm_outb(io + 3, 0);
+    asm_outb(io + 4, 0);
+    asm_outb(io + 5, 0);
+
+    asm_outb(io + 7, ATA_CMD_IDENTIFY);
+    
+    uint8_t status = asm_inb(io + 7);
+    if (status == 0) {
+        spin_unlock_irqrestore(&ata_lock, rflags);
+        return 0;
+    }
+
+    _ata_wait_ready(io);
+    status = asm_inb(io + 7);
+
+    if (status & ATA_SR_ERR) {
+        spin_unlock_irqrestore(&ata_lock, rflags);
+        return 0;
+    }
+
+    while (!(asm_inb(io + 7) & ATA_SR_DRQ));
+    asm_insw(io, buffer, 256);
+
+    out_info->block_size = 512;
+
+    for (int i = 0; i < 20; i++) {
+        out_info->model[i * 2] = (char)(buffer[27 + i] >> 8);
+        out_info->model[i * 2 + 1] = (char)(buffer[27 + i] & 0xFF);
+    }
+    out_info->model[40] = '\0';
+
+    for (int i = 0; i < 10; i++) {
+        out_info->serial[i * 2] = (char)(buffer[10 + i] >> 8);
+        out_info->serial[i * 2 + 1] = (char)(buffer[10 + i] & 0xFF);
+    }
+    out_info->serial[20] = '\0';
+
+    for (int i = 39; i >= 0 && out_info->model[i] == ' '; i--) out_info->model[i] = '\0';
+    for (int i = 19; i >= 0 && out_info->serial[i] == ' '; i--) out_info->serial[i] = '\0';
+
+    uint32_t lba28_sectors = *((uint32_t*)&buffer[60]);
+    uint64_t lba48_sectors = *((uint64_t*)&buffer[100]);
+    uint16_t lba48_supported = buffer[83];
+
+    if ((lba48_supported & (1 << 10)) && lba48_sectors > 0) {
+        out_info->block_count = lba48_sectors;
+        out_info->supports_lba48 = 1;
+    } else {
+        out_info->block_count = lba28_sectors;
+        out_info->supports_lba48 = 0;
+    }
+
+    spin_unlock_irqrestore(&ata_lock, rflags);
+    return 1;
 }
 
 int ata_read_sectors(struct ATA_DP* dp, void* buffer, uint8_t drive) {

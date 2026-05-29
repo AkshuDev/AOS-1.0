@@ -38,6 +38,14 @@ struct ATA_DP {
     uint16_t count;
 };
 
+typedef struct {
+    uint64_t block_count;
+    uint32_t block_size;
+    char model[41];
+    char serial[21];
+    int supports_lba48;
+} ata_identity_t;
+
 void serial_init(void) __attribute__((used));
 void serial_printc(char c) __attribute__((used));
 void serial_print(const char* str) __attribute__((used));
@@ -52,6 +60,8 @@ void vmem_print(struct VMemDesign* design, const char* str) __attribute__((used)
 void vmem_printf(struct VMemDesign* design, const char* fmt, ...) __attribute__((used));
 void vmem_scroll_up(struct VMemDesign* design, uint32_t top, uint32_t bottom, uint32_t width) __attribute__((used));
 
+int ata_exists(void) __attribute__((used));
+int ata_identify_device(uint8_t drive, ata_identity_t* out_info) __attribute__((used));
 int ata_read_sectors(struct ATA_DP* dp, void* buffer, uint8_t drive) __attribute__((used));
 int ata_write_sectors(struct ATA_DP* dp, const void* buffer, uint8_t drive) __attribute__((used));
 

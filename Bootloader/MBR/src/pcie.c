@@ -59,7 +59,7 @@ uint32_t pcie_read(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
 }
 
 int pcie_find(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint16_t target_vendor, uint8_t use_vendor) {
-    for (uint8_t b = 0; b < PCI_MAX_BUS; b++) {
+    for (uint16_t b = 0; b < PCI_MAX_BUS; b++) {
         for (uint8_t s = 0; s < PCI_MAX_SLOT; s++) {
             for (uint8_t f = 0; f < PCI_MAX_FUNC; f++) {
                 uint32_t data = pcie_read(b, s, f, 0);
@@ -82,7 +82,7 @@ int pcie_find(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_
 
 int pcie_find_ex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint8_t target_subclass, uint8_t target_progifclass, uint16_t target_vendor, uint8_t use_vendor) {
     // Pci find Extended
-    for (uint8_t b = 0; b < PCI_MAX_BUS; b++) {
+    for (uint16_t b = 0; b < PCI_MAX_BUS; b++) {
         for (uint8_t s = 0; s < PCI_MAX_SLOT; s++) {
             for (uint8_t f = 0; f < PCI_MAX_FUNC; f++) {
                 uint32_t data = pcie_read(b, s, f, 0);
@@ -111,7 +111,7 @@ int pcie_find_ex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uin
 
 int pcie_find_rex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint8_t target_subclass, uint8_t target_progifclass, uint8_t target_revision, uint16_t target_vendor, uint8_t use_vendor) {
     // Pci find Revision-Extended
-    for (uint8_t b = 0; b < PCI_MAX_BUS; b++) {
+    for (uint16_t b = 0; b < PCI_MAX_BUS; b++) {
         for (uint8_t s = 0; s < PCI_MAX_SLOT; s++) {
             for (uint8_t f = 0; f < PCI_MAX_FUNC; f++) {
                 uint32_t data = pcie_read(b, s, f, 0);

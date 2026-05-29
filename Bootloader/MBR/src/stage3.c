@@ -308,8 +308,46 @@ uint64_t read_tsc(void) {
     return ((uint64_t)high << 32) | low;
 }
 
+int ata_read(int port, uint64_t lba, uint32_t count, void *buffer) {
+	if (count > 0xFFFF) {
+		return 0;
+	}
+	struct ATA_DP dp = {
+		.count = count,
+		.lba = lba
+	};
+	return ata_read_sectors(&dp, buffer, (uint8_t)port);
+}
+
+int ata_write(int port, uint64_t lba, uint32_t count, void *buffer) {
+	if (count > 0xFFFF) {
+		return 0;
+	}
+	struct ATA_DP dp = {
+		.count = count,
+		.lba = lba
+	};
+	return ata_write_sectors(&dp, buffer, (uint8_t)port);
+}
+
+int ata_flush(int port_id) {
+	return 1; // ata write already ensures flush
+}
+
 void stage3(void) __attribute__((section(".entry"), used)); 
 void stage3(void) {
+	// Enable SSE
+    uint64_t cr;
+    asm volatile("mov %%cr0, %0" : "=r"(cr));
+    cr &= ~(1 << 2); // Clear EM (Emulation) bit
+    cr |= (1 << 1); // Set MP (Monitor Coproccessor) bit
+    asm volatile("mov %0, %%cr0" : : "r"(cr));
+    cr = 0;
+    asm volatile("mov %%cr4, %0" : "=r"(cr));
+    cr |= (1 << 9); // Set OSFXSR (FXSAVE/FXRSTOR support)
+    cr |= (1 << 10); // Set OSXMMEXCPT (Unmasked Exception support)
+    asm volatile("mov %0, %%cr4" :: "r"(cr));
+	
     uint32_t eax, ebx, ecx, edx;
     eax = 0x80000001;
     asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
@@ -393,6 +431,8 @@ void stage3(void) {
 
     struct pbfs_mount mnt = {0};
 
+	vmem_clear_screen(&cursor);
+
     if (get_available_drives(&cur_drive) == 1) {
         if (cur_drive.active != 1) {
             if (cur_drive.init != NULL) cur_drive.init(NULL);
@@ -405,22 +445,39 @@ void stage3(void) {
     }
 
     if (found_drive != 1) {
-        vmem_print(&cursor, "No supported drive found!\n");
-        for (;;) asm volatile("hlt");
-    } else {
-        vmem_print(&cursor, "Initializing PBFS...\n");
-        cur_drive.block_dev.read_block = read_blk;
-        cur_drive.block_dev.write_block = write_blk;
-        cur_drive.block_dev.read = read_f;
-        cur_drive.block_dev.write = write_f;
-        cur_drive.block_dev.flush = flush_f;
-        pbfs_init(&funcs);
-        int out = pbfs_mount(&cur_drive.block_dev, &mnt);
-        if (out != PBFS_RES_SUCCESS) {
-            vmem_printf(&cursor, "Failed to mount, Error:\n\t%s\n", pbfs_get_err_str(out));
-            for (;;) asm volatile("hlt");
-        }
+		serial_print("Trying to find Legacy-ATA...\n");
+		if (ata_exists() == 0) {
+        	vmem_print(&cursor, "No supported drive found!\n");
+        	for (;;) asm volatile("hlt");
+		} else {
+			found_drive = 1;
+			cur_drive.read_blk = ata_read;
+			cur_drive.write_blk = ata_write;
+			cur_drive.flush = ata_flush;
+			cur_drive.cur_port = boot_drive;
+			ata_identity_t iden = {0};
+			if (ata_identify_device(boot_drive, &iden) != 1) {
+				vmem_print(&cursor, "Failed to identify Legacy-ATA Drive\n");
+        		for (;;) asm volatile("hlt");
+			}
+
+			cur_drive.block_dev.block_count = iden.block_count;
+			cur_drive.block_dev.block_size = iden.block_size;
+		}
     }
+
+	vmem_print(&cursor, "Initializing PBFS...\n");
+	cur_drive.block_dev.read_block = read_blk;
+	cur_drive.block_dev.write_block = write_blk;
+	cur_drive.block_dev.read = read_f;
+	cur_drive.block_dev.write = write_f;
+	cur_drive.block_dev.flush = flush_f;
+	pbfs_init(&funcs);
+	int out = pbfs_mount(&cur_drive.block_dev, &mnt);
+	if (out != PBFS_RES_SUCCESS) {
+		vmem_printf(&cursor, "Failed to mount, Error:\n\t%s\n", pbfs_get_err_str(out));
+		for (;;) asm volatile("hlt");
+	}
 
     PBFS_Kernel_Entry os_entries[20];
     uint64_t entry_count = 0;
