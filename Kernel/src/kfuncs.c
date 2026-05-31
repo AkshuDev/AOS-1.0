@@ -7,6 +7,8 @@
 #include <inc/core/acpi.h>
 #include <inc/core/kfuncs.h>
 
+#include <inc/drivers/io/io.h>
+
 #include <inc/mm/pager.h>
 #include <inc/mm/avmf.h>
 
@@ -198,6 +200,20 @@ void kdelay(uint32_t ms) {
     }
 }
 
+uint64_t kget_ms_passed(void) {
+    if (tsc_ticks_per_ms == 0) return 0;
+
+    return (uint64_t)(ktimer_read_tsc() / tsc_ticks_per_ms);
+}
+
+// Extras
+
+uint8_t kcompute_checksum(const uint8_t* data, uint32_t len) {
+    uint32_t sum = 0;
+    for (uint32_t i = 0; i < len; i++) sum += data[i];
+    return (uint8_t)(sum & 0xFF);
+}
+
 #define ALLOC_HDR_SIG "AOS_ALLOC\0"
 #define ALLOC_HDR_SIG_LEN 10
 
@@ -259,4 +275,29 @@ void* krealloc(void* ptr, size_t new_size) {
     memcpy(out, ptr, hdr->size);
     kfree(ptr);
     return out;
+}
+
+// System info
+static aos_sysinfo_t* system_info;
+static uint8_t sysinfo_checked = 0;
+
+aos_sysinfo_t* kget_sysinfo(void) {
+	if (sysinfo_checked == 0) {
+		aos_sysinfo_t* sinfo = (aos_sysinfo_t*)(AOS_SYS_INFO_ADDR);
+		
+		uint8_t checksum = sinfo->checksum;
+		sinfo->checksum = 0;
+		uint8_t checksum_comp = kcompute_checksum((const uint8_t*)sinfo, sizeof(aos_sysinfo_t));
+		sinfo->checksum = checksum;
+
+		uint8_t out = (uint8_t)(checksum_comp == checksum);
+
+		serial_printf("[KFUNCS] Computed Checksum for SystemInfo = %d\n\tProvided Checksum = %d\n", checksum_comp, checksum);
+
+		if (!out) system_info = NULL;
+		else system_info = sinfo;
+
+		sysinfo_checked = 1;
+	}
+	return system_info;
 }

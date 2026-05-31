@@ -33,7 +33,11 @@ static uint8_t is_ascii(char c) {
 }
 
 static void vshell_cmd_sysinfo(void) {
-    aos_sysinfo_t* SystemInfo = (aos_sysinfo_t*)AOS_SYS_INFO_LOC;
+    aos_sysinfo_t* SystemInfo = kget_sysinfo();
+	if (!SystemInfo) {
+		pyrion_builtin_print(vshell_ctx, "No Information Available....\n");
+		return;
+	}
 
     pyrion_builtin_print(vshell_ctx, "Boot Information:\n");
     pyrion_builtin_printf(vshell_ctx, "  Boot Drive: %d\n  Boot Mode: %d\n", SystemInfo->boot_drive, SystemInfo->boot_mode);

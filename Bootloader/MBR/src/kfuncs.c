@@ -7,6 +7,8 @@
 #include <inc/core/acpi.h>
 #include <inc/core/kfuncs.h>
 
+#include <inc/drivers/io/io.h>
+
 #include <inc/mm/pager.h>
 #include <inc/mm/avmf.h>
 
@@ -79,7 +81,9 @@ char* strcpy(char* dest, char* src) {
 }
 
 char* strncpy(char* dest, char* src, size_t n) {
-    return (char*)memcpy(dest, src, n);
+    size_t n1 = strlen(src);
+    size_t n2 = n1 > n ? n : n1;
+    return (char*)memcpy(dest, src, n2);
 }
 
 uint32_t str_to_uint(const char* str) {
@@ -129,7 +133,9 @@ uint64_t spin_lock_irqsave(spinlock_t* lock) {
         "memory"
     );
     while (__sync_lock_test_and_set(lock, 1)) {
-        while (*lock);
+        while (*lock) {
+            asm volatile("pause"); // "Performance is Key" - Some random dude sitting on a chair programming this
+        }
     }
 
     return flags;
@@ -192,4 +198,10 @@ void kdelay(uint32_t ms) {
     while ((ktimer_read_tsc() - start) < ticks_needed) {
         asm volatile("pause");
     }
+}
+
+uint64_t kget_ms_passed(void) {
+    if (tsc_ticks_per_ms == 0) return 0;
+
+    return (uint64_t)(ktimer_read_tsc() / tsc_ticks_per_ms);
 }

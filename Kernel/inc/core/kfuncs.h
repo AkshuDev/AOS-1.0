@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 #include <stddef.h>
+#include <system.h>
 
 typedef volatile int spinlock_t;
 
@@ -22,10 +23,16 @@ uint64_t spin_lock_irqsave(spinlock_t* lock) __attribute__((used));
 void spin_unlock_irqrestore(spinlock_t* lock, uint64_t flags) __attribute__((used));
 
 void ktimer_calibrate(void) __attribute__((used));
+uint64_t kget_ms_passed(void) __attribute__((used));
 void kdelay(uint32_t ms) __attribute__((used));
+
+
+uint8_t kcompute_checksum(const uint8_t* data, uint32_t len) __attribute__((used));
 
 void* kmalloc(size_t size) __attribute__((used));
 void klink(void* ptr1, void* ptr2) __attribute__((used));
 void kfree(void* ptr) __attribute__((used));
 void* kcalloc(size_t nmemb, size_t size) __attribute__((used));
 void* krealloc(void* ptr, size_t new_size) __attribute__((used));
+
+aos_sysinfo_t* kget_sysinfo(void) __attribute__((used));

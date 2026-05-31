@@ -171,7 +171,7 @@ init_pm64:
     xor r14, r14
     xor r15, r15
 
-    mov rsp, 0x08000000 ; 128MB
+    mov rsp, 0x4000 ; 16KB
     and rsp, -16
     mov rbp, rsp
 

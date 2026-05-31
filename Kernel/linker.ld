@@ -27,9 +27,9 @@ SECTIONS
         __bss_start = .;
         *(.bss*)
         . = ALIGN(16);
-        stack_bottom = .;
-        . += 0x100000; /* 256KB stack */
-        stack_top = .;
+        stack_bottom__ = .;
+        . += 0x10000; /* 64KB stack */
+        stack_top__ = .;
         __bss_end = .;
     }
 

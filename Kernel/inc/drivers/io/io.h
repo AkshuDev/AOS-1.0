@@ -44,6 +44,7 @@ typedef struct {
     char model[41];
     char serial[21];
     int supports_lba48;
+	uint16_t pad;
 } ata_identity_t;
 
 void serial_init(void) __attribute__((used));

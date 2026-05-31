@@ -506,9 +506,9 @@ static const ata_bus_t ata_buses[2] = {
 
 static inline void _ata_wait_ready(uint16_t io_base) {
     uint8_t status;
-    int timeout = 100000; // ~100ms depending on CPU speed
+    uint64_t timeout = kget_ms_passed();
 
-    while (timeout--) {
+    while (kget_ms_passed() - timeout < 1000) {
         status = asm_inb(io_base + 7);
         if (!(status & ATA_SR_BSY) && (status & ATA_SR_DRDY))
             return; // Ready!
@@ -555,7 +555,13 @@ int ata_identify_device(uint8_t drive, ata_identity_t* out_info) {
         return 0;
     }
 
-    while (!(asm_inb(io + 7) & ATA_SR_DRQ));
+	uint64_t timeout = kget_ms_passed();
+	while (!(asm_inb(io + 7) & ATA_SR_DRQ)) {
+		if (kget_ms_passed() - timeout >= 1000) {
+			spin_unlock_irqrestore(&ata_lock, rflags);
+			return -1;
+		}
+	}
     asm_insw(io, buffer, 256);
 
     out_info->block_size = 512;
@@ -631,7 +637,13 @@ int ata_read_sectors(struct ATA_DP* dp, void* buffer, uint8_t drive) {
         }
 
         // Wait for Data Request Ready.
-        while (!(asm_inb(io + 7) & ATA_SR_DRQ));
+		uint64_t timeout = kget_ms_passed();
+        while (!(asm_inb(io + 7) & ATA_SR_DRQ)) {
+			if (kget_ms_passed() - timeout >= 1000) {
+				spin_unlock_irqrestore(&ata_lock, rflags);
+				return -1;
+			}
+		}
 
         // Read 256 words (512 bytes) into the buffer.
         asm_insw(io, (uint8_t*)buffer + (uint32_t)i * 512, 256);
@@ -677,7 +689,13 @@ int ata_write_sectors(struct ATA_DP* dp, const void* buffer, uint8_t drive) {
             return -1;
         }
 
-        while (!(asm_inb(io + 7) & ATA_SR_DRQ));
+		uint64_t timeout = kget_ms_passed();
+        while (!(asm_inb(io + 7) & ATA_SR_DRQ)) {
+			if (kget_ms_passed() - timeout >= 1000) {
+				spin_unlock_irqrestore(&ata_lock, rflags);
+				return -1;
+			}
+		}
 
         // Write 256 words (512 bytes) from the buffer.
         asm_outsw(io, (uint8_t*)buffer + (uint32_t)i * 512, 256);

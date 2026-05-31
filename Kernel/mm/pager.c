@@ -103,6 +103,8 @@ void pager_init(void) {
     uint64_t base_phys[128];
     uint64_t limit_phys[128];
     uint64_t phys_idx = 0;
+	extern uint8_t __bss_end; // from linker script
+	uintptr_t bss_end = (uintptr_t)&__bss_end;
     for (int i = 0; i < e820->entry_count; i++) {
         struct bs1_e820_entry* e = &e820->entries[i];
         uint64_t end_addr = e->base + e->len;
@@ -111,10 +113,10 @@ void pager_init(void) {
         if (e->type == E820_TYPE_RAM) {
             serial_printf("E820: %p - %p (%llu MB) (Type RAM)\n", e->base, end_addr, e->len / 1024 / 1024);
             uint64_t start = e->base;
-            // Don't use the first 64MB!
-            if (start < 0x100000 * 64) {
-                if (e->len <= (0x200000 - start)) continue; // Too small
-                start = 0x200000;
+            // Don't use the first <Kernel End>MB!
+            if (start < bss_end) {
+                if (e->len <= (bss_end - start)) continue; // Too small
+                start = bss_end;
             }
             base_phys[phys_idx] = start;
             limit_phys[phys_idx] = end_addr;
@@ -178,8 +180,8 @@ void pager_init(void) {
         last_map_end = end_addr;
     }
     serial_print("[PAGER] Mapped Direct Map\n");
-    pager_map_range(0x0, 0x0, 0x100000 * 64, PAGE_PRESENT | PAGE_RW); // Identity Map the Kernel (64 MB)
-    serial_print("[PAGER] Mapped Kernel\n");
+    pager_map_range(0x0, 0x0, bss_end, PAGE_PRESENT | PAGE_RW); // Identity Map the Kernel (<Kernel End> MB)
+    serial_printf("[PAGER] Mapped Kernel (0x0-0x%x)\n", bss_end);
 
     pager_load(kernel_pml4);
 

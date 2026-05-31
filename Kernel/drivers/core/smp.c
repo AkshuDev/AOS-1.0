@@ -401,8 +401,8 @@ void smp_init(void) {
         if (ap_boot_flag == 0) {
             send_wakeup_ipi(id, 0x08);
 
-            uint64_t timeout = 0xFFFFFF;
-            while(ap_boot_flag == 0 && timeout != 0) { asm volatile("pause"); timeout--; }
+            uint64_t timeout = kget_ms_passed();
+            while(ap_boot_flag == 0 && kget_ms_passed() - timeout < 1000) { asm volatile("pause");}
         }
 
         if (ap_boot_flag == 0) {

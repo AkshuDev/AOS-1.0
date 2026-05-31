@@ -101,7 +101,7 @@ uint8_t compute_checksum(const uint8_t* data, uint32_t len) {
     return (uint8_t)(sum & 0xFF);
 }
 
-static uint64_t free_ptr = 0x08200000; // 130MB
+static uint64_t free_ptr = 0x8000; // 32KB
 static drive_device_t cur_drive = {0};
 static uint8_t found_drive = 0;
 
@@ -455,7 +455,7 @@ void stage3(void) {
 			cur_drive.write_blk = ata_write;
 			cur_drive.flush = ata_flush;
 			cur_drive.cur_port = boot_drive;
-			ata_identity_t iden = {0};
+			ata_identity_t iden;
 			if (ata_identify_device(boot_drive, &iden) != 1) {
 				vmem_print(&cursor, "Failed to identify Legacy-ATA Drive\n");
         		for (;;) asm volatile("hlt");
@@ -495,7 +495,7 @@ void stage3(void) {
     int scroll_offset = 0;
     int running = 1;
     int ambrc_entry = ambrc->display.show_settings_at_top ? 0 : entry_count;
-    int timeout = 0;
+    uint64_t timeout = 0;
     uint64_t total_items = entry_count + 1;
 
     const int VIEWPORT_HEIGHT = (IO_VMEM_MAX_ROWS - 6);
@@ -663,7 +663,7 @@ void stage3(void) {
     }
     vmem_printf(&cursor, "Loading %s...\n", os_entries[final_kernel_idx].name);
 
-    if (!cur_drive.read_blk(cur_drive.cur_port, uint128_to_u64(os_entries[final_kernel_idx].lba), uint128_to_u32(os_entries[final_kernel_idx].count), (void*)ambrc->kernel_info[final_kernel_idx].load_addr)) {
+    if (!read_f(&cur_drive.block_dev, uint128_to_u64(os_entries[final_kernel_idx].lba), uint128_to_u32(os_entries[final_kernel_idx].count), (void*)ambrc->kernel_info[final_kernel_idx].load_addr)) {
         vmem_print(&cursor, "Failed to read kernel, Disk error!\n");
         for (;;) asm volatile("hlt");
     }

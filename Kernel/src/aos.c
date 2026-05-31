@@ -65,10 +65,12 @@ static int bd_write(struct block_device* dev, uint64_t lba, uint64_t count, cons
 static int bd_flush(struct block_device* dev);
 static void make_path(char* out, const char* cwd, const char* in);
 
-extern uint64_t stack_top; // From linker script
+extern uint8_t stack_top__; // From linker script
+static uintptr_t stack_top = (uintptr_t)&stack_top__;
 
 void kernel_main(void) {
     asm volatile (
+		"cld\n\t"
         "mov %0, %%rsp\n\t"
         "mov %%rsp, %%rbp"
         :
@@ -183,11 +185,13 @@ void aos_shell_pm(void) {
 
     // Read sysinfo
     uint8_t boot_drive = *AOS_BOOT_INFO_LOC;
-    aos_sysinfo_t SystemInfo = *AOS_SYS_INFO_LOC;
-    vmem_print(&vmem_design, "SystemInfo:\n");
-    vmem_printf(&vmem_design, "Boot Drive: 0x%llx (%llu)\nBoot Mode: 0x%llx (%llu)\n", (uint64_t)SystemInfo.boot_drive, (uint64_t)SystemInfo.boot_drive, (uint64_t)SystemInfo.boot_mode, (uint64_t)SystemInfo.boot_mode);
-    vmem_printf(&vmem_design, "CPU Vendor: %s\n", (uintptr_t)&SystemInfo.cpu_vendor);
-    lines += 7;
+    aos_sysinfo_t* SystemInfo = kget_sysinfo();
+	if (SystemInfo) {
+		vmem_print(&vmem_design, "SystemInfo:\n");
+		vmem_printf(&vmem_design, "Boot Drive: 0x%llx (%llu)\nBoot Mode: 0x%llx (%llu)\n", (uint64_t)SystemInfo->boot_drive, (uint64_t)SystemInfo->boot_drive, (uint64_t)SystemInfo->boot_mode, (uint64_t)SystemInfo->boot_mode);
+		vmem_printf(&vmem_design, "CPU Vendor: %s\n", (uintptr_t)&SystemInfo->cpu_vendor);
+		lines += 7;
+	}
 
     while (1) {
         vmem_printf(&vmem_design, "AOS: %s $> ", g_pbfs_cwd);

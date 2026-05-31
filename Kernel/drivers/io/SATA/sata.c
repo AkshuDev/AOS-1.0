@@ -29,11 +29,14 @@ static struct sata_port_state port_states[32] = {0};
 static uint8_t ports_available[32] = {0};
 
 static int sata_busy_wait(struct sata_hba_port* port) {
-    int timeout = 1000000;
-    while ((port->tfd & (0x80 | 0x08)) && timeout--)
+    uint64_t timeout = kget_ms_passed();
+	uint64_t ctime = kget_ms_passed();
+    while ((port->tfd & (0x80 | 0x08)) && ctime - timeout < 1000) { // 1 second accurate timeout
         asm volatile("pause");
+		ctime = kget_ms_passed();
+	}
 
-    if (timeout == 0) {
+    if (ctime - timeout >= 1000) {
         serial_print("[AHCI] Port stuck busy\n");
         return 0;
     }
@@ -43,13 +46,14 @@ static int sata_busy_wait(struct sata_hba_port* port) {
 static int sata_port_stop(struct sata_hba_port* port) {
     port->cmd &= ~((1 << 0) | (1 << 4)); // clear ST and FRE
 
+	uint64_t timeout = kget_ms_passed();
+
     // Wait until CR (15) and FR (14) clear
-    int timeout = 1000000;
-    while ((port->cmd & (1 << 15)) && timeout--)
+    while ((port->cmd & (1 << 15)) && kget_ms_passed() - timeout < 1000)
         asm volatile("pause");
 
-    timeout = 1000000;
-    while ((port->cmd & (1 << 14)) && timeout--)
+    timeout = kget_ms_passed();;
+    while ((port->cmd & (1 << 14)) && kget_ms_passed() - timeout < 1000)
         asm volatile("pause");
 
     return 0;
@@ -211,9 +215,9 @@ static int sata_send_cmd(struct sata_port_state* state, uint8_t write, uint64_t 
     fis->counth = (count >> 8) & 0xFF;
 
     port->ci = 1 << slot;
-    int timeout = 1000000;
+    uint64_t timeout = kget_ms_passed();;
     while (1) {
-        if (timeout == 0) break;
+        if (kget_ms_passed() - timeout > 1000) break;
         if (!(port->ci & (1 << slot)))
             break;
 
@@ -222,14 +226,12 @@ static int sata_send_cmd(struct sata_port_state* state, uint8_t write, uint64_t 
             avmf_free((uint64_t)virt);
             return 0;
         }
-
-        timeout--;
     }
 
     if (!write) memcpy(buffer, virt, 512);
     avmf_free((uint64_t)virt);
 
-    if (timeout == 0) {
+    if (kget_ms_passed() - timeout > 1000) {
         serial_print("[AHCI] Disk/Device Error (timeout)\n");
         return 0;
     }
@@ -294,9 +296,9 @@ static int sata_issue_cmd(struct sata_port_state* state, int write, uint64_t lba
     fis->counth = (count >> 8) & 0xFF;
 
     port->ci = 1 << slot;
-    int timeout = 1000000;
+    uint64_t timeout = kget_ms_passed();
     while (1) {
-        if (timeout == 0) break;
+        if (kget_ms_passed() - timeout > 1000) break;
         if (!(port->ci & (1 << slot)))
             break;
 
@@ -305,14 +307,12 @@ static int sata_issue_cmd(struct sata_port_state* state, int write, uint64_t lba
             avmf_free((uint64_t)virt);
             return 0;
         }
-
-        timeout--;
     }
 
     if (!write) memcpy(buffer, virt, 512);
     avmf_free((uint64_t)virt);
 
-    if (timeout == 0) {
+    if (kget_ms_passed() - timeout > 1000) {
         serial_print("[AHCI] Disk/Device Error (timeout)\n");
         return 0;
     }
@@ -380,8 +380,8 @@ int sata_init(struct AOS_Module* m) {
             // Re-enable FIS receiving
             port->cmd |= 0x0010; // Set FRE (bit 4)
 
-            int timeout = 1000; 
-            while (timeout-- > 0) {
+            uint64_t timeout = kget_ms_passed(); 
+            while (kget_ms_passed() - timeout < 1000) {
                 // Give the FIS a tiny bit of time to arrive and update the signature
                 kdelay(10); 
                 if (port->sig != 0xFFFFFFFF) break;
