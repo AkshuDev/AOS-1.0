@@ -104,7 +104,7 @@ void pager_init(void) {
     uint64_t limit_phys[128];
     uint64_t phys_idx = 0;
 	extern uint8_t __bss_end; // from linker script
-	uintptr_t bss_end = (uintptr_t)&__bss_end;
+	uintptr_t bss_end = (uintptr_t)((uintptr_t)AOS_KERNEL_ADDR + (uintptr_t)&__bss_end);
     for (int i = 0; i < e820->entry_count; i++) {
         struct bs1_e820_entry* e = &e820->entries[i];
         uint64_t end_addr = e->base + e->len;
