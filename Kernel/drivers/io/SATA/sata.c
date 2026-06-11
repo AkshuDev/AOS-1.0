@@ -241,7 +241,7 @@ static int sata_send_cmd(struct sata_port_state* state, uint8_t write, uint64_t 
 }
 
 static int sata_issue_cmd(struct sata_port_state* state, int write, uint64_t lba, uint32_t count, void* buffer) {
-    serial_print("[AHCI] Sending command...\n");
+    serial_print("[AHCI] Issueing command...\n");
     struct sata_hba_port* port = state->port;
     if (!sata_busy_wait(port))
         return 0;

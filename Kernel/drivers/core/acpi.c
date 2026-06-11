@@ -1,12 +1,12 @@
-#include "inc/core/idt.h"
 #include <asm.h>
-#include <sys/types.h>
 #include <system.h>
+#include <e820.h>
 
 #include <inc/core/acpi.h>
 #include <inc/core/kfuncs.h>
 #include <inc/drivers/io/io.h>
 #include <inc/core/smp.h>
+#include <inc/core/idt.h>
 
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
@@ -118,10 +118,35 @@ static uint8_t acpi_checksum(void* table, uint32_t len) {
 }
 
 static struct acpi_rsdp_descriptor* acpi_find_rsdp(void) {
-    // try ebda first
-    uint16_t ebda_seg = *(uint16_t*)(EBDA_SEG_PTR + AOS_DIRECT_MAP_BASE); // 0x40E holds seg of ebda
+	// Try E820 Map
+	struct bs1_e820* e820 = (struct bs1_e820*)AOS_E820_INFO_ADDR;
+	if (e820->entry_count <= E820_MAX_ENT) {
+		for (int i = 0; i < e820->entry_count; i++) {
+			struct bs1_e820_entry* entry = &e820->entries[i];
+			if (entry->type != E820_TYPE_RESERVED) continue;
+			uint64_t base = entry->base;
+			uint64_t limit = entry->base + entry->len;
+
+			for (uint64_t addr = base; addr < limit; addr += 16) {
+				if (memcmp((char*)addr, "RSD PTR ", 8) == 0) {
+					struct acpi_rsdp_descriptor* rsdp = (struct acpi_rsdp_descriptor*)addr;
+					if (acpi_checksum(rsdp, 20) == 0) {
+						if (rsdp->revision >= 2) {
+							if (acpi_checksum(rsdp, sizeof(struct acpi_rsdp_descriptor_v2)) != 0)
+								return NULL;
+						}
+						return rsdp;
+					}
+				}
+			}
+		}
+	}
+
+	serial_print("[ACPI] Failed to find RSDP within E820 Map, Trying manual!\n");
+    // fallbacks, try ebda first
+    uint16_t ebda_seg = *(uint16_t*)(EBDA_SEG_PTR); // 0x40E holds seg of ebda
     uint32_t ebda = ((uint32_t)ebda_seg) << 4;
-    for (uint64_t addr = (uint64_t)ebda + AOS_DIRECT_MAP_BASE; addr < ebda + 1024 + AOS_DIRECT_MAP_BASE; addr += 16) {
+    for (uint64_t addr = (uint64_t)ebda; addr < ebda + 1024; addr += 16) {
         if (memcmp((char*)addr, "RSD PTR ", 8) == 0) {
             struct acpi_rsdp_descriptor* rsdp = (struct acpi_rsdp_descriptor*)addr;
             if (acpi_checksum(rsdp, 20) == 0) {
@@ -135,7 +160,7 @@ static struct acpi_rsdp_descriptor* acpi_find_rsdp(void) {
     }
 
     // check bios area
-    for (uint64_t addr = 0xE0000 + AOS_DIRECT_MAP_BASE; addr < 0x100000 + AOS_DIRECT_MAP_BASE; addr += 16) {
+    for (uint64_t addr = 0xE0000; addr < 0x100000; addr += 16) {
         if (memcmp((char*)addr, "RSD PTR ", 8) == 0) {
             struct acpi_rsdp_descriptor* rsdp = (struct acpi_rsdp_descriptor*)addr;
             if (acpi_checksum(rsdp, 20) == 0) {

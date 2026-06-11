@@ -153,8 +153,15 @@ void spin_unlock_irqrestore(spinlock_t* lock, uint64_t flags) {
     );
 }
 
+#define BCD_TO_BIN(bcd) (((bcd) & 0x0F) + (((bcd) >> 4) * 10))
+
 static uint64_t tsc_ticks_per_ms = 0;
 static uint8_t rdtscp_supported = 0;
+static uint64_t bootup_timestamp = 0;
+
+static const uint8_t month_days[12] = {
+    31,28,31,30,31,30,31,31,30,31,30,31
+};
 
 static uint64_t ktimer_read_tsc(void) {
     uint32_t low = 0;
@@ -168,6 +175,28 @@ static uint64_t ktimer_read_tsc(void) {
         asm volatile("rdtsc" : "=a"(low), "=d"(high) : : "memory");
     }
     return ((uint64_t)high << 32) | low;
+}
+
+static int is_leap_year(uint32_t year) {
+    return ((year % 4 == 0) && ((year % 100 != 0) || (year % 400 == 0)));
+}
+
+static uint64_t rtc_to_timestamp(uint32_t year, uint32_t month, uint32_t day, uint32_t hour, uint32_t minute, uint32_t second) {
+    uint64_t days = 0;
+
+    // years since 1970
+    for (uint32_t y = 1970; y < year; y++) {
+        days += is_leap(y) ? 366 : 365;
+    }
+
+    // months
+    for (uint32_t m = 1; m < month; m++) {
+        days += month_days[m - 1];
+        if (m == 2 && is_leap(year)) days++;
+    }
+    days += day - 1;
+
+    return days * 86400ULL + hour * 3600ULL + minute * 60ULL + second;
 }
 
 void ktimer_calibrate(void) {
@@ -187,6 +216,37 @@ void ktimer_calibrate(void) {
     tsc_ticks_per_ms = cycles_per_10ms / 10;
     aos_sysinfo_t* sysinfo = (aos_sysinfo_t*)AOS_SYS_INFO_LOC;
     sysinfo->tsc_freq_hz = tsc_ticks_per_ms * 1000;
+
+	// Wait for RTC to finish updating
+	uint64_t timeout = kget_ms_passed();
+	for (; kget_ms_passed() - timeout < 10000;) {
+		asm_outb(0x70, 0x0A);
+		if (!(asm_inb(0x71) & 0x1)) break;
+		asm volatile("pause");
+	}
+
+	// Read CMOS RTC (0x00=s, 0x02=min, 0x04=hrs, 0x07=day, 0x08=month, 0x09=year, 0x32=century)
+	asm_outb(0x70, 0x0B);
+	uint8_t is_bin = (asm_inb(0x71) & 0x04) != 0;
+	asm_outb(0x70, 0x00);
+	uint8_t sec = is_bin ? asm_inb(0x71) : BCD_TO_BIN(asm_inb(0x71));
+	asm_outb(0x70, 0x02);
+	uint8_t min = is_bin ? asm_inb(0x71) : BCD_TO_BIN(asm_inb(0x71));
+	asm_outb(0x70, 0x04);
+	uint8_t hr = is_bin ? asm_inb(0x71) : BCD_TO_BIN(asm_inb(0x71));
+	asm_outb(0x70, 0x07);
+	uint8_t day = is_bin ? asm_inb(0x71) : BCD_TO_BIN(asm_inb(0x71));
+	asm_outb(0x70, 0x08);
+	uint8_t month = is_bin ? asm_inb(0x71) : BCD_TO_BIN(asm_inb(0x71));
+	asm_outb(0x70, 0x09);
+	uint8_t year = is_bin ? asm_inb(0x71) : BCD_TO_BIN(asm_inb(0x71));
+	asm_outb(0x70, 0x32);
+	uint8_t century = is_bin ? asm_inb(0x71) : BCD_TO_BIN(asm_inb(0x71));
+
+	if (century == 0) century = 20;
+
+	uint32_t full_year = century * 100 + year;
+	bootup_timestamp = rtc_to_unix(full_year, month, day, hr, min,sec);
 }
 
 void kdelay(uint32_t ms) {
@@ -204,6 +264,14 @@ uint64_t kget_ms_passed(void) {
     if (tsc_ticks_per_ms == 0) return 0;
 
     return (uint64_t)(ktimer_read_tsc() / tsc_ticks_per_ms);
+}
+
+uint64_t kget_timestamp_seconds(void) {
+	return bootup_timestamp + (kget_ms_passed() / 1000);
+}
+
+uint64_t kget_timestamp_ms(void) {
+	return (bootup_timestamp * 1000) + kget_ms_passed();
 }
 
 // Extras

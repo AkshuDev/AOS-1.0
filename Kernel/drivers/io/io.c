@@ -6,6 +6,15 @@
 #include <inc/core/kfuncs.h>
 #include <inc/drivers/io/io.h>
 
+#include <inc/mm/avmf.h>
+#include <inc/mm/pager.h>
+
+#ifdef PBFS_WDRIVERS
+	#undef PBFS_WDRIVERS
+#endif
+#define PBFS_NDRIVERS
+#include <PBFS/headers/pbfs-fs.h>
+
 #define SERIAL_PORT 0x3F8
 
 static spinlock_t serial_lock;
@@ -17,6 +26,18 @@ static spinlock_t vmemf_lock;
 static spinlock_t vmemc_lock;
 static spinlock_t vmem_cur_lock;
 static spinlock_t ps2_lock;
+
+// Kernel Log
+
+// Log Format->
+// \0EOF\0 Specified end of log
+// Format Per msg = [%OS - %Timestamp] %msg \0END\0 
+
+static char* klog; // 4KB Log
+static char* klog_end;
+static char* klog_pos;
+static uint8_t klog_present;
+static uint8_t klog_msg_started;
 
 // Returns n / d
 static uint64_t udiv64(uint64_t n, uint64_t d) {
@@ -43,6 +64,37 @@ static uint64_t umod64(uint64_t n, uint64_t d) {
     return n;
 }
 
+static uint8_t klog_realloc(size_t appended_size) {
+	size_t size = (size_t)((klog_end + 5) - klog);
+	char* nptr = (char*)avmf_alloc(size, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL);
+	if (!nptr) return 0;
+
+	size_t loc_end = (size_t)(klog_end - klog);
+	size_t loc_pos = (size_t)(klog_pos - klog);
+
+	memcpy(nptr, klog, size);
+	avmf_free(klog);
+	
+	klog = nptr;
+	klog_end = klog + loc_end;
+	klog_pos = klog + loc_pos;
+
+	return 1;
+}
+
+static void klog_printc(char c) {
+	if (!klog || !klog_end || !klog_pos) return;
+
+	if (!klog_msg_started) {
+		memcpy(&klog[klog_pos], "[AOS - 0000000000] ");
+		klog_pos += 7;
+		kget_timestamp_seconds();
+	}
+
+	klog[klog_pos++] = c;
+	if (klog_end < klog_pos) klog_end = klog_pos;
+}
+
 void serial_init(void) {
     uint64_t rflags = spin_lock_irqsave(&serial_lock);
 
@@ -54,7 +106,61 @@ void serial_init(void) {
     asm_outb(SERIAL_PORT + 2, 0xC7); // FIFO: enable, clear, 14-byte threshold
     asm_outb(SERIAL_PORT + 4, 0x0B); // IRQs enabled, RTS/DSR set
 
+	klog = NULL;
+	klog_end = NULL;
+	klog_pos = NULL;
+	klog_present = 0;
+	klog_msg_started = 0;
+
     spin_unlock_irqrestore(&serial_lock, rflags);
+}
+
+void serial_init_klog(const char* path, struct pbfs_mount* mnt) {
+	if (!mnt) return;
+
+	PBFS_DMM_Entry out;
+	uint64_t out_lba = 0;
+
+	size_t size = 0;
+
+	klog_present = 0;
+	if (pbfs_find_entry(path, &out, &out_lba, mnt) == PBFS_RES_SUCCESS && out.type & METADATA_FLAG_SYS) {
+		uint8_t* data = NULL;
+		pbfs_read_file(mnt, path, &data, &size);
+		klog_present = 1;
+	}
+
+	size += 4096; // +4KB
+	klog = (char*)avmf_alloc(size, MALLOC_TYPE_USER, PAGE_PRESENT | PAGE_RW, NULL);
+	if (!klog) return;
+	klog_pos = klog;
+	klog_end = klog;
+}
+
+void serial_deinit_klog(const char* path, struct pbfs_mount* mnt) {
+	if (!klog || !klog_end) return;
+	if (klog_present) {
+		if (pbfs_remove(mnt, path) != PBFS_RES_SUCCESS) {
+			avmf_free(klog);
+			klog = NULL;
+			klog_end = NULL;
+			klog_pos = NULL;
+			return;
+		}
+	}
+	
+	size_t end = klog_end > klog_pos ? (size_t)(klog_end-klog) : (size_t)(klog_pos-klog);
+	klog[end++] = '\0';
+	klog[end++] = 'E';
+	klog[end++] = 'O';
+	klog[end++] = 'F';
+	klog[end++] = '\0';
+	
+	pbfs_add(mnt, path, 0, 0, METADATA_FLAG_SYS, PERM_READ | PERM_WRITE, klog, (size_t)((klog_end + 5)-klog));
+	avmf_free(klog);
+	klog = NULL;
+	klog_end = NULL;
+	klog_pos = NULL;
 }
 
 // Check if transmit buffer is empty
@@ -78,28 +184,6 @@ void serial_print(const char* str) {
         serial_printc(*str++);
     }
     spin_unlock_irqrestore(&serial_lock, rflags);
-}
-
-static void serial_print_integer(uint64_t val, int is_signed, int base, int uppercase) {
-    char buffer[32];
-    int i = 30;
-    buffer[31] = 0;
-    int neg = 0;
-
-    if (is_signed && ((int64_t)val) < 0) {
-        neg = 1;
-        val = -(int64_t)val;
-    }
-
-    // Convert digits
-    do {
-        uint64_t digit = umod64(val, base);
-        buffer[i--] = (digit < 10) ? '0' + digit : (uppercase ? 'A' : 'a') + digit - 10;
-        val = udiv64(val, base);
-    } while (val);
-
-    if (neg) buffer[i--] = '-';
-    serial_print(&buffer[i+1]);
 }
 
 static void serial_print_ex_integer(uint64_t val, int base, int width, int zero_pad, int is_signed) {
@@ -288,28 +372,6 @@ void vmem_print(struct VMemDesign* design, const char* str) {\
     uint64_t rflags = spin_lock_irqsave(&vmem_lock);
     while (*str) vmem_printc(design, *str++);
     spin_unlock_irqrestore(&vmem_lock, rflags);
-}
-
-static void vmem_print_integer(struct VMemDesign* design, uint64_t val, int is_signed, int base, int uppercase) {
-    char buffer[32];
-    int i = 30;
-    buffer[31] = 0;
-    int neg = 0;
-
-    if (is_signed && ((int64_t)val) < 0) {
-        neg = 1;
-        val = -(int64_t)val;
-    }
-
-    // Convert digits
-    do {
-        uint64_t digit = umod64(val, base);
-        buffer[i--] = (digit < 10) ? '0' + digit : (uppercase ? 'A' : 'a') + digit - 10;
-        val = udiv64(val, base);
-    } while (val);
-
-    if (neg) buffer[i--] = '-';
-    vmem_print(design, &buffer[i+1]);
 }
 
 static void vmem_print_ex_integer(struct VMemDesign* design, uint64_t val, int base, int width, int zero_pad, int is_signed) {
