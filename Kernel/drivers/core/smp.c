@@ -130,6 +130,19 @@ static uint8_t ap_init_core_state(struct core_state* state) {
 }
 
 static void ap_kernel_entry(void) {
+	// Enable SSE
+    uint64_t cr;
+    asm volatile("mov %%cr0, %0" : "=r"(cr));
+    cr &= ~(1 << 2); // Clear EM (Emulation) bit
+    cr |= (1 << 1); // Set MP (Monitor Coproccessor) bit
+    asm volatile("mov %0, %%cr0" : : "r"(cr));
+    cr = 0;
+    asm volatile("mov %%cr4, %0" : "=r"(cr));
+    cr |= (1 << 9); // Set OSFXSR (FXSAVE/FXRSTOR support)
+    cr |= (1 << 10); // Set OSXMMEXCPT (Unmasked Exception support)
+    asm volatile("mov %0, %%cr4" :: "r"(cr));
+
+
     uint32_t lapic_id = get_lapic_id();
     uint64_t kernel_stack = *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x510);
     struct core_state* core = *(struct core_state**)(AOS_DIRECT_MAP_BASE + 0x520);

@@ -24,15 +24,13 @@
 EFIAPI static void cpuid_get_vendor(char *vendor_out) {
     uint32_t eax, ebx, ecx, edx;
     eax = 0;
-    __asm__ volatile (
-        "pushq %%rbx\n\t"
-        "cpuid\n\t"
-        "movl %%ebx, %1\n\t"
-        "popq %%rbx"
-        : "=a"(eax), "=r"(ebx), "=c"(ecx), "=d"(edx)
-        : "a"(1)
-        : "cc"
-    );
+    asm volatile(
+		"cpuid"
+		: "+a"(eax),
+		"=b"(ebx),
+		"=c"(ecx),
+		"=d"(edx)
+	);
     *((uint32_t*)vendor_out) = ebx;
     *((uint32_t*)(vendor_out + 4)) = edx;
     *((uint32_t*)(vendor_out + 8)) = ecx;
@@ -58,6 +56,11 @@ EFIAPI static uint8_t compute_checksum(const uint8_t* data, uint32_t len) {
     for (uint32_t i = 0; i < len; i++) sum += data[i];
     return (uint8_t)(sum & 0xFF);
 }
+
+typedef struct {
+    EFI_BLOCK_IO_PROTOCOL *raw;
+    EFI_BLOCK_IO_PROTOCOL *partition;
+} blockio_pair_t;
 
 __attribute__((noreturn))
 EFIAPI static void stage3_jump_to_kernel(void (*kernel)(void), uint64_t stack_top) {
@@ -90,31 +93,36 @@ EFIAPI static void btl_free(void* ptr) {
 
 EFIAPI static int read_blk(struct block_device* dev, uint64_t lba, void* buf) {
     if (pefi_state.initialized != 1) return 0;
-    int status = pefi_read_lba(pefi_state.system_table, pefi_state.image_handle, (EFI_LBA)lba, 1, buf, (EFI_BLOCK_IO_PROTOCOL*)dev->driver_data > 0 ? (EFI_BLOCK_IO_PROTOCOL*)dev->driver_data : (EFI_BLOCK_IO_PROTOCOL*)(dev->driver_data + sizeof(EFI_BLOCK_IO_PROTOCOL*)));
+	blockio_pair_t *pair = dev->driver_data;
+    int status = pefi_read_lba(pefi_state.system_table, pefi_state.image_handle, (EFI_LBA)lba, 1, buf, pair->raw ? pair->raw : pair->partition);
     if (EFI_ERROR(status)) return 0;
     return 1;
 }
 EFIAPI static int write_blk(struct block_device* dev, uint64_t lba, const void* buf) {
     if (pefi_state.initialized != 1) return 0;
-    int status = pefi_write_lba(pefi_state.system_table, pefi_state.image_handle, (EFI_LBA)lba, 1, buf, (EFI_BLOCK_IO_PROTOCOL*)dev->driver_data > 0 ? (EFI_BLOCK_IO_PROTOCOL*)dev->driver_data : (EFI_BLOCK_IO_PROTOCOL*)(dev->driver_data + sizeof(EFI_BLOCK_IO_PROTOCOL*)));
+	blockio_pair_t *pair = dev->driver_data;
+    int status = pefi_write_lba(pefi_state.system_table, pefi_state.image_handle, (EFI_LBA)lba, 1, buf, pair->raw ? pair->raw : pair->partition);
     if (EFI_ERROR(status)) return 0;
     return 1;
 }
 EFIAPI static int read_f(struct block_device* dev, uint64_t lba, uint64_t count, void* buf) {
     if (pefi_state.initialized != 1) return 0;
-    int status = pefi_read_lba(pefi_state.system_table, pefi_state.image_handle, (EFI_LBA)lba, (UINTN)count, buf, (EFI_BLOCK_IO_PROTOCOL*)dev->driver_data > 0 ? (EFI_BLOCK_IO_PROTOCOL*)dev->driver_data : (EFI_BLOCK_IO_PROTOCOL*)(dev->driver_data + sizeof(EFI_BLOCK_IO_PROTOCOL*)));
+	blockio_pair_t *pair = dev->driver_data;
+    int status = pefi_read_lba(pefi_state.system_table, pefi_state.image_handle, (EFI_LBA)lba, (UINTN)count, buf, pair->raw ? pair->raw : pair->partition);
     if (EFI_ERROR(status)) return 0;
     return 1;
 }
 EFIAPI static int write_f(struct block_device* dev, uint64_t lba, uint64_t count, const void* buf) {
     if (pefi_state.initialized != 1) return 0;
-    int status = pefi_write_lba(pefi_state.system_table, pefi_state.image_handle, (EFI_LBA)lba, (UINTN)count, buf, (EFI_BLOCK_IO_PROTOCOL*)dev->driver_data > 0 ? (EFI_BLOCK_IO_PROTOCOL*)dev->driver_data : (EFI_BLOCK_IO_PROTOCOL*)(dev->driver_data + sizeof(EFI_BLOCK_IO_PROTOCOL*)));
+	blockio_pair_t *pair = dev->driver_data;
+    int status = pefi_write_lba(pefi_state.system_table, pefi_state.image_handle, (EFI_LBA)lba, (UINTN)count, buf, pair->raw ? pair->raw : pair->partition);
     if (EFI_ERROR(status)) return 0;
     return 1;
 }
 EFIAPI static int flush_f(struct block_device* dev) {
     if (pefi_state.initialized != 1) return 0;
-    EFI_BLOCK_IO_PROTOCOL* BIP = (EFI_BLOCK_IO_PROTOCOL*)dev->driver_data > 0 ? (EFI_BLOCK_IO_PROTOCOL*)dev->driver_data : (EFI_BLOCK_IO_PROTOCOL*)(dev->driver_data + sizeof(EFI_BLOCK_IO_PROTOCOL*));
+	blockio_pair_t *pair = dev->driver_data;
+    EFI_BLOCK_IO_PROTOCOL* BIP = pair->raw ? pair->raw : pair->partition;
     int status = BIP->FlushBlocks(BIP);
     if (EFI_ERROR(status)) return 0;
     return 1;
@@ -201,15 +209,18 @@ EFIAPI static EFI_BLOCK_IO_PROTOCOL* get_physical_disk_io(void) {
     return NULL;
 }
 
-EFIAPI EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
-    __asm__ volatile ("andq $-16, %rsp");
+EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
     if (SystemTable == NULL) return EFI_LOAD_ERROR;
+
+	SystemTable->ConOut->OutputString(SystemTable->ConOut, u"Loading PEFI...\n");
 
     InitalizeLib(SystemTable, ImageHandle);
     if (pefi_state.initialized != 1) {
-        pefi_print(SystemTable, u"Failed to initalize PEFI!\n");
-        for (;;) asm volatile("hlt");
+		SystemTable->ConOut->OutputString(SystemTable->ConOut, u"Failed to initialize PEFI!\n");
+        return EFI_LOAD_ERROR;
     }
+
+	SystemTable->ConOut->OutputString(SystemTable->ConOut, u"PEFI Loaded\n");
 
     pefi_clear(SystemTable);
 
@@ -259,13 +270,14 @@ EFIAPI EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     dev.block_count = !g_RBIP ? (uint64_t)(g_BIP->Media->LastBlock + 1) : (uint32_t)(g_RBIP->Media->LastBlock + 1);
     dev.name = "UEFI DISK";
     
-    dev.driver_data = btl_malloc(sizeof(EFI_BLOCK_IO_PROTOCOL*) * 2);
-    if (!dev.driver_data) {
+    blockio_pair_t* pair = btl_malloc(sizeof(EFI_BLOCK_IO_PROTOCOL*) * 2);
+    if (!pair) {
         pefi_print(SystemTable, u"Failed to allocate memory!\n");
         for (;;) asm volatile("hlt");
     }
-    memcpy(dev.driver_data, &g_RBIP, sizeof(EFI_BLOCK_IO_PROTOCOL*));
-    memcpy(dev.driver_data + sizeof(EFI_BLOCK_IO_PROTOCOL*), &g_BIP, sizeof(EFI_BLOCK_IO_PROTOCOL*));
+    pair->raw = g_RBIP;
+	pair->partition = g_BIP;
+	dev.driver_data = pair;
 
     pbfs_init(&funcs);
     
@@ -388,4 +400,8 @@ EFIAPI EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
     pefi_print(SystemTable, u"Failed to start Kernel!\n");
     for (;;) asm volatile("hlt");
+}
+
+EFIAPI EFI_STATUS efi_main(EFI_HANDLE h, EFI_SYSTEM_TABLE *st) {
+    return btl_main(h, st);
 }

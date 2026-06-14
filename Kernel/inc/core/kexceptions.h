@@ -9,4 +9,5 @@ struct reg_trap_frame {
     uint64_t rip, cs, rflags, rsp, ss;
 } __attribute__((packed));
 
-void aos_system_exception(struct reg_trap_frame* r) __attribute__((packed));
+void aos_system_exception_handler_init(void (*ppre_halt_system)(void)) __attribute__((used));
+void aos_system_exception(struct reg_trap_frame* r) __attribute__((used));

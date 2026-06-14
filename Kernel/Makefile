@@ -1,5 +1,11 @@
 CC := gcc
-CFLAGS := -ffreestanding -m64 -fno-stack-protector -fno-pic -Wall -nostdlib -fno-pie -I ../PBFS -I ../Headers -I ./ -w
+
+EXTRA ?= -march=x86-64 -mtune=generic -funroll-loops -w
+OPT_LEVEL ?= 3
+CFLAGS := -ffreestanding -m64 -fno-stack-protector -fno-pic \
+		-Wall -nostdlib -fno-pie \
+		-I ../PBFS -I ../Headers -I ./ \
+		-O$(OPT_LEVEL) $(EXTRA)
 
 ASM := nasm
 ASMFLAGS := -f elf64

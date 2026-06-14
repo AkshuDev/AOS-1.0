@@ -1,4 +1,5 @@
 #include <inc/core/kexceptions.h>
+#include <inc/core/kfuncs.h>
 
 #include <inttypes.h>
 #include <asm.h>
@@ -33,7 +34,32 @@ static const char *exception_names[] = {
     "Reserved", "Reserved"
 };
 
+static volatile int panic_depth = 0;
+static volatile spinlock_t panic_lock = 0;
+static void (*pre_halt_system)(void);
+
+void aos_system_exception_handler_init(void (*ppre_halt_system)(void)) {
+	pre_halt_system = ppre_halt_system;
+}
+
 void aos_system_exception(struct reg_trap_frame *r) {
+	asm volatile("cli");
+
+	uint64_t rflags = spin_lock_irqsave(&panic_lock);
+	panic_depth++;
+	uint64_t lpanic = panic_depth;
+	spin_unlock_irqrestore(&panic_lock, rflags);
+	if (lpanic > 1) {
+		serial_print("NESTED PANIC\n");
+        for(;;) asm volatile("hlt");
+	}
+
+	asm volatile("cli");
+
+	uint64_t cr2 = 0;
+	if (r->int_no == 14)
+		asm volatile("mov %%cr2,%0":"=r"(cr2));
+
     uint64_t num = r->int_no;
     const char* name = (num < 32) ? exception_names[num] : "Unknown Exception";
 
@@ -55,8 +81,6 @@ void aos_system_exception(struct reg_trap_frame *r) {
     // decode specific exceptions
     // Page Fault (#PF)
     if (num == 14) {
-        uint64_t cr2;
-        asm volatile("mov %%cr2, %0" : "=r"(cr2));
         serial_printf("Faulting Address (CR2): 0x%016llx\n", cr2);
         serial_printf(
             "Reason: %s, %s, %s%s%s\n",
@@ -95,7 +119,11 @@ void aos_system_exception(struct reg_trap_frame *r) {
     }
 
     serial_print("\nSYSTEM HALTED\n");
+
+	if (pre_halt_system) pre_halt_system();
+
     for (;;) {
-        asm volatile ("cli; hlt");
+		asm volatile("cli");
+        asm volatile("hlt");
     }
 }

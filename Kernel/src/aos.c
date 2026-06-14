@@ -52,12 +52,13 @@ static char g_pbfs_cwd[PBFS_MAX_PATH_LEN] = {'/', 0};
 static struct pbfs_mount g_pbfs_mnt = {0};
 
 // Define a static stack array
-void kernel_main(void) __attribute__((used, noinline, section(".start"), noreturn));
+void kernel_main(void) __attribute__((used, noinline, section(".start"), noreturn, force_align_arg_pointer));
 void aos_shell_pm(void);
 void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design);
 static void cmd_print_help(struct VMemDesign* vmem_design, int* lines);
 void cmd_start(char* program, int* lines, struct VMemDesign* vmem_design);
-void aospp_start();
+void aospp_start(void);
+void pre_halt_system(void);
 static int bd_read_blk(struct block_device* dev, uint64_t lba, void* buf);
 static int bd_write_blk(struct block_device* dev, uint64_t lba, const void* buf);
 static int bd_read(struct block_device* dev, uint64_t lba, uint64_t count, void* buf);
@@ -85,6 +86,7 @@ void kernel_main(void) {
     serial_print("AOS++ LOADED!\n");
     pager_init(); // Inits AVMF Too
 
+	aos_system_exception_handler_init(pre_halt_system);
     idt_init();
 
     // Enable SSE
@@ -150,6 +152,7 @@ void kernel_main(void) {
             g_pbfs_cwd[0] = '/';
             g_pbfs_cwd[1] = '\0';
             current_drive_mounted = 1;
+			serial_init_klog("/aos/klog.log", &g_pbfs_mnt);
         }
     } else {
         serial_print("Error: Current drive doesn't work!\n");
@@ -211,6 +214,7 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
         *lines += 1;
     } else if (strcmp(cmd, "reboot") == 0) {
         vmem_print(vmem_design, "Rebooting...\n");
+		serial_deinit_klog("/aos/klog.log", &g_pbfs_mnt);
         pager_destroy_table(4);
         acpi_reboot();
     } else if (strcmp(cmd, "clear") == 0) {
@@ -394,6 +398,10 @@ void aos_vmss_start(void) {
     vmem_print(&vmem_design, "Welcome To AOS VM Safety Shell!\n\n");
     aos_shell_pm();
     for (;;) asm("hlt");
+}
+
+void pre_halt_system(void) {
+	if (g_pbfs_mnt.active) serial_deinit_klog("/aos/klog.log", &g_pbfs_mnt);
 }
 
 static int bd_read_blk(struct block_device* dev, uint64_t lba, void* buf) {

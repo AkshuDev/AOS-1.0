@@ -117,6 +117,20 @@ void btl_free(void* ptr) {
     return; // Useless
 }
 
+// Fake funcs
+typedef enum {
+    MALLOC_TYPE_UNKNOWN = 0,
+    MALLOC_TYPE_USER,
+    MALLOC_TYPE_KERNEL,
+    MALLOC_TYPE_DRIVER,
+    MALLOC_TYPE_SENSITIVE
+} MemoryAllocType;
+uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, int flags, uint64_t* phys_out) { return (uint64_t)btl_malloc(size); }
+void avmf_free(uint64_t virt) { btl_free((void*)virt); }
+uint64_t avmf_alloc_virt(uint64_t size, MemoryAllocType type) { return (uint64_t)btl_malloc(size); }
+void smp_shutdown(void) {return;}
+
+// Real funcs again
 void draw_menu_frame(struct VMemDesign* cursor) {
     int width = IO_VMEM_MAX_COLS;
     int height = IO_VMEM_MAX_ROWS;
@@ -213,7 +227,7 @@ void display_splash(struct ambrc* ambrc, struct VMemDesign* cursor) {
     cursor->x = x;
     vmem_print(cursor, " |__/  |__/ \\______/  \\______/ ");
 
-    kdelay((ambrc->display.splash_duration * 1000) > 0xFFFFFFFF ? 0xFFFFFFFF : ambrc->display.splash_duration * 1000);
+	kdelay((ambrc->display.splash_duration > 10 ? 10 : ambrc->display.splash_duration) * 1000);
 }
 
 void display_popup(struct ambrc* ambrc, struct VMemDesign* design, const char* popup_msg) {
@@ -299,11 +313,9 @@ uint64_t read_tsc(void) {
     uint32_t high = 0;
     if (rdtscp_supported == 1) {
         asm volatile("rdtscp" : "=a"(low), "=d"(high) : : "rcx");
-        asm volatile("cpuid" : : : "rax", "rcx", "rdx", "memory");
     }
     else {
-        asm volatile("cpuid" : : : "rax", "rcx", "rdx", "memory");
-        asm volatile("rdtsc" : "=a"(low), "=d"(high) : : "memory");
+        asm volatile("lfence\n\t" "rdtsc" : "=a"(low), "=d"(high) : : "memory");
     }
     return ((uint64_t)high << 32) | low;
 }
@@ -334,7 +346,7 @@ int ata_flush(int port_id) {
 	return 1; // ata write already ensures flush
 }
 
-void stage3(void) __attribute__((section(".entry"), used)); 
+void stage3(void) __attribute__((section(".entry"), used, force_align_arg_pointer));
 void stage3(void) {
 	// Enable SSE
     uint64_t cr;
@@ -358,6 +370,7 @@ void stage3(void) {
     }
     uint64_t tsc_start = read_tsc();
 
+	serial_init();
     enable_a20();
     init_backup_ambrc();
     struct ambrc* ambrc = get_ambrc();
@@ -447,8 +460,9 @@ void stage3(void) {
     if (found_drive != 1) {
 		serial_print("Trying to find Legacy-ATA...\n");
 		if (ata_exists() == 0) {
-        	vmem_print(&cursor, "No supported drive found!\n");
-        	for (;;) asm volatile("hlt");
+        	serial_print("No supported drive found!\n");
+			start_panic_shell(&cur_drive, "No supported drive found!", 1);
+        	acpi_reboot();
 		} else {
 			found_drive = 1;
 			cur_drive.read_blk = ata_read;
@@ -457,8 +471,9 @@ void stage3(void) {
 			cur_drive.cur_port = boot_drive;
 			ata_identity_t iden;
 			if (ata_identify_device(boot_drive, &iden) != 1) {
-				vmem_print(&cursor, "Failed to identify Legacy-ATA Drive\n");
-        		for (;;) asm volatile("hlt");
+				serial_print("Failed to identify Legacy-ATA Drive\n");
+        		start_panic_shell(&cur_drive, "Failed to identify Legacy-ATA Drive", 1);
+        		acpi_reboot();
 			}
 
 			cur_drive.block_dev.block_count = iden.block_count;
@@ -475,8 +490,9 @@ void stage3(void) {
 	pbfs_init(&funcs);
 	int out = pbfs_mount(&cur_drive.block_dev, &mnt);
 	if (out != PBFS_RES_SUCCESS) {
-		vmem_printf(&cursor, "Failed to mount, Error:\n\t%s\n", pbfs_get_err_str(out));
-		for (;;) asm volatile("hlt");
+		serial_printf("Failed to mount, Error:\n\t%s\n", pbfs_get_err_str(out));
+		start_panic_shell(&cur_drive, (const char*)pbfs_get_err_str(out), 1);
+		acpi_reboot();
 	}
 
     PBFS_Kernel_Entry os_entries[20];
@@ -525,7 +541,7 @@ void stage3(void) {
                     case 0x15: // Y key
                         current_mode = 2;
                         write_cmos(CMOS_BYTE_IDX_AOSB_FLAGS, CMOS_AOSB_FLAG_PANIC_MODE);
-                        start_panic_shell(&cur_drive);
+                        start_panic_shell(&cur_drive, NULL, 0);
                         popup_active = 0;
                         popup_finished = 1;
                         break;
@@ -664,8 +680,9 @@ void stage3(void) {
     vmem_printf(&cursor, "Loading %s...\n", os_entries[final_kernel_idx].name);
 
     if (!read_f(&cur_drive.block_dev, uint128_to_u64(os_entries[final_kernel_idx].lba), uint128_to_u32(os_entries[final_kernel_idx].count), (void*)ambrc->kernel_info[final_kernel_idx].load_addr)) {
-        vmem_print(&cursor, "Failed to read kernel, Disk error!\n");
-        for (;;) asm volatile("hlt");
+        serial_print("Failed to read kernel, Disk error!\n");
+		start_panic_shell(&cur_drive, "Failed to read kernel, Disk error!", 1);
+        acpi_reboot();
     }
 
     vmem_print(&cursor, "Jumping to Kernel...\n");

@@ -58,17 +58,22 @@ start:
     int 0x13
     jc disk_error
 
-    mov ah, 0x42
-    mov dl, [disk]
-    mov si, dap_s3_1
-    int 0x13
-    jc disk_error
+	mov cx, 256
+load_stage3_loop:
+    cmp cx, 127
+    jle final_chunk
 
-    mov ah, 0x42
-    mov dl, [disk]
-    mov si, dap_s3_2
-    int 0x13
-    jc disk_error
+    mov word [dap_s3_1+2],127
+    call read_dap_s3
+
+   	add dword [dap_s3_1+8],127
+    add word [dap_s3_1+6],127*32 ; advance segment
+    sub cx,127
+
+    jmp load_stage3_loop
+final_chunk:
+    mov [dap_s3_1+2],cx
+    call read_dap_s3
 
     mov ah, 0x42 ; extended load
     mov dl, [disk]
@@ -97,6 +102,13 @@ print_string:
 .done:
     ret
 
+read_dap_s3:
+	mov ah, 0x42 ; extended load
+    mov dl, [disk]
+    mov si, dap_s3_1 ; Load DAP
+    int 0x13
+    jc disk_error
+	ret
 
 disk db 0x80 ; Default 0x80
 disk_read_msg db "Reading and Loading Stage2...", 0xa, 0xd, 0
@@ -120,14 +132,6 @@ dap_s3_1:
     dw 0x0000 ; dest offset
     dw 0x1500 ; dest segment
     dq 2048 ; starting lba
-
-dap_s3_2:
-    db 0x10 ; size (16 bytes)
-    db 0 ; reserved
-    dw 27 ; sectors to read
-    dw 0x0000 ; dest offset
-    dw 0x24E0 ; dest segment
-    dq 2175 ; starting lba
 
 dap_ambrc: ; AOS Master Boot Record Config
     db 0x10 ; size (16 bytes)

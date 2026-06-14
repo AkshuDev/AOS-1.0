@@ -298,7 +298,7 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, uint8_t*
     if (!valid) vmem_printf(design, "\nUnknown command: %s\n", c);
 }
 
-void start_panic_shell(struct drive_device* current_drive) {
+void start_panic_shell(struct drive_device* current_drive, const char* err, size_t err_lines) {
     cdrive = current_drive;
     struct ambrc* ambrc = get_ambrc();
 
@@ -306,7 +306,7 @@ void start_panic_shell(struct drive_device* current_drive) {
     size_t start_y = 0;
     
     size_t tstart_x = 0;
-    size_t tstart_y = 2;
+    size_t tstart_y = 2+err_lines;
     size_t t_w = IO_VMEM_MAX_COLS;
     size_t t_h = IO_VMEM_MAX_ROWS - 2;
 
@@ -325,7 +325,14 @@ void start_panic_shell(struct drive_device* current_drive) {
     design->y = start_y;
 
     vmem_print(design, "AOS Panic Shell");
+	
+	if (err_lines > 0) {
+		design->x = 0;
+		design->y = start_y+2;
 
+		vmem_print(design, err);
+	}
+	
     design->x = tstart_x;
     design->y = tstart_y;
     vmem_print(design, "$> ");

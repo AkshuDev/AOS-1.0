@@ -16,19 +16,22 @@
 
 // Memory and Stuff
 void* memset(void* s, int c, size_t n) {
-    uint8_t* p = s;
-    while (n--) {
-        *p++ = (uint8_t)c;
-    }
+     asm volatile(
+        "rep stosb"
+        :
+        : "D"(s), "a"((uint8_t)c), "c"(n)
+        : "memory"
+    );
     return s;
 }
 
 void* memcpy(void* dest, const void* src, size_t n) {
-    uint8_t* d = dest;
-    const uint8_t* s = src;
-    while (n--) {
-        *d++ = *s++;
-    }
+	asm volatile(
+        "rep movsb"
+        :
+        : "D"(dest), "S"(src), "c"(n)
+        : "memory"
+    );
     return dest;
 }
 
@@ -74,16 +77,18 @@ size_t strlen(char* s) {
 }
 
 char* strcpy(char* dest, char* src) {
-    size_t n1 = strlen(dest);
-    size_t n2 = strlen(src);
-    size_t n = n1 > n2 ? n2 : n1;
-    return (char*)memcpy(dest, src, n);
+    char *ret=dest;
+    while((*dest++=*src++)) ;
+    return ret;
 }
 
 char* strncpy(char* dest, char* src, size_t n) {
-    size_t n1 = strlen(src);
-    size_t n2 = n1 > n ? n : n1;
-    return (char*)memcpy(dest, src, n2);
+	while (n && *src) {
+		*dest++=*src++;
+		n--;
+	}
+
+	while (n--) *dest++=0;
 }
 
 uint32_t str_to_uint(const char* str) {
@@ -134,7 +139,7 @@ uint64_t spin_lock_irqsave(spinlock_t* lock) {
     );
     while (__sync_lock_test_and_set(lock, 1)) {
         while (*lock) {
-            asm volatile("pause"); // "Performance is Key" - Some random dude sitting on a chair programming this
+            asm volatile("pause" ::: "memory"); // "Performance is Key" - Some random dude sitting on a chair programming this
         }
     }
 
@@ -163,36 +168,30 @@ static const uint8_t month_days[12] = {
     31,28,31,30,31,30,31,31,30,31,30,31
 };
 
-static uint64_t ktimer_read_tsc(void) {
+static inline uint64_t ktimer_read_tsc(void) {
     uint32_t low = 0;
     uint32_t high = 0;
     if (rdtscp_supported == 1) {
         asm volatile("rdtscp" : "=a"(low), "=d"(high) : : "rcx");
-        asm volatile("cpuid" : : : "rax", "rcx", "rdx", "memory");
     }
     else {
-        asm volatile("cpuid" : : : "rax", "rcx", "rdx", "memory");
-        asm volatile("rdtsc" : "=a"(low), "=d"(high) : : "memory");
+        asm volatile("lfence\n\t" "rdtsc" : "=a"(low), "=d"(high) : : "memory");
     }
     return ((uint64_t)high << 32) | low;
 }
 
-static int is_leap_year(uint32_t year) {
+static inline int is_leap_year(uint32_t year) {
     return ((year % 4 == 0) && ((year % 100 != 0) || (year % 400 == 0)));
 }
 
 static uint64_t rtc_to_timestamp(uint32_t year, uint32_t month, uint32_t day, uint32_t hour, uint32_t minute, uint32_t second) {
-    uint64_t days = 0;
-
-    // years since 1970
-    for (uint32_t y = 1970; y < year; y++) {
-        days += is_leap(y) ? 366 : 365;
-    }
+	uint64_t leaps = ((year-1)/4 - 1969/4) - ((year-1)/100 - 1969/100) + ((year-1)/400 - 1969/400);
+    uint64_t days = ((year - 1970) * 365) + leaps;
 
     // months
     for (uint32_t m = 1; m < month; m++) {
         days += month_days[m - 1];
-        if (m == 2 && is_leap(year)) days++;
+        if (m == 2 && is_leap_year(year)) days++;
     }
     days += day - 1;
 
@@ -222,7 +221,7 @@ void ktimer_calibrate(void) {
 	for (; kget_ms_passed() - timeout < 10000;) {
 		asm_outb(0x70, 0x0A);
 		if (!(asm_inb(0x71) & 0x1)) break;
-		asm volatile("pause");
+		asm volatile("pause" ::: "memory");
 	}
 
 	// Read CMOS RTC (0x00=s, 0x02=min, 0x04=hrs, 0x07=day, 0x08=month, 0x09=year, 0x32=century)
@@ -246,7 +245,9 @@ void ktimer_calibrate(void) {
 	if (century == 0) century = 20;
 
 	uint32_t full_year = century * 100 + year;
-	bootup_timestamp = rtc_to_unix(full_year, month, day, hr, min,sec);
+	bootup_timestamp = rtc_to_timestamp(full_year, month, day, hr, min,sec);
+
+	serial_printf("Bootup Timestamp: %u\n", bootup_timestamp);
 }
 
 void kdelay(uint32_t ms) {
@@ -256,7 +257,7 @@ void kdelay(uint32_t ms) {
     uint64_t ticks_needed = (uint64_t)ms * tsc_ticks_per_ms;
 
     while ((ktimer_read_tsc() - start) < ticks_needed) {
-        asm volatile("pause");
+        asm volatile("pause" ::: "memory");
     }
 }
 
@@ -290,7 +291,7 @@ struct alloc_hdr {
     size_t size;
     struct alloc_hdr* nxt;
     struct alloc_hdr* prev;
-} __attribute__((packed));
+};
 
 void* kmalloc(size_t size) {
     void* out = (void*)avmf_alloc(size + sizeof(struct alloc_hdr), MALLOC_TYPE_USER, PAGE_PRESENT | PAGE_RW, NULL);

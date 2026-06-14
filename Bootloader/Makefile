@@ -19,11 +19,17 @@ UEFI_BUILD_DIR := $(UEFI_DIR)/build
 UEFI_BIN_DIR := $(UEFI_DIR)/bin
 UEFI_SRC_DIR := $(UEFI_DIR)/src
 
-CFLAGS := -ffreestanding -mno-red-zone -O0 -fno-stack-protector -fno-pic -nostdlib -m64 -I ../PBFS -I ../Headers -I ../Kernel -I MBR/inc -w
+OPT_LEVEL ?= 3
+EXTRA ?= -march=x86-64 -mtune=generic -funroll-loops -w
+
+CFLAGS := -ffreestanding -mno-red-zone -O$(OPT_LEVEL) $(EXTRA) \
+		-fno-stack-protector -fno-pic -nostdlib -m64 \
+		-I ../PBFS -I ../Headers -I ../Kernel -I MBR/inc -w \
+		-DAOS_DIRECT_MAP_BASE=0
 UEFI_CFLAGS := -mabi=ms \
 		-ffreestanding -fshort-wchar \
 		-mno-red-zone -fno-stack-protector \
-		-g -O0 \
+		-O$(OPT_LEVEL) -O$(OPT_LEVEL) $(EXTRA) \
 		-nostdlib -w -shared \
 		-I ../PBFS -I ../Headers -I ../Kernel -I ../PBFS/PBFS/PEFI/includes -I UEFI/inc
 
@@ -43,7 +49,7 @@ LDFLAGS_MBR := -m elf_x86_64 -T linker.ld -L ../PBFS/PBFS/build-fs
 LDENDFLAGS := -lpbfs-ndrivers
 LDENDFLAGS_UEFI := -lpbfs-ndrivers -lpefi
 
-ASMFLAGS_MBR := -f elf32 -g
+ASMFLAGS_MBR := -f elf32
 ASMFLAGS_MBR_BIN := -f bin
 
 UEFI_BOOTLOADER_SRC := $(UEFI_SRC_DIR)/bootloader_uefi.c $(UEFI_SRC_DIR)/stdlib_freestanding.c
@@ -53,12 +59,12 @@ UEFI_TARGET := $(UEFI_BIN_DIR)/aos_bootloader.img
 KERNEL := ../Kernel
 DRIVER := $(KERNEL)/drivers
 DRIVER_CORE := $(DRIVER)/core
-MBR_DRIVERS_SRC := $(DRIVER)/io/io.c
+MBR_DRIVERS_SRC := $(DRIVER)/io/io.c \
+					$(KERNEL)/src/kfuncs.c \
+					$(DRIVER)/core/acpi.c
 MBR_BTL_DRIVERS_SRC := $(MBR_SRC_DIR)/pcie.c \
-					$(MBR_SRC_DIR)/acpi.c \
 					$(MBR_SRC_DIR)/drive.c \
 					$(MBR_SRC_DIR)/drivers/sata.c \
-					$(MBR_SRC_DIR)/kfuncs.c \
 					$(MBR_SRC_DIR)/ambrc.c \
 					$(MBR_SRC_DIR)/keyboard.c \
 					$(MBR_SRC_DIR)/panic_shell.c

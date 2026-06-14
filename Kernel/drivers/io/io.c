@@ -16,6 +16,7 @@
 #include <PBFS/headers/pbfs-fs.h>
 
 #define SERIAL_PORT 0x3F8
+#define SERIAL_SCRATCH_PORT (SERIAL_PORT + 7)
 
 static spinlock_t serial_lock;
 static spinlock_t serialf_lock;
@@ -27,15 +28,17 @@ static spinlock_t vmemc_lock;
 static spinlock_t vmem_cur_lock;
 static spinlock_t ps2_lock;
 
+static uint8_t serial_present;
+
 // Kernel Log
 
 // Log Format->
-// \0EOF\0 Specified end of log
-// Format Per msg = [%OS - %Timestamp] %msg \0END\0 
+// Format Per msg = [%OS - %Timestamp] %msg
 
 static char* klog; // 4KB Log
-static char* klog_end;
-static char* klog_pos;
+static uint64_t klog_cap;
+static uint64_t klog_end;
+static uint64_t klog_pos;
 static uint8_t klog_present;
 static uint8_t klog_msg_started;
 
@@ -64,31 +67,48 @@ static uint64_t umod64(uint64_t n, uint64_t d) {
     return n;
 }
 
-static uint8_t klog_realloc(size_t appended_size) {
-	size_t size = (size_t)((klog_end + 5) - klog);
-	char* nptr = (char*)avmf_alloc(size, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL);
+static uint8_t klog_realloc(void) {
+	if (klog_cap - klog_pos >= 32) return 1;
+	size_t size = klog_cap;
+	char* nptr = (char*)avmf_alloc(size + 1024, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL); // +1KB
 	if (!nptr) return 0;
 
-	size_t loc_end = (size_t)(klog_end - klog);
-	size_t loc_pos = (size_t)(klog_pos - klog);
-
-	memcpy(nptr, klog, size);
-	avmf_free(klog);
+	memcpy(nptr, klog, klog_end);
+	avmf_free((uint64_t)klog);
 	
 	klog = nptr;
-	klog_end = klog + loc_end;
-	klog_pos = klog + loc_pos;
-
+	klog_cap = size + 1024;
 	return 1;
 }
 
 static void klog_printc(char c) {
-	if (!klog || !klog_end || !klog_pos) return;
+	if (!klog) return;
 
+	if (klog_pos + 32 >= klog_cap) { if (!klog_realloc()) return; }
 	if (!klog_msg_started) {
-		memcpy(&klog[klog_pos], "[AOS - 0000000000] ");
-		klog_pos += 7;
-		kget_timestamp_seconds();
+		memcpy(&klog[klog_pos], "\n[AOS - ", 8); klog_pos += 8; // \n prevents collisions with prev logs as well as prev data
+
+		uint64_t val = kget_timestamp_seconds();
+		char buf[64];
+		const char* digits = "0123456789";
+		int i = 0;
+		do {
+			buf[i++] = digits[val % 10];
+			val /= 10;
+		} while (val > 0);
+
+		int total_len = i;
+		if (10 > total_len) {
+			int padding_count = 10 - total_len;
+			while (padding_count--) klog[klog_pos++] = '0';
+		}
+
+		while (i > 0) {
+			klog[klog_pos++] = buf[--i];
+		}
+
+		memcpy(&klog[klog_pos], "] ", 2); klog_pos += 2;
+		klog_msg_started = 1;
 	}
 
 	klog[klog_pos++] = c;
@@ -96,6 +116,16 @@ static void klog_printc(char c) {
 }
 
 void serial_init(void) {
+	serial_lock = 0;
+	serialf_lock = 0;
+	serialc_lock = 0;
+	ata_lock = 0;
+	vmem_lock = 0;
+	vmemf_lock = 0;
+	vmemc_lock = 0;
+	vmem_cur_lock = 0;
+	ps2_lock = 0;
+	
     uint64_t rflags = spin_lock_irqsave(&serial_lock);
 
     asm_outb(SERIAL_PORT + 1, 0x00); // Disable interrupts
@@ -106,11 +136,19 @@ void serial_init(void) {
     asm_outb(SERIAL_PORT + 2, 0xC7); // FIFO: enable, clear, 14-byte threshold
     asm_outb(SERIAL_PORT + 4, 0x0B); // IRQs enabled, RTS/DSR set
 
+	asm_outb(SERIAL_SCRATCH_PORT, 0xAE);
+
+    if (asm_inb(SERIAL_SCRATCH_PORT) == 0xAE)
+        serial_present = 1;
+    else
+        serial_present = 0;
+
 	klog = NULL;
-	klog_end = NULL;
-	klog_pos = NULL;
+	klog_end = 0;
+	klog_pos = 0;
 	klog_present = 0;
 	klog_msg_started = 0;
+	klog_cap = 0;
 
     spin_unlock_irqrestore(&serial_lock, rflags);
 }
@@ -122,45 +160,41 @@ void serial_init_klog(const char* path, struct pbfs_mount* mnt) {
 	uint64_t out_lba = 0;
 
 	size_t size = 0;
+	uint8_t* data = NULL;
 
 	klog_present = 0;
 	if (pbfs_find_entry(path, &out, &out_lba, mnt) == PBFS_RES_SUCCESS && out.type & METADATA_FLAG_SYS) {
-		uint8_t* data = NULL;
 		pbfs_read_file(mnt, path, &data, &size);
 		klog_present = 1;
 	}
 
-	size += 4096; // +4KB
-	klog = (char*)avmf_alloc(size, MALLOC_TYPE_USER, PAGE_PRESENT | PAGE_RW, NULL);
+	klog = (char*)avmf_alloc(size + 4096, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL); // +4KB
 	if (!klog) return;
-	klog_pos = klog;
-	klog_end = klog;
+	if (data && size > 0) memcpy(klog, data, size);
+	klog_pos = size;
+	klog_cap = size + 4096;
+	klog_end = size;
 }
 
 void serial_deinit_klog(const char* path, struct pbfs_mount* mnt) {
-	if (!klog || !klog_end) return;
-	if (klog_present) {
-		if (pbfs_remove(mnt, path) != PBFS_RES_SUCCESS) {
-			avmf_free(klog);
-			klog = NULL;
-			klog_end = NULL;
-			klog_pos = NULL;
-			return;
-		}
+	if (!klog) return;
+	if (klog_end <= 0) {
+		avmf_free((uint64_t)klog);
+		klog = NULL;
+		klog_end = 0;
+		klog_pos = 0;
+		klog_cap = 0;
+		return;
 	}
 	
-	size_t end = klog_end > klog_pos ? (size_t)(klog_end-klog) : (size_t)(klog_pos-klog);
-	klog[end++] = '\0';
-	klog[end++] = 'E';
-	klog[end++] = 'O';
-	klog[end++] = 'F';
-	klog[end++] = '\0';
-	
-	pbfs_add(mnt, path, 0, 0, METADATA_FLAG_SYS, PERM_READ | PERM_WRITE, klog, (size_t)((klog_end + 5)-klog));
-	avmf_free(klog);
+	if (klog_present) pbfs_update_file(mnt, path, klog, klog_end);
+	else pbfs_add(mnt, path, 0, 0, METADATA_FLAG_SYS, PERM_READ | PERM_WRITE, klog, klog_end);
+	avmf_free((uint64_t)klog);
 	klog = NULL;
-	klog_end = NULL;
-	klog_pos = NULL;
+	klog_end = 0;
+	klog_pos = 0;
+	klog_cap = 0;
+	klog_present = 1;
 }
 
 // Check if transmit buffer is empty
@@ -171,8 +205,14 @@ int serial_is_transmit_empty(void) {
 // Print a single character
 void serial_printc(char c) {
     uint64_t rflags = spin_lock_irqsave(&serialc_lock);
-    while (!serial_is_transmit_empty());
-    asm_outb(SERIAL_PORT, c);
+    
+	if (serial_present) {
+		while (!serial_is_transmit_empty());
+    	asm_outb(SERIAL_PORT, c);
+	}
+
+	klog_printc(c);
+
     spin_unlock_irqrestore(&serialc_lock, rflags);
 }
 
@@ -183,7 +223,8 @@ void serial_print(const char* str) {
         if (*str == '\n') serial_printc('\r'); // Carriage return for terminals
         serial_printc(*str++);
     }
-    spin_unlock_irqrestore(&serial_lock, rflags);
+    klog_msg_started = 0;
+	spin_unlock_irqrestore(&serial_lock, rflags);
 }
 
 static void serial_print_ex_integer(uint64_t val, int base, int width, int zero_pad, int is_signed) {
@@ -304,6 +345,8 @@ void serial_printf(const char* fmt, ...) {
     }
 
     va_end(args);
+
+	klog_msg_started = 0;
     spin_unlock_irqrestore(&serialf_lock, rflags);
 }
 

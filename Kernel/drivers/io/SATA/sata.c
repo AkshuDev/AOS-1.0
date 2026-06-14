@@ -182,7 +182,8 @@ static int sata_send_cmd(struct sata_port_state* state, uint8_t write, uint64_t 
     cmd->w = write ? 1 : 0;
     cmd->prdtl = 1;
 
-    struct sata_hba_cmd_table* table = (struct sata_hba_cmd_table*)((uint64_t)cmd->ctba | ((uint64_t)cmd->ctbau << 32));
+	uint64_t table_phys = ((uint64_t)cmd->ctbau << 32) | cmd->ctba;
+    struct sata_hba_cmd_table* table = (struct sata_hba_cmd_table*)(AOS_DIRECT_MAP_BASE + table_phys);
     memset(table, 0, sizeof(struct sata_hba_cmd_table));
 
     uint64_t phys;
@@ -263,7 +264,9 @@ static int sata_issue_cmd(struct sata_port_state* state, int write, uint64_t lba
     cmd->w = write ? 1 : 0;
     cmd->prdtl = 1;
 
-    struct sata_hba_cmd_table* table = (struct sata_hba_cmd_table*)((uint64_t)cmd->ctba | ((uint64_t)cmd->ctbau << 32));
+	uint64_t table_phys = ((uint64_t)cmd->ctbau << 32) | cmd->ctba;
+    struct sata_hba_cmd_table* table = (struct sata_hba_cmd_table*)(AOS_DIRECT_MAP_BASE + table_phys);
+    
     memset(table, 0, sizeof(struct sata_hba_cmd_table));
 
     uint64_t phys;

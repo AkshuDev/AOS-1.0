@@ -2,6 +2,12 @@
 #include <asm.h>
 #include <sys/cdefs.h>
 
+#ifdef PBFS_WDRIVERS
+#undef PBFS_WDRIVERS
+#endif
+#define PBFS_NDRIVERS
+#include <PBFS/headers/pbfs-fs.h>
+
 #define IO_VMEM 0xB8000
 #define IO_VMEM_MAX_COLS 80
 #define IO_VMEM_MAX_ROWS 25
@@ -47,6 +53,9 @@ typedef struct {
 	uint16_t pad;
 } ata_identity_t;
 
+
+void serial_init_klog(const char* path, struct pbfs_mount* mnt);
+void serial_deinit_klog(const char* path, struct pbfs_mount* mnt);
 void serial_init(void) __attribute__((used));
 void serial_printc(char c) __attribute__((used));
 void serial_print(const char* str) __attribute__((used));
