@@ -1,0 +1,16 @@
+AOS 1.0
+
+Copyright (C) 2026 AkshuDev
+
+This repository contains software and components belonging to the AOS 1.0 Project, including but not limited to:
+
+* AOS++
+* AOS
+* AOS Bootloader
+* Associated tools, libraries, and utilities
+
+Unless otherwise specified, all source code and documentation contained in this repository are copyrighted by AkshuDev and contributors.
+
+Licensed under the GNU General Public License version 3.0 or any later version.
+
+See the LICENSE file for the complete license text.

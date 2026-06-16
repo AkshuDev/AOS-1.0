@@ -21,8 +21,6 @@
 #include <ambrc.h>
 #include <panic_shell.h>
 
-#define ALIGN_UP(num, align) (((num) + ((align) - 1)) & ~((align) - 1))
-
 #define CMOS_BYTE_IDX_AOSB_FLAGS 0x1A
 #define CMOS_BYTE_IDX_KERNEL_INFO 0x1B
 

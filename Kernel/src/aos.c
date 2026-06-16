@@ -36,7 +36,9 @@ static char* help_shell = "Usage: [COMMAND]\n"
     "\tpbfsctl-mnt: Remounts the current drive\n"
     "\tpbfsctl-fmt: Formats the current drive (Not Recommended)\n"
     "\tmkdir <dir>: Makes a new dir\n"
-    "\tcd <dir>: Changes Current Working Dir\n";
+    "\tcd <dir>: Changes Current Working Dir\n"
+	"\tls <dir>: Lists the specified dir\n"
+	"\tflush-klog: Flushes all kernel logs\n";
 
 static int help_shell_nlines = 8;
 
@@ -304,7 +306,7 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
                 }
             }
         }
-    } else if (strncmp(cmd, "ls", 2) == 0) {
+    } else if (strncmp(cmd, "ls ", 3) == 0) {
         if (current_drive_works == 0) {
             vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
             *lines += 1;
@@ -337,6 +339,18 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
                         vmem_printf(vmem_design, "%s (lba %llu)\n", items[i].name, uint128_to_u64(items[i].lba));
                     }
                 }
+            }
+        }
+    } else if (strcmp(cmd, "flush-klog") == 0) {
+        if (current_drive_works == 0) {
+            vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
+            *lines += 1;
+        } else {
+            if (current_drive_mounted == 0) {
+                vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
+                *lines += 1;
+            } else if (g_pbfs_mnt.active) {
+                serial_flush_klog("/aos/klog.log", &g_pbfs_mnt);
             }
         }
     } else {

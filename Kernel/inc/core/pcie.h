@@ -43,6 +43,7 @@ uint8_t pcie_init() __attribute__((used));
 uint32_t pcie_read_bar(uint8_t bus, uint8_t slot, uint8_t func, uint8_t bar_index) __attribute__((used));
 uint32_t pcie_read(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) __attribute__((used));
 uint16_t pcie_config_read16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) __attribute__((used));
+int pcie_write_bar(uint8_t bus, uint8_t slot, uint8_t func, uint8_t bar_index, uint32_t value) __attribute__((used));
 int pcie_write(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value) __attribute__((used));
 int pcie_find(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint16_t target_vendor, uint8_t use_vendor) __attribute__((used));
 int pcie_find_ex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint8_t target_subclass, uint8_t target_progifclass, uint16_t target_vendor, uint8_t use_vendor) __attribute__((used));

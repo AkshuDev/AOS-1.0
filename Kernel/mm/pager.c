@@ -1,6 +1,8 @@
 #include <inttypes.h>
 #include <system.h>
 #include <e820.h>
+
+#include <inc/core/kfuncs.h>
 #include <inc/mm/pager.h>
 #include <inc/mm/avmf.h>
 #include <inc/drivers/io/io.h>
@@ -44,6 +46,8 @@ static struct page_table* alloc_page_table(uint64_t* phys_out) {
     }
 
     *phys_out = phys;
+
+	memset(tbl, 0, PAGE_SIZE);
     
     return tbl;
 }

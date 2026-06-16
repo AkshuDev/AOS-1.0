@@ -12,8 +12,6 @@
 #include <inc/core/smp.h>
 #include <inc/core/kfuncs.h>
 
-#define ALIGN_UP(x, align) (((x) + ((align) - 1)) & ~((align) - 1))
-
 #define MAX_CMD_RESP_BUFS 16
 
 static uint8_t vq_buf[0x1000] __attribute__((aligned(4096)));

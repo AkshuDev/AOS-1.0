@@ -176,6 +176,16 @@ void serial_init_klog(const char* path, struct pbfs_mount* mnt) {
 	klog_end = size;
 }
 
+void serial_flush_klog(const char* path, struct pbfs_mount* mnt) {
+	if (!klog) return;
+	if (klog_end <= 0) {
+		return;
+	}
+	
+	if (klog_present) pbfs_update_file(mnt, path, klog, klog_end);
+	else pbfs_add(mnt, path, 0, 0, METADATA_FLAG_SYS, PERM_READ | PERM_WRITE, klog, klog_end);
+}
+
 void serial_deinit_klog(const char* path, struct pbfs_mount* mnt) {
 	if (!klog) return;
 	if (klog_end <= 0) {

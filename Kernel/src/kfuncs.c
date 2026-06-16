@@ -12,8 +12,6 @@
 #include <inc/mm/pager.h>
 #include <inc/mm/avmf.h>
 
-#define ALIGN_UP(x, align) (((x) + ((align) - 1)) & ~((align) - 1))
-
 // Memory and Stuff
 void* memset(void* s, int c, size_t n) {
      asm volatile(
@@ -36,15 +34,27 @@ void* memcpy(void* dest, const void* src, size_t n) {
 }
 
 int memcmp(const void* s1, const void* s2, size_t n) {
-    const uint8_t* p1 = s1;
-    const uint8_t* p2 = s2;
-    while (n--) {
-        if (*p1 != *p2)
-            return *p1 - *p2;
-        p1++;
-        p2++;
-    }
-    return 0;
+	int res = 0;
+
+	asm volatile(
+        "repe cmpsb\n\t"
+        "je 1f\n\t"
+        "movzbl -1(%%rsi), %%eax\n\t"
+        "movzbl -1(%%rdi), %%edx\n\t"
+        "sub %%edx, %%eax\n\t"
+        "jmp 2f\n"
+        "1:\n\t"
+        "xor %%eax, %%eax\n"
+        "2:"
+        :
+		"=&a"(res)
+        :
+		"S"(s1), "D"(s2), "c"(n)
+        :
+		"rdx", "memory"
+    );
+
+	return res;
 }
 
 int strcmp(char* s1, char* s2) {
@@ -68,11 +78,22 @@ int strncmp(char* s1, char* s2, size_t n) {
 }
 
 size_t strlen(char* s) {
-    size_t len = 0;
-    while (*s) {
-        len++;
-        s++;
-    }
+    size_t len;
+
+    asm volatile(
+        "xor %%al, %%al\n\t"
+        "mov $-1, %%rcx\n\t"
+        "repne scasb\n\t"
+        "not %%rcx\n\t"
+        "dec %%rcx"
+        :
+		"=c"(len)
+        :
+		"D"(s)
+        :
+		"rax", "memory"
+    );
+
     return len;
 }
 

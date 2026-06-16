@@ -187,8 +187,9 @@ void avmf_free(uint64_t virt) {
 
     for (uint64_t i = 0; i < pages; i++) {
         bitmap_clear(page_idx + i);
+		pager_unmap(virt + (PAGE_SIZE * i));
     }
-    pager_unmap(virt);
+    
     spin_unlock_irqrestore(&avmf_lock, rflags);
 }
 

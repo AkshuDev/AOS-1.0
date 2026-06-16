@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <system.h>
 
+#define ALIGN_UP(x, align) (((x) + ((align) - 1)) & ~((align) - 1))
+
 typedef volatile int spinlock_t;
 
 void* memset(void* s, int c, size_t n) __attribute__((used));

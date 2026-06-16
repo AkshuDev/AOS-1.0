@@ -198,6 +198,10 @@ uint16_t pcie_config_read16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t off
         return (uint16_t)(value & 0xFFFF);
 }
 
+int pcie_write_bar(uint8_t bus, uint8_t slot, uint8_t func, uint8_t bar_index, uint32_t value) {
+    return pcie_write(bus, slot, func, PCI_BAR0 + (bar_index * 4), value);
+}
+
 int pcie_write(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value) {
     if (mcfg_table) {
         int eidx = get_segment(bus);

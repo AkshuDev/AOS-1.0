@@ -4,87 +4,106 @@
 
 #include <inc/core/module.h>
 
+#include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
 
 #include <inc/drivers/usb/usb.h>
 #include <inc/drivers/usb/xhci/xhci.h>
 #include <inc/drivers/io/io.h>
 #include <inc/core/pcie.h>
+#include <inc/core/kfuncs.h>
 
 #define DOORBELL_BASE 0x20
 
 static pcie_device_t xhci_controller = {0};
 
-static volatile uint32_t* xhci_mmio = NULL;
-static struct xhci_cap_regs* cap = NULL;
-static volatile uint32_t* op_regs = NULL;
+static volatile uint32_t* xhci_mmio;
+static struct xhci_cap_regs* cap;
+static struct xhci_op_regs* op_regs;
+static volatile uint32_t* doorbells;
+static struct xhci_runtime_regs* runtime_regs;
 
-static struct xhci_trb* cmd_ring = NULL;
-static uint32_t cmd_index = 0;
-static uint8_t cmd_cycle = 1;
+static uint64_t dcbaa;
 
-static void map_xhci_mmio(void) {
+static struct xhci_trb* cmd_ring;
+static uint64_t cmd_ring_phys;
+static uint32_t cmd_index;
+static uint8_t cmd_cycle;
+
+static struct xhci_trb* event_ring;
+static struct xhci_erst_entry* erst;
+static uint64_t erst_phys;
+static uint64_t event_ring_phys;
+
+static uint32_t max_slots;
+static uint32_t max_ports;
+static uint64_t mapping_size;
+static uint64_t trbs_per_page;
+
+static void destroy_n_unmap_xhci() {
+	if (cmd_ring) { avmf_free((uint64_t)cmd_ring); cmd_ring = NULL; }
+	if (event_ring) { avmf_free((uint64_t)event_ring); event_ring = NULL; }
+	if (erst) { avmf_free((uint64_t)erst); erst = NULL; }
+	if (dcbaa > 0) { avmf_free(dcbaa); dcbaa = 0; }
+
+	for (uint64_t i = 0; i < mapping_size / PAGE_SIZE; i++) pager_unmap(AOS_xHCI_VIRT_BASE + (i * PAGE_SIZE));
+}
+
+static uint8_t map_xhci_mmio(void) {
     uint8_t bus = xhci_controller.bus;
     uint8_t slot = xhci_controller.slot;
     uint8_t func = xhci_controller.func;
 
-    uint32_t bar0 = pcie_read(bus, slot, func, 0x10);
+    uint32_t bar0 = pcie_read_bar(bus, slot, func, 0);
     uint64_t bar_phys = bar0 & ~0xFULL;
 
-    int is_64bit = ((bar0 >> 1) & 0x3) == 0x2;
-
-    if (is_64bit) {
-        uint32_t bar1 = pcie_read(bus, slot, func, 0x14);
-        bar_phys |= ((uint64_t)bar1 << 32);
-    }
-
-    uint32_t orig0 = bar0;
+    uint8_t is_64bit = ((bar0 >> 1) & 0b011) == 0x2;
+	uint32_t orig0 = bar0;
     uint32_t orig1 = 0;
 
+	if ((bar0 & 0b001) == 0x1) {
+		serial_print("[xHCI] BAR0 is not a memory BAR, mapping failed!\n");
+		return 0;
+	}
+
     if (is_64bit) {
-        orig1 = pcie_read(bus, slot, func, 0x14);
+        orig1 = pcie_read_bar(bus, slot, func, 1);
+        bar_phys |= ((uint64_t)orig1 << 32);
     }
 
-    pcie_write(bus, slot, func, 0x10, 0xFFFFFFFF);
-    if (is_64bit)
-        pcie_write(bus, slot, func, 0x14, 0xFFFFFFFF);
+    pcie_write_bar(bus, slot, func, 0, 0xFFFFFFFF);
+    if (is_64bit) pcie_write_bar(bus, slot, func, 1, 0xFFFFFFFF);
 
-    uint32_t mask0 = pcie_read(bus, slot, func, 0x10);
-    uint32_t mask1 = is_64bit ? pcie_read(bus, slot, func, 0x14) : 0;
+    uint32_t mask0 = pcie_read_bar(bus, slot, func, 0);
+    uint32_t mask1 = is_64bit ? pcie_read_bar(bus, slot, func, 1) : 0;
 
-    pcie_write(bus, slot, func, 0x10, orig0);
-    if (is_64bit)
-        pcie_write(bus, slot, func, 0x14, orig1);
+    pcie_write_bar(bus, slot, func, 0, orig0);
+    if (is_64bit) pcie_write_bar(bus, slot, func, 1, orig1);
 
     uint64_t mask = mask0 & ~0xFULL;
-    if (is_64bit)
-        mask |= ((uint64_t)mask1 << 32);
+    if (is_64bit) mask |= ((uint64_t)mask1 << 32);
 
-    uint64_t size = ~(mask) + 1;
+    mapping_size = ~(mask) + 1;
 
-    pager_map_range(AOS_xHCI_VIRT_BASE, bar_phys, size, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
+    pager_map_range(AOS_xHCI_VIRT_BASE, bar_phys, mapping_size, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
+	pcie_enable_busmaster(bus, slot, func);
 
     xhci_mmio = (volatile uint32_t*)AOS_xHCI_VIRT_BASE;
     cap = (struct xhci_cap_regs*)xhci_mmio;
-    op_regs = (volatile uint32_t*)((uint8_t*)xhci_mmio + cap->cap_length);
+    op_regs = (struct xhci_op_regs*)((uint8_t*)xhci_mmio + cap->cap_length);
+	runtime_regs = (struct xhci_runtime_regs*)((uint8_t*)xhci_mmio + cap->rtsoff);
+	doorbells = (volatile uint32_t*)((uint8_t*)xhci_mmio + cap->dboff);
 
-    serial_printf("Mapped all XHCI (Size: 0x%llx)\n", size);
+	max_slots = cap->hcs_params1 & 0xFF;
+	max_ports = (cap->hcs_params1 >> 24) & 0xFF;
+	trbs_per_page = PAGE_SIZE / sizeof(struct xhci_trb);
+
+    serial_printf("[xHCI] Mapped all XHCI (Size: 0x%llx) (Version: %u)\n", mapping_size, cap->hc_version);
+	return 1;
 }
 
 static void xhci_send_cmd(uint32_t type, uint64_t param) {
-    struct xhci_trb* trb = &cmd_ring[cmd_index++];
-
-    trb->param = param;
-    trb->status = 0;
-    trb->control = (type << 10) | cmd_cycle;
-
-    if (cmd_index >= 256) {
-        cmd_index = 0;
-        cmd_cycle ^= 1;
-    }
-
-    volatile uint32_t* doorbell = (volatile uint32_t*)(xhci_mmio + cap->dboff);
-    doorbell[0] = 0;
+    
 }
 
 uint8_t xhci_init(struct AOS_Module* module) {
@@ -93,7 +112,94 @@ uint8_t xhci_init(struct AOS_Module* module) {
     if (module->Modules.driver_module.type != MODULE_DRIVER_TYPE_xHCI) return 0;
     
     xhci_controller = module->Modules.driver_module.pcie_device;
-    map_xhci_mmio();
+    if (!map_xhci_mmio()) return 0;
+
+	// Reset
+	op_regs->usbcmd &= ~1;
+	uint64_t timeout = kget_ms_passed();
+	while (!(op_regs->usbsts & (1 << 0))) {
+		if (kget_ms_passed() - timeout >= 10000) {
+			serial_print("[xHCI] Controller Timeout!\n");
+			for (uint64_t i = 0; i < mapping_size / PAGE_SIZE; i++) pager_unmap(AOS_xHCI_VIRT_BASE + (i * PAGE_SIZE));
+			return 0;
+		}
+	}
+	op_regs->usbcmd |= (1 << 1); // Set HCRST
+	timeout = kget_ms_passed();
+	while (op_regs->usbcmd & (1 << 1)) {
+		if (kget_ms_passed() - timeout >= 10000) {
+			serial_print("[xHCI] Controller Timeout!\n");
+			for (uint64_t i = 0; i < mapping_size / PAGE_SIZE; i++) pager_unmap(AOS_xHCI_VIRT_BASE + (i * PAGE_SIZE));
+			return 0;
+		}
+	}
+	timeout = kget_ms_passed();
+	while (op_regs->usbsts & (1 << 11)) {
+		if (kget_ms_passed() - timeout >= 10000) {
+			serial_print("[xHCI] Controller Timeout!\n");
+			for (uint64_t i = 0; i < mapping_size / PAGE_SIZE; i++) pager_unmap(AOS_xHCI_VIRT_BASE + (i * PAGE_SIZE));
+			return 0;
+		}
+	}
+
+	dcbaa = avmf_alloc(ALIGN_UP((max_slots + 1) * sizeof(uint64_t), 64), MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &op_regs->dcbaap);
+	if (!dcbaa) {
+		serial_print("[xHCI] Failed to allocate DCBAA\n");
+		for (uint64_t i = 0; i < mapping_size / PAGE_SIZE; i++) pager_unmap(AOS_xHCI_VIRT_BASE + (i * PAGE_SIZE));
+		return 0;
+	}
+	memset((void*)dcbaa, 0, (max_slots + 1) * sizeof(uint64_t));
+
+	cmd_ring = (struct xhci_trb*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &cmd_ring_phys);
+	if (!cmd_ring) {
+		serial_print("[xHCI] Failed to allocate CMD Ring\n");
+		destroy_n_unmap_xhci();
+		return 0;
+	}
+	memset(cmd_ring, 0, PAGE_SIZE);
+
+	cmd_ring[trbs_per_page-1].param = cmd_ring_phys;
+	cmd_ring[trbs_per_page-1].control = 1 | (6 << 10) | (1 << 1); // Link TRB Type | Toggle Cycle
+
+	event_ring = (struct xhci_trb*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &event_ring_phys);
+	if (!event_ring) {
+		serial_print("[xHCI] Failed to allocate EVENT Ring\n");
+		destroy_n_unmap_xhci();
+		return 0;
+	}
+	memset(event_ring, 0, PAGE_SIZE);
+
+	erst = (struct xhci_erst_entry*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &erst_phys);
+	if (!erst) {
+		serial_print("[xHCI] Failed to allocate ERST\n");
+		destroy_n_unmap_xhci();
+		return 0;
+	}
+	memset(erst, 0, PAGE_SIZE);
+
+	cmd_index = 0;
+	cmd_cycle = 1;
+
+	op_regs->crcr = cmd_ring_phys | cmd_cycle;
+
+	erst[0].ring_segment_base = event_ring_phys;
+	erst[0].ring_segment_size = trbs_per_page;
+
+	runtime_regs->intr_reg_set[0].erstsz = 1;
+	runtime_regs->intr_reg_set[0].erstba = erst_phys;
+	runtime_regs->intr_reg_set[0].erdp = event_ring_phys;
+
+	op_regs->config = max_slots;
+
+	op_regs->usbcmd |= 1;
+	timeout = kget_ms_passed();
+	while (op_regs->usbsts & 1) {
+		if (kget_ms_passed() - timeout >= 10000) {
+			serial_print("[xHCI] Controller Timeout!\n");
+			destroy_n_unmap_xhci();
+			return 0;
+		}
+	}
 
     return 1;
 }
