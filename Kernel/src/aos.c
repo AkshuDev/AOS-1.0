@@ -78,7 +78,7 @@ void kernel_main(void) {
         "mov %%rsp, %%rbp"
         :
         :
-        "r"(&stack_top)
+        "r"(stack_top)
         :
         "memory"
     );

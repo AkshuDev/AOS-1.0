@@ -12,6 +12,7 @@
 #include <inc/drivers/gpu/gpu.h>
 #include <inc/drivers/gpu/apis/pyrion.h>
 #include <inc/drivers/core/framebuffer.h>
+#include <inc/drivers/usb/xhci/xhci.h>
 
 #include <inc/core/module.h>
 
@@ -119,6 +120,28 @@ uint8_t modules_init(void) {
 
             .active = 0,
         }
+    };
+
+	// xHCI
+    id = module_count++;
+    modules[id].hdr = (struct AOS_ModuleHeader){
+        .name = "AOS-inb-driver-usb-xHCI",
+        .signature = AOS_MODULE_SIGN(id),
+        .version = AOS_MODULE_PACK_VERSION(1, 0, 0),
+        .type = MODULE_TYPE_DRIVER,
+        .registered = 0
+    };
+    modules[id].Modules.driver_module = (struct AOS_ModuleDriver){
+        .type = MODULE_DRIVER_TYPE_xHCI,
+        
+        .target_class = PCI_CLASS_SERIAL_BUS_CONTROLLER,
+        .target_subclass = PCI_SUBCLASS_USB,
+        .target_progifclass = XHCI_PROGRAMMIMG_INTERFACE,
+        .target_use_progifclass = 1,
+        .target_revision = 0,
+        .target_use_revision = 0,
+        .target_vendor = 0,
+        .target_use_vendor = 0,
     };
 
     serial_print("[Module-System] Core Modules Loaded!\n");

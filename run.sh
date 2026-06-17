@@ -265,6 +265,7 @@ case "$mode" in
             -drive file=Bin/disk.pbfs,format=raw,if=none,id=drive0 \
             -device ahci,id=ahci \
             -device ide-hd,bus=ahci.0,drive=drive0 \
+			-device qemu-xhci \
             $GPU_OPTS \
             $KBD_OPTS \
             $MOUSE_OPTS \
@@ -285,6 +286,7 @@ case "$mode" in
             -drive file=Bin/disk.pbfs,format=raw,if=none,id=drive0 \
             -device ahci,id=ahci \
             -device ide-hd,bus=ahci.0,drive=drive0 \
+			-device qemu-xhci \
             $GPU_OPTS \
             $KBD_OPTS \
             $MOUSE_OPTS \
@@ -302,6 +304,7 @@ case "$mode" in
             $CPU_OPTS \
             $SMP_OPTS \
             -hda Bin/disk.pbfs \
+			-device qemu-xhci \
             $GPU_OPTS \
             $KBD_OPTS \
             $MOUSE_OPTS \

@@ -2,7 +2,7 @@ ENTRY(kernel_main)
 
 SECTIONS
 {
-    /* Force the very start of the kernel at 0x100000 */
+    /* Force the very start of the kernel at VIRTUAL ADDR 0x100000 */
     . = 0x100000;
 
     /* Kernel entry section */

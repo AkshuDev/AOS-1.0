@@ -410,12 +410,14 @@ void smp_init(void) {
 
         serial_printf("[SMP] Sending SIPI to APIC ID %lld\n", id);
         send_ipi(id, 0x08);
-        kdelay(200);
-        if (ap_boot_flag == 0) {
-            send_wakeup_ipi(id, 0x08);
+		if (ap_boot_flag == 0) {
+			kdelay(200);
+			if (ap_boot_flag == 0) {
+				send_wakeup_ipi(id, 0x08);
 
-            uint64_t timeout = kget_ms_passed();
-            while(ap_boot_flag == 0 && kget_ms_passed() - timeout < 1000) { asm volatile("pause");}
+				uint64_t timeout = kget_ms_passed();
+				while(ap_boot_flag == 0 && kget_ms_passed() - timeout < 1000) { asm volatile("pause");}
+			}
         }
 
         if (ap_boot_flag == 0) {

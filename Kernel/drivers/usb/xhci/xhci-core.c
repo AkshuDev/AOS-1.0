@@ -15,6 +15,31 @@
 
 #define DOORBELL_BASE 0x20
 
+#define TRB_TRANSFER_EVENT 32
+#define TRB_COMPLETION_EVENT 33
+#define TRB_PORT_STATUS_CHANGE_EVENT 34
+#define TRB_BANDWIDTH_REQ_EVENT 35
+#define TRB_DOORBELL_EVENT 36
+#define TRB_HOST_CONTROLLER_EVENT 37
+#define TRB_DEVICE_NOTIFICATION_EVENT 38
+#define TRB_MFINDEX_WRAP_EVENT 39
+
+#define TRB_CMD_NOOP 23
+#define TRB_CMD_ENABLE_SLOT 9
+#define TRB_CMD_DISABLE_SLOT 10
+#define TRB_CMD_ADDRESS_DEVICE 11
+#define TRB_CMD_CONFIGURE_ENDPOINT 12
+#define TRB_CMD_EVALUATE_CONTEXT 13
+#define TRB_CMD_RESET_ENDPOINT 14
+#define TRB_CMD_STOP_ENDPOINT 15
+#define TRB_CMD_SET_TR_DEQUEUE 16
+#define TRB_CMD_RESET_DEVICE 17
+#define TRB_CMD_FORCE_EVENT 18
+#define TRB_CMD_NEGOTIATE_BW 19
+#define TRB_CMD_SET_LATENCY_TOL 20
+#define TRB_CMD_GET_PORT_BANDWIDTH 21
+#define TRB_CMD_FORCE_HEADER 22
+
 static pcie_device_t xhci_controller = {0};
 
 static volatile uint32_t* xhci_mmio;
@@ -31,6 +56,9 @@ static uint32_t cmd_index;
 static uint8_t cmd_cycle;
 
 static struct xhci_trb* event_ring;
+static uint32_t event_index;
+static uint8_t event_cycle;
+
 static struct xhci_erst_entry* erst;
 static uint64_t erst_phys;
 static uint64_t event_ring_phys;
@@ -39,6 +67,9 @@ static uint32_t max_slots;
 static uint32_t max_ports;
 static uint64_t mapping_size;
 static uint64_t trbs_per_page;
+
+static uint64_t port;
+static uint64_t speed;
 
 static void destroy_n_unmap_xhci() {
 	if (cmd_ring) { avmf_free((uint64_t)cmd_ring); cmd_ring = NULL; }
@@ -102,8 +133,45 @@ static uint8_t map_xhci_mmio(void) {
 	return 1;
 }
 
+static struct xhci_trb* xhci_next_event(void) {
+    struct xhci_trb* trb = &event_ring[event_index];
+
+    if ((trb->control & 1) != event_cycle) return NULL;
+    struct xhci_trb* result = trb;
+
+    event_index++;
+    if (event_index == trbs_per_page) {
+        event_index = 0;
+        event_cycle ^= 1;
+    }
+    runtime_regs->intr_reg_set[0].erdp = (event_ring_phys + event_index * sizeof(struct xhci_trb)) | (1 << 3);
+    return result;
+}
+
+static struct xhci_trb* xhci_wait_cmd(void) {
+    uint64_t timeout = kget_ms_passed();
+    while (1) {
+        struct xhci_trb* event = xhci_next_event();
+        if (event) {
+            uint32_t type = (event->control >> 10) & 0x3F;
+            if (type == TRB_COMPLETION_EVENT) return event;
+        }
+        if (kget_ms_passed() - timeout >= 5000) return NULL;
+    }
+}
+
 static void xhci_send_cmd(uint32_t type, uint64_t param) {
-    
+	cmd_ring[cmd_index].param = param;
+	cmd_ring[cmd_index].status = 0;
+	cmd_ring[cmd_index].control = (type << 10) | cmd_cycle;
+
+	cmd_index++;
+	if (cmd_index == trbs_per_page-1){
+		cmd_index = 0;
+		cmd_cycle ^= 1;
+	}
+
+	doorbells[0] = 0;
 }
 
 uint8_t xhci_init(struct AOS_Module* module) {
@@ -179,6 +247,8 @@ uint8_t xhci_init(struct AOS_Module* module) {
 
 	cmd_index = 0;
 	cmd_cycle = 1;
+	event_index = 0;
+	event_cycle = 1;
 
 	op_regs->crcr = cmd_ring_phys | cmd_cycle;
 
@@ -200,6 +270,65 @@ uint8_t xhci_init(struct AOS_Module* module) {
 			return 0;
 		}
 	}
+
+	runtime_regs->intr_reg_set[0].iman |= (1 << 1); // Enable interrupts
+	op_regs->usbcmd |= (1 << 2); // Enable Global interrupts
+
+	xhci_send_cmd(TRB_CMD_ENABLE_SLOT, 0);
+	struct xhci_trb* event = xhci_wait_cmd();
+	if (!event) {
+		serial_print("[xHCI] Enable Slot timeout\n");
+		destroy_n_unmap_xhci();
+		return 0;
+	}
+
+	if (((event->status >> 24) & 0xFF) != 1) {
+		serial_printf("[xHCI] Enable Slot Command failed: %u\n", ((event->status >> 24) & 0xFF));
+		destroy_n_unmap_xhci();
+		return 0;
+	}
+	
+	port = UINT64_MAX;
+	uint8_t slot_id = (event->control >> 24) & 0xFF;
+	for (uint32_t i = 0; i < max_ports; i++) {
+		uint32_t portsc = op_regs->ports[i].portsc;
+		if (portsc & 1) {
+			serial_printf("[xHCI] Found Device on Port: %u\n", i + 1);
+			port = i;
+			break;
+		}
+	}
+
+	if (port == UINT64_MAX) {
+		serial_print("[xHCI] No devices found!\n");
+		destroy_n_unmap_xhci();
+		return 0;
+	}
+
+	uint32_t portsc = op_regs->ports[port].portsc;
+	portsc &= ~(0x7F << 17);
+	portsc |= (1 << 4); // PR
+	op_regs->ports[port].portsc = portsc;
+
+	timeout = kget_ms_passed();
+	while (op_regs->ports[port].portsc & (1 << 4)) {
+		if (kget_ms_passed() - timeout >= 10000) {
+			serial_print("[xHCI] Port reset timed out!\n");
+			destroy_n_unmap_xhci();
+			return 0;
+		}
+	}
+	timeout = kget_ms_passed();
+	while (!(op_regs->ports[port].portsc & (1 << 1))) {
+		if (kget_ms_passed() - timeout >= 10000) {
+			serial_print("[xHCI] Port Enable timed out!\n");
+			destroy_n_unmap_xhci();
+			return 0;
+		}
+	}
+
+	speed = (op_regs->ports[port].portsc >> 10) & 0xF;
+	serial_printf("[xHCI] Port speed: %u\n", speed);
 
     return 1;
 }
