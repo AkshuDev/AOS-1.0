@@ -25,7 +25,7 @@ EXTRA ?= -march=x86-64 -mtune=generic -funroll-loops -w
 CFLAGS := -ffreestanding -mno-red-zone -O$(OPT_LEVEL) $(EXTRA) \
 		-fno-stack-protector -fno-pic -nostdlib -m64 \
 		-I ../PBFS -I ../Headers -I ../Kernel -I MBR/inc -w \
-		-DAOS_DIRECT_MAP_BASE=0
+		-DMODULE_NVIRTIO -DMODULE_NXHCI
 UEFI_CFLAGS := -mabi=ms \
 		-ffreestanding -fshort-wchar \
 		-mno-red-zone -fno-stack-protector \
@@ -58,15 +58,17 @@ UEFI_TARGET := $(UEFI_BIN_DIR)/aos_bootloader.img
 
 KERNEL := ../Kernel
 DRIVER := $(KERNEL)/drivers
-DRIVER_CORE := $(DRIVER)/core
 MBR_DRIVERS_SRC := $(DRIVER)/io/io.c \
 					$(KERNEL)/src/kfuncs.c \
-					$(DRIVER)/core/acpi.c
-MBR_BTL_DRIVERS_SRC := $(MBR_SRC_DIR)/pcie.c \
-					$(MBR_SRC_DIR)/drive.c \
-					$(MBR_SRC_DIR)/drivers/sata.c \
-					$(MBR_SRC_DIR)/ambrc.c \
-					$(MBR_SRC_DIR)/keyboard.c \
+					$(KERNEL)/src/module.c \
+					$(KERNEL)/mm/avmf.c \
+					$(KERNEL)/mm/pager.c \
+					$(DRIVER)/core/acpi.c \
+					$(DRIVER)/core/pcie.c \
+					$(DRIVER)/io/SATA/sata.c \
+					$(DRIVER)/io/drive.c \
+					$(DRIVER)/keyboard/keyboard.c
+MBR_BTL_DRIVERS_SRC := $(MBR_SRC_DIR)/ambrc.c \
 					$(MBR_SRC_DIR)/panic_shell.c
 MBR_DRIVERS_O := $(patsubst $(KERNEL)/%.c,$(MBR_BUILD_DIR)/%.o,$(MBR_DRIVERS_SRC))
 MBR_BTL_DRIVERS_O := $(patsubst $(MBR_SRC_DIR)/%.c,$(MBR_BUILD_DIR)/%.o,$(MBR_BTL_DRIVERS_SRC))

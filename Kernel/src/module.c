@@ -38,6 +38,7 @@ uint8_t modules_init(void) {
 
     int id = module_count++;
     // SATA
+	#ifndef MODULE_NSATA
     modules[id].hdr = (struct AOS_ModuleHeader){
         .name = "AOS-inb-driver-SATA",
         .signature = AOS_MODULE_SIGN(id),
@@ -70,8 +71,10 @@ uint8_t modules_init(void) {
             .block_dev = (struct block_device){0}
         }
     };
+	#endif
 
     // Virtio-GPU
+	#ifndef MODULE_NVIRTIO
     id = module_count++;
     modules[id].hdr = (struct AOS_ModuleHeader){
         .name = "AOS-inb-driver-gpu-VIRTIO",
@@ -121,8 +124,10 @@ uint8_t modules_init(void) {
             .active = 0,
         }
     };
+	#endif
 
 	// xHCI
+	#ifndef MODULE_NXHCI
     id = module_count++;
     modules[id].hdr = (struct AOS_ModuleHeader){
         .name = "AOS-inb-driver-usb-xHCI",
@@ -143,6 +148,7 @@ uint8_t modules_init(void) {
         .target_vendor = 0,
         .target_use_vendor = 0,
     };
+	#endif
 
     serial_print("[Module-System] Core Modules Loaded!\n");
 

@@ -4,7 +4,11 @@
 #include <inc/core/kfuncs.h>
 #include <inc/drivers/io/io.h>
 #include <inc/core/acpi.h>
+#include <inc/core/module.h>
 #include <inc/drivers/io/drive.h>
+
+#include <inc/mm/avmf.h>
+#include <inc/mm/pager.h>
 
 #include <stddef.h>
 
@@ -20,14 +24,6 @@
 
 #include <ambrc.h>
 #include <panic_shell.h>
-
-#define CMOS_BYTE_IDX_AOSB_FLAGS 0x0B
-#define CMOS_BYTE_IDX_KERNEL_INFO 0x0A
-
-#define CMOS_AOSB_FLAG_SAFE_MODE (1 << 0)
-#define CMOS_AOSB_FLAG_PANIC_MODE (1 << 1)
-
-#define CMOS_KERNEL_INFO_KERNEL_ACTIVE (1 << 0)
 
 void pm_print_hex(struct VMemDesign* cursor, unsigned int val) {
     char hex[9];
@@ -72,16 +68,6 @@ void enable_a20(void) {
     );
 }
 
-void write_cmos(uint8_t index, uint8_t value) {
-    asm_outb(0x70, index); // select CMOS byte
-    asm_outb(0x71, value); // write value
-}
-
-uint8_t read_cmos(uint8_t index) {
-    asm_outb(0x70, index); // select CMOS byte
-    return asm_inb(0x71); // read value
-}
-
 __attribute__((naked, noreturn))
 void stage3_jump_to_kernel(void (*kernel)(void), uint64_t stack_top) {
     __asm__ __volatile__ (
@@ -99,36 +85,24 @@ uint8_t compute_checksum(const uint8_t* data, uint32_t len) {
     return (uint8_t)(sum & 0xFF);
 }
 
-static uint64_t free_ptr = 0x8000; // 32KB
 static drive_device_t cur_drive = {0};
 static uint8_t found_drive = 0;
 
 static uint8_t current_mode = 0; // 1 = Safe, 2 = Panic, 0 = Normal
 static uint8_t rdtscp_supported = 0;
 
-void* btl_malloc(size_t size) {
-    uint64_t ret = free_ptr;
-    free_ptr += size;
-    return (void*)ret;
-}
-void btl_free(void* ptr) {
-    return; // Useless
-}
-
 // Fake funcs
-typedef enum {
-    MALLOC_TYPE_UNKNOWN = 0,
-    MALLOC_TYPE_USER,
-    MALLOC_TYPE_KERNEL,
-    MALLOC_TYPE_DRIVER,
-    MALLOC_TYPE_SENSITIVE
-} MemoryAllocType;
-uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, int flags, uint64_t* phys_out) { return (uint64_t)btl_malloc(size); }
-void avmf_free(uint64_t virt) { btl_free((void*)virt); }
-uint64_t avmf_alloc_virt(uint64_t size, MemoryAllocType type) { return (uint64_t)btl_malloc(size); }
 void smp_shutdown(void) {return;}
 
 // Real funcs again
+void* btl_malloc(size_t size) {
+	return (void*)avmf_alloc((uint64_t)size, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL);
+}
+
+void btl_free(void* ptr) {
+	avmf_free((uint64_t)ptr);
+}
+
 void draw_menu_frame(struct VMemDesign* cursor) {
     int width = IO_VMEM_MAX_COLS;
     int height = IO_VMEM_MAX_ROWS;
@@ -370,6 +344,7 @@ void stage3(void) {
 
 	serial_init();
     enable_a20();
+
     init_backup_ambrc();
     struct ambrc* ambrc = get_ambrc();
 
@@ -381,7 +356,10 @@ void stage3(void) {
         .serial_out = 0
     };
 
+	pager_init();
     acpi_init();
+	modules_init();
+	pcie_init();
 
     ktimer_calibrate();
 
@@ -390,51 +368,19 @@ void stage3(void) {
     uint64_t tsc_end = read_tsc();
     uint64_t cycles_per_ms = tsc_end - tsc_start2;
 
-    switch (ambrc->boot_info.crash_verification_mode) {
-        case 0: break;
-        case 1: 
-            current_mode = (uint64_t)(tsc_start / cycles_per_ms) > 64000 ? 2 : 0;
-            break;
-        case 2:
-            current_mode = 0;// read_cmos(CMOS_BYTE_IDX_KERNEL_INFO) & CMOS_KERNEL_INFO_KERNEL_ACTIVE ? 2 : 0;
-            break;
-        case 3:
-            uint64_t tsc_is_fine = (uint64_t)(tsc_start / cycles_per_ms) > 64000 ? 0 : 1;
-            uint64_t kernel_is_fine = 1;// read_cmos(CMOS_BYTE_IDX_KERNEL_INFO) & CMOS_KERNEL_INFO_KERNEL_ACTIVE ? 0 : 1;
-            current_mode = !tsc_is_fine && !kernel_is_fine ? 2 : tsc_is_fine && kernel_is_fine ? 0 : 1;
-            break;
-        default: break;
-    }
-
-    switch (current_mode) {
-        case 1: // write_cmos(CMOS_BYTE_IDX_AOSB_FLAGS, CMOS_AOSB_FLAG_SAFE_MODE); break;
-        case 2: // write_cmos(CMOS_BYTE_IDX_AOSB_FLAGS, CMOS_AOSB_FLAG_PANIC_MODE); break;
-        default: break;
-    }
-
     vmem_disable_cursor();
 
     vmem_clear_screen(&cursor);
     if (ambrc->display.splash_duration > 0) display_splash(ambrc, &cursor);
-    
-    unsigned char *mem = (unsigned char *)0x100000;
+
+	unsigned char *mem = (unsigned char *)0x100000;
     *mem = 0xAA;
     if (*mem != 0xAA) {
         cursor.fg = ambrc->display.error_fg_color;
         vmem_print(&cursor, "A20 line disabled!\n");
         for (;;) asm("hlt");
     }
-
-    uint8_t boot_drive = *AOS_BOOT_INFO_LOC; // Get Boot drive
-    aos_sysinfo_t* SystemInfo = (aos_sysinfo_t*)AOS_SYS_INFO_LOC;
-    SystemInfo->boot_drive = boot_drive;
-    SystemInfo->boot_mode = 0;
-    SystemInfo->reserved0 = 0;
-    SystemInfo->cpu_signature = cpuid_signature();
-    cpuid_get_vendor(SystemInfo->cpu_vendor);
-    SystemInfo->checksum = 0;
-    SystemInfo->checksum = compute_checksum((uint8_t*)SystemInfo, sizeof(aos_sysinfo_t));
-
+    
     struct pbfs_funcs funcs = {
         .malloc=btl_malloc,
         .free=btl_free
@@ -443,6 +389,8 @@ void stage3(void) {
     struct pbfs_mount mnt = {0};
 
 	vmem_clear_screen(&cursor);
+
+	uint8_t boot_drive = *AOS_BOOT_INFO_LOC; // Get Boot drive
 
     if (get_available_drives(&cur_drive) == 1) {
         if (cur_drive.active != 1) {
@@ -493,6 +441,32 @@ void stage3(void) {
 		acpi_reboot();
 	}
 
+    aos_sysinfo_t* SystemInfo = (aos_sysinfo_t*)AOS_SYS_INFO_LOC;
+	read_blk(&cur_drive.block_dev, mnt.header64.sysinfo_lba, SystemInfo);
+    SystemInfo->boot_drive = boot_drive;
+    SystemInfo->boot_mode = 0;
+    SystemInfo->reserved0 = 0;
+    SystemInfo->cpu_signature = cpuid_signature();
+    cpuid_get_vendor(SystemInfo->cpu_vendor);
+    SystemInfo->checksum = 0;
+    SystemInfo->checksum = compute_checksum((uint8_t*)SystemInfo, sizeof(aos_sysinfo_t));
+
+	switch (ambrc->boot_info.crash_verification_mode) {
+        case 0: break;
+        case 1: 
+            current_mode = (uint64_t)(tsc_start / cycles_per_ms) > 64000 ? 2 : 0;
+            break;
+        case 2:
+            current_mode = SystemInfo->kernel_info & AOS_BOOTLOADER_KERNEL_ACTIVE_FLAG ? 2 : 0;
+            break;
+        case 3:
+            uint8_t tsc_is_fine = (uint64_t)(tsc_start / cycles_per_ms) > 64000 ? 0 : 1;
+            uint8_t kernel_is_fine = !(SystemInfo->kernel_info & AOS_BOOTLOADER_KERNEL_ACTIVE_FLAG);
+            current_mode = !tsc_is_fine && !kernel_is_fine ? 2 : tsc_is_fine && kernel_is_fine ? 0 : 1;
+            break;
+        default: break;
+    }
+
     PBFS_Kernel_Entry os_entries[20];
     uint64_t entry_count = 0;
     
@@ -538,14 +512,12 @@ void stage3(void) {
                 switch (scancode) {
                     case 0x15: // Y key
                         current_mode = 2;
-                        //write_cmos(CMOS_BYTE_IDX_AOSB_FLAGS, CMOS_AOSB_FLAG_PANIC_MODE);
                         start_panic_shell(&cur_drive, NULL, 0);
                         popup_active = 0;
                         popup_finished = 1;
                         break;
                     case 0x31: // N key
                         current_mode = 0;
-                        //write_cmos(CMOS_BYTE_IDX_AOSB_FLAGS, 0);
                         popup_active = 0;
                         popup_finished = 1;
                         break;
@@ -677,16 +649,19 @@ void stage3(void) {
     }
     vmem_printf(&cursor, "Loading %s...\n", os_entries[final_kernel_idx].name);
 
+	pager_map_range((uint64_t)ambrc->kernel_info[final_kernel_idx].load_addr, (uint64_t)ambrc->kernel_info[final_kernel_idx].load_addr, (mnt.header64.block_size * uint128_to_u64(os_entries[final_kernel_idx].count)) + 0x40000000, PAGE_PRESENT | PAGE_RW);
+	
     if (!read_f(&cur_drive.block_dev, uint128_to_u64(os_entries[final_kernel_idx].lba), uint128_to_u32(os_entries[final_kernel_idx].count), (void*)ambrc->kernel_info[final_kernel_idx].load_addr)) {
         serial_print("Failed to read kernel, Disk error!\n");
 		start_panic_shell(&cur_drive, "Failed to read kernel, Disk error!", 1);
         acpi_reboot();
     }
 
-    vmem_print(&cursor, "Jumping to Kernel...\n");
+	SystemInfo->kernel_info = AOS_BOOTLOADER_KERNEL_ACTIVE_FLAG;
+	write_blk(&cur_drive.block_dev, mnt.header64.sysinfo_lba, SystemInfo);
 
-    //write_cmos(CMOS_BYTE_IDX_KERNEL_INFO, CMOS_KERNEL_INFO_KERNEL_ACTIVE);
-    stage3_jump_to_kernel((void(*)(void))((void*)ambrc->kernel_info[final_kernel_idx].entry_point), AOS_KERNEL_STACK_TOP);
+    vmem_print(&cursor, "Jumping to Kernel...\n");
+	stage3_jump_to_kernel((void(*)(void))((void*)ambrc->kernel_info[final_kernel_idx].entry_point), AOS_KERNEL_STACK_TOP);
 
     __builtin_unreachable(); // Tell GCC control never returns 
 }

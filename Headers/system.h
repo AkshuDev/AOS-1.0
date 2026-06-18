@@ -17,6 +17,8 @@
 #define AOS_SYSINFO_SPAN 1   // block span
 #define AOS_SYSINFO_SIZE 512 // bytes
 
+#define AOS_BOOTLOADER_KERNEL_ACTIVE_FLAG (1 << 1)
+
 #ifndef AOS_USER_SPACE_BASE
 	#define AOS_USER_SPACE_BASE 0x0000000010000000ULL
 #endif
@@ -45,16 +47,15 @@
 
 #pragma pack(push, 1)
 typedef struct {
-  uint8_t boot_drive; // BIOS DL Value
-  uint8_t boot_mode;  // 0=Normal | 1=Recovery | 2=Shell | 3=VGA | 4=VGA+Shell
-  uint16_t reserved0; // alignment
-  uint32_t cpu_signature;    // CPUID EAX from 0x1
-  char cpu_vendor[13];       // Cpu Vendor
-  uint8_t apic_present;      // 1 if APIC was found
-  uint64_t tsc_freq_hz;      // timing info
-  uint8_t checksum;          // additive checksum
-
-  uint8_t reserved[512 - 48]; // Padded to 512 bytes
+	uint8_t boot_drive; // BIOS DL Value
+	uint8_t boot_mode;  // 0=Normal | 1=Recovery | 2=Shell | 3=VGA | 4=VGA+Shell
+	uint16_t reserved0; // alignment
+	uint32_t cpu_signature;    // CPUID EAX from 0x1
+	char cpu_vendor[13];       // Cpu Vendor
+	uint8_t apic_present;      // 1 if APIC was found
+	uint64_t tsc_freq_hz;      // timing info
+	uint8_t kernel_info;       // Kernel information such as, kernel active flag
+	uint8_t checksum;          // additive checksum
 } aos_sysinfo_t;
 #pragma pack(pop)
 

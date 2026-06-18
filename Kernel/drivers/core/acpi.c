@@ -14,9 +14,6 @@
 #define EBDA_SEG_PTR 0x40E
 #define MADT_TYPE_LAPIC 0
 
-#define CMOS_BYTE_IDX_KERNEL_INFO 0x1B
-#define CMOS_KERNEL_INFO_KERNEL_ACTIVE (1 << 0)
-
 static struct acpi_mcfg* mcfg_table = NULL;
 static struct acpi_madt* madt_table = NULL;
 static struct acpi_fadt* fadt_table = NULL;
@@ -208,6 +205,18 @@ static void acpi_timer_init(struct acpi_fadt* fadt) {
 
 static void acpi_parse_fadt(struct acpi_fadt* fadt) {
     acpi_timer_init(fadt);
+
+	uint64_t dsdt_phys = 0x0;
+	if (fadt->header.revision >= 2) { // 64-bit version
+		dsdt_phys = fadt_table->x_dsdt;
+	} else {
+		dsdt_phys = fadt_table->dsdt;
+	}
+	if (!dsdt_phys) return;
+
+	struct acpi_sdt_header* dsdt = (struct acpi_sdt_header*)(AOS_DIRECT_MAP_BASE + dsdt_phys);
+	uint8_t* aml = ((uint8_t*)dsdt) + sizeof(struct acpi_sdt_header);
+	size_t aml_length = dsdt->length - sizeof(struct acpi_sdt_header);
 }
 
 static void acpi_parse_rsdt(struct acpi_rsdp_descriptor* rsdp) {
@@ -319,16 +328,13 @@ static void acpi_triple_fault_reboot(void) {
 
 void acpi_reboot(void) {
     smp_shutdown();
-    asm_outb(0x70, CMOS_BYTE_IDX_KERNEL_INFO | 0x80); // select CMOS byte
-    asm_outb(0x71, 0); // write value
 
-    volatile uint8_t verify;
-    do {
-        asm_outb(0x70, CMOS_BYTE_IDX_KERNEL_INFO | 0x80);
-        verify = asm_inb(0x71);
-    } while (verify != 0);
-
-    asm_outb(0x70, 0);
+	// #ifndef AOS_BOOTLOADER
+	// aos_sysinfo_t* sinfo = kget_sysinfo();
+	// if (sinfo) {
+	// 	sinfo->kernel_info = 0;
+	// }
+	// #endif
 
     if (!fadt_table) {
         acpi_8042_reboot();
@@ -361,17 +367,15 @@ void acpi_reboot(void) {
     for (;;) {asm volatile("hlt");}
 }
 
-void acpi_shutdown() {
-    asm_outb(0x70, CMOS_BYTE_IDX_KERNEL_INFO | 0x80); // select CMOS byte
-    asm_outb(0x71, 0); // write value
+void acpi_shutdown() {;
+    smp_shutdown();
+	
+	asm volatile("cli");
+	
+	asm_outb(0x21,0xFF);
+	asm_outb(0xA1,0xFF);
 
-    volatile uint8_t verify;
-    do {
-        asm_outb(0x70, CMOS_BYTE_IDX_KERNEL_INFO | 0x80);
-        verify = asm_inb(0x71);
-    } while (verify != 0);
+	// AML Comming soon
 
-    asm_outb(0x70, 0);
-    
-    asm volatile("cli\n\thlt");
+	for (;;) asm volatile("hlt");
 }

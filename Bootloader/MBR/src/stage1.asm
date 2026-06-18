@@ -1,6 +1,8 @@
 [BITS 16]
 [ORG 0x7C00]
 
+%define STAGE3_BLOCK_COUNT 290
+
 start:
     jmp 0x0000:.setup_segments
 .setup_segments:
@@ -71,7 +73,7 @@ start:
     int 0x13
     jc disk_error
 
-	mov cx, 218
+	mov cx, STAGE3_BLOCK_COUNT
 load_stage3_loop:
     cmp cx, 127
     jle final_chunk
