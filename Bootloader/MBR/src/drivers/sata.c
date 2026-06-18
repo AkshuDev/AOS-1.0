@@ -368,6 +368,7 @@ static int sata_issue_identity_cmd(struct sata_port_state* state, void* buffer) 
 }
 
 int sata_init(struct AOS_Module* m) {
+    return 0;
     if (pcie_find_ex(
         &sata_device.bus, &sata_device.slot, &sata_device.func,
         (uint32_t*)&sata_device.bar0,

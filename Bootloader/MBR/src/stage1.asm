@@ -21,6 +21,19 @@ start:
     mov al, dl
     mov [boot_info], al ; Save it some known place
 
+    ; Setup VGA 80x25
+    mov ah, 0x0 ; Ask for VGA
+    mov al, 0x3 ; Mode=3 (80x25 TEXT, 16 colors, 8 pages)
+    int 0x10
+    jc video_mode_setup_error
+
+    mov ah, 0x2 ; Set Cursor
+    mov bh, 0x0 ; Default Page
+    mov dh, 0x0 ; Row = 0
+    mov dl, 0x0 ; Col = 0
+    int 0x10
+    jc video_set_cursor_error
+
     ; Get EBX and STORE it
     mov ax, 0
     mov es, ax
@@ -58,7 +71,7 @@ start:
     int 0x13
     jc disk_error
 
-	mov cx, 256
+	mov cx, 218
 load_stage3_loop:
     cmp cx, 127
     jle final_chunk
@@ -89,15 +102,24 @@ disk_error:
 
     hlt
 
+video_mode_setup_error:
+    mov si, video_mode_setup_errormsg
+    call print_string
+    
+    hlt
+
+video_set_cursor_error:
+    mov si, video_set_cursor_errormsg
+    call print_string
+
+    hlt
+
 print_string:
     lodsb
     or al, al
     jz .done
     mov ah, 0x0E
     int 0x10
-    ; Also do on COM1
-    mov dx, 0x3F8
-    out dx, al
     jmp print_string
 .done:
     ret
@@ -113,6 +135,8 @@ read_dap_s3:
 disk db 0x80 ; Default 0x80
 disk_read_msg db "Reading and Loading Stage2...", 0xa, 0xd, 0
 disk_err_msg db "Error Reading Disk!", 0xa, 0xd, 0
+video_mode_setup_errormsg db "Failed to Setup VGA 80x25 TEXT Mode!", 0xa, 0xd, 0
+video_set_cursor_errormsg db "Failed to set cursor position to (0, 0)!", 0xa, 0xd, 0
 boot_info equ 0x7FF0
 ebx_info equ 0x8000
 ebx_struct_addr equ 0x8004

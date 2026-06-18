@@ -325,6 +325,7 @@ static int sata_issue_cmd(struct sata_port_state* state, int write, uint64_t lba
 }
 
 int sata_init(struct AOS_Module* m) {
+    return 0;
     if (m->hdr.type != MODULE_TYPE_DRIVER) return 0;
     if (m->Modules.driver_module.type != MODULE_DRIVER_TYPE_SATA) return 0;
     if (m->hdr.registered != 1) return 0;

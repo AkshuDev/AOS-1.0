@@ -21,8 +21,8 @@
 #include <ambrc.h>
 #include <panic_shell.h>
 
-#define CMOS_BYTE_IDX_AOSB_FLAGS 0x1A
-#define CMOS_BYTE_IDX_KERNEL_INFO 0x1B
+#define CMOS_BYTE_IDX_AOSB_FLAGS 0x0B
+#define CMOS_BYTE_IDX_KERNEL_INFO 0x0A
 
 #define CMOS_AOSB_FLAG_SAFE_MODE (1 << 0)
 #define CMOS_AOSB_FLAG_PANIC_MODE (1 << 1)
@@ -396,19 +396,19 @@ void stage3(void) {
             current_mode = (uint64_t)(tsc_start / cycles_per_ms) > 64000 ? 2 : 0;
             break;
         case 2:
-            current_mode = read_cmos(CMOS_BYTE_IDX_KERNEL_INFO) & CMOS_KERNEL_INFO_KERNEL_ACTIVE ? 2 : 0;
+            current_mode = 0;// read_cmos(CMOS_BYTE_IDX_KERNEL_INFO) & CMOS_KERNEL_INFO_KERNEL_ACTIVE ? 2 : 0;
             break;
         case 3:
             uint64_t tsc_is_fine = (uint64_t)(tsc_start / cycles_per_ms) > 64000 ? 0 : 1;
-            uint64_t kernel_is_fine = read_cmos(CMOS_BYTE_IDX_KERNEL_INFO) & CMOS_KERNEL_INFO_KERNEL_ACTIVE ? 0 : 1;
+            uint64_t kernel_is_fine = 1;// read_cmos(CMOS_BYTE_IDX_KERNEL_INFO) & CMOS_KERNEL_INFO_KERNEL_ACTIVE ? 0 : 1;
             current_mode = !tsc_is_fine && !kernel_is_fine ? 2 : tsc_is_fine && kernel_is_fine ? 0 : 1;
             break;
         default: break;
     }
 
     switch (current_mode) {
-        case 1: write_cmos(CMOS_BYTE_IDX_AOSB_FLAGS, CMOS_AOSB_FLAG_SAFE_MODE); break;
-        case 2: write_cmos(CMOS_BYTE_IDX_AOSB_FLAGS, CMOS_AOSB_FLAG_PANIC_MODE); break;
+        case 1: // write_cmos(CMOS_BYTE_IDX_AOSB_FLAGS, CMOS_AOSB_FLAG_SAFE_MODE); break;
+        case 2: // write_cmos(CMOS_BYTE_IDX_AOSB_FLAGS, CMOS_AOSB_FLAG_PANIC_MODE); break;
         default: break;
     }
 
@@ -538,14 +538,14 @@ void stage3(void) {
                 switch (scancode) {
                     case 0x15: // Y key
                         current_mode = 2;
-                        write_cmos(CMOS_BYTE_IDX_AOSB_FLAGS, CMOS_AOSB_FLAG_PANIC_MODE);
+                        //write_cmos(CMOS_BYTE_IDX_AOSB_FLAGS, CMOS_AOSB_FLAG_PANIC_MODE);
                         start_panic_shell(&cur_drive, NULL, 0);
                         popup_active = 0;
                         popup_finished = 1;
                         break;
                     case 0x31: // N key
                         current_mode = 0;
-                        write_cmos(CMOS_BYTE_IDX_AOSB_FLAGS, 0);
+                        //write_cmos(CMOS_BYTE_IDX_AOSB_FLAGS, 0);
                         popup_active = 0;
                         popup_finished = 1;
                         break;
@@ -685,7 +685,7 @@ void stage3(void) {
 
     vmem_print(&cursor, "Jumping to Kernel...\n");
 
-    write_cmos(CMOS_BYTE_IDX_KERNEL_INFO, CMOS_KERNEL_INFO_KERNEL_ACTIVE);
+    //write_cmos(CMOS_BYTE_IDX_KERNEL_INFO, CMOS_KERNEL_INFO_KERNEL_ACTIVE);
     stage3_jump_to_kernel((void(*)(void))((void*)ambrc->kernel_info[final_kernel_idx].entry_point), AOS_KERNEL_STACK_TOP);
 
     __builtin_unreachable(); // Tell GCC control never returns 
