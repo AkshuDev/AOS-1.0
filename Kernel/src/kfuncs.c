@@ -14,7 +14,7 @@
 
 // Memory and Stuff
 void* memset(void* s, int c, size_t n) {
-     asm volatile(
+    asm volatile(
         "rep stosb"
         :
         : "D"(s), "a"((uint8_t)c), "c"(n)

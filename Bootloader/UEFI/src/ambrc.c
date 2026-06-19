@@ -1,0 +1,727 @@
+// AOS Master Boot Record Config
+#include <system.h>
+
+#include <pefilib.h>
+#include <pefi_simple_text_out.h>
+#include <pefi_simple_text_in.h>
+#include <freestanding.h>
+#include <string.h>
+
+#include <ambrc.h>
+
+#define ALIGN_UP(num, align) (((num) + ((align) - 1)) & ~((align) - 1))
+
+struct ambrc backup_ambrc = {
+    .magic=AMBRC_MAGIC,
+    .version=CURRENT_AMBRC_VERSION,
+    .display=(struct ambrc_display){
+        .bg_color = VMEM_COLOR_BLACK,
+        .fg_color = VMEM_COLOR_WHITE,
+        .selected_bg_color = VMEM_COLOR_WHITE,
+        .selected_fg_color = VMEM_COLOR_BLACK,
+        .ambrc_bg_color = VMEM_COLOR_BLACK,
+        .ambrc_fg_color = VMEM_COLOR_WHITE,
+        .ambrc_selected_bg_color = VMEM_COLOR_WHITE,
+        .ambrc_selected_fg_color = VMEM_COLOR_BLACK,
+        .splash_duration = 3,
+        .show_settings_at_top = 0
+    },
+    .boot_info=(struct ambrc_boot_info){
+        .default_os_idx=0,
+        .safe_os_idx=0,
+        .panic_os_idx=0,
+        .crash_verification_mode=3
+    }
+};
+
+struct ambrc def_ambrc = {
+    .magic=AMBRC_MAGIC,
+    .version=CURRENT_AMBRC_VERSION,
+    .display=(struct ambrc_display){
+        .bg_color = VMEM_COLOR_BLACK,
+        .fg_color = VMEM_COLOR_WHITE,
+        .selected_bg_color = VMEM_COLOR_WHITE,
+        .selected_fg_color = VMEM_COLOR_BLACK,
+        .ambrc_bg_color = VMEM_COLOR_BLACK,
+        .ambrc_fg_color = VMEM_COLOR_WHITE,
+        .ambrc_selected_bg_color = VMEM_COLOR_WHITE,
+        .ambrc_selected_fg_color = VMEM_COLOR_BLACK,
+        .splash_duration = 3,
+        .show_settings_at_top = 0
+    },
+    .boot_info=(struct ambrc_boot_info){
+        .default_os_idx=0,
+        .safe_os_idx=0,
+        .panic_os_idx=0,
+        .crash_verification_mode=3
+    }
+};
+
+static uint32_t crc32_table[256];
+static int table_computed = 0;
+
+static uint16_t active_k_idx = 0;
+static uint8_t changes_made = 0;
+
+static drive_device_t* gdrive = NULL;
+static UINTN uefi_width = 0;
+static UINTN uefi_height = 0;
+
+EFIAPI void generate_crc32_table() {
+    for (uint32_t i = 0; i < 256; i++) {
+        uint32_t crc = i;
+        for (int j = 0; j < 8; j++) {
+            if (crc & 1)
+                crc = (crc >> 1) ^ 0xEDB88320;
+            else
+                crc >>= 1;
+        }
+        crc32_table[i] = crc;
+    }
+    table_computed = 1;
+}
+
+EFIAPI uint32_t calculate_crc32(const uint8_t *data, size_t length) {
+    if (!table_computed) generate_crc32_table();
+    
+    uint32_t crc = 0xFFFFFFFF; // Initial value
+    for (size_t i = 0; i < length; i++) {
+        crc = (crc >> 8) ^ crc32_table[(crc ^ data[i]) & 0xFF];
+    }
+    return crc ^ 0xFFFFFFFF; // Final XOR
+}
+
+EFIAPI void init_backup_ambrc(void) {
+    struct ambrc_kernel_info kinfo = {
+        .load_addr=AOS_KERNEL_ADDR,
+        .entry_point=AOS_KERNEL_ADDR,
+        .safe_mode_flags=0
+    };
+    
+    for (int i = 0; i < AMBRC_MAX_KERNELS; i++) memcpy(&backup_ambrc.kernel_info[i], &kinfo, sizeof(struct ambrc_kernel_info));
+
+    backup_ambrc.crc32 = calculate_crc32((const uint8_t*)&backup_ambrc, sizeof(struct ambrc));
+
+    for (int i = 0; i < AMBRC_MAX_KERNELS; i++) memcpy(&def_ambrc.kernel_info[i], &kinfo, sizeof(struct ambrc_kernel_info));
+
+    def_ambrc.crc32 = calculate_crc32((const uint8_t*)&def_ambrc, sizeof(struct ambrc));
+}
+
+EFIAPI struct ambrc* get_ambrc(void) {
+    struct ambrc* base_ambrc = (struct ambrc*)((uintptr_t)0x500);
+
+    if (base_ambrc->magic != AMBRC_MAGIC) return &backup_ambrc;
+
+    struct ambrc base_ambrc_copy = {0};
+    memcpy(&base_ambrc_copy, base_ambrc, sizeof(struct ambrc));
+    base_ambrc_copy.crc32 = 0;
+
+    if (calculate_crc32((const uint8_t*)&base_ambrc_copy, sizeof(struct ambrc)) != base_ambrc->crc32) return &backup_ambrc;
+    
+    if (base_ambrc->version != CURRENT_AMBRC_VERSION) return &backup_ambrc;
+    
+    return base_ambrc;
+}
+
+EFIAPI static UINTN vmem_to_uefi_attr(enum VMemColors fg, enum VMemColors bg) {
+    return ((UINTN)bg << 4) | (UINTN)fg;
+}
+
+EFIAPI static void ambrc_draw_base(struct VMemDesign* design) {
+    pefi_state.system_table->ConOut->SetCursorPosition(pefi_state.system_table->ConOut, 0, 0);
+
+    // Status Bar
+    uefi_printf("AMBRC V%s [AOS Bootloader]", CURRENT_AMBRC_VERSION_STR);
+    pefi_state.system_table->ConOut->SetCursorPosition(pefi_state.system_table->ConOut, 0, 1);
+    for (int i=0;i<uefi_width;i++) uefi_printf("%c", 0xCD);
+
+    // Tab Section
+    pefi_state.system_table->ConOut->SetCursorPosition(pefi_state.system_table->ConOut, 12, 2);
+    for (int i=2;i<uefi_height;i++) {uefi_printf("%c", 0xBA); pefi_state.system_table->ConOut->SetCursorPosition(pefi_state.system_table->ConOut, i, 12);}
+
+    // Data Section
+    pefi_state.system_table->ConOut->SetCursorPosition(pefi_state.system_table->ConOut, uefi_width-15, 2);
+    for (int i=2;i<uefi_height;i++) {uefi_printf("%c", 0xBA); pefi_state.system_table->ConOut->SetCursorPosition(pefi_state.system_table->ConOut, i, uefi_width-15);}
+
+    // Bottom Line
+    pefi_state.system_table->ConOut->SetCursorPosition(pefi_state.system_table->ConOut, 0, uefi_height-1);
+    for (int i=0;i<uefi_width;i++) uefi_printf("%c", 0xCD);
+}
+
+EFIAPI static void ambrc_draw_tabs(struct ambrc* ambrc, struct VMemDesign* design, uint64_t selected) {
+    const char* tabs[3] = {
+        "Display",
+        "Boot Info",
+        "Kernel Info"
+    };
+    const size_t tabs_len[3] = {
+        8,
+        10,
+        12
+    };
+    for (int i = 0; i < 3; i++) {
+        pefi_state.system_table->ConOut->SetCursorPosition(pefi_state.system_table->ConOut, 0, 2+i);
+
+		enum VMemColors bg = selected == i ? ambrc->display.ambrc_selected_bg_color : ambrc->display.ambrc_bg_color;
+        enum VMemColors fg = selected == i ? ambrc->display.ambrc_selected_fg_color : ambrc->display.ambrc_fg_color;
+
+		pefi_state.system_table->ConOut->SetAttribute(pefi_state.system_table->ConOut, vmem_to_uefi_attr(fg, bg));
+
+        uefi_printf("%s", tabs[i]);
+        for (int j=0; j<(13-tabs_len[i]);j++) uefi_printf("%c", ' ');
+    }
+}
+
+EFIAPI static const char* vmemc_to_str(enum VMemColors c) {
+    switch (c) {
+        case VMEM_COLOR_BLACK: return "Black";
+        case VMEM_COLOR_BLUE: return "Blue";
+        case VMEM_COLOR_GREEN: return "Green";
+        case VMEM_COLOR_CYAN: return "Cyan";
+        case VMEM_COLOR_RED: return "Red";
+        case VMEM_COLOR_MAGENTA: return "Magenta";
+        case VMEM_COLOR_BROWN: return "Brown";
+        case VMEM_COLOR_LIGHT_GRAY: return "Light Gray";
+        case VMEM_COLOR_DARK_GRAY: return "Dark Gray";
+        case VMEM_COLOR_LIGHT_BLUE: return "Light Blue";
+        case VMEM_COLOR_LIGHT_GREEN: return "Light Green";
+        case VMEM_COLOR_LIGHT_CYAN: return "Light Cyan";
+        case VMEM_COLOR_LIGHT_RED: return "Light Red";
+        case VEM_COLOR_LIGHT_MAGENTA: return "Light Magenta";
+        case VMEM_COLOR_YELLOW: return "Yellow";
+        case VMEM_COLOR_WHITE: return "White";
+        default: return "Unknown";
+    }
+}
+
+EFIAPI static enum VMemColors str_to_vmemc(const char* str) {
+    if (strcmp(str, "Black") == 0) return VMEM_COLOR_BLACK;
+    if (strcmp(str, "Blue") == 0) return VMEM_COLOR_BLUE;
+    if (strcmp(str, "Green") == 0) return VMEM_COLOR_GREEN;
+    if (strcmp(str, "Cyan") == 0) return VMEM_COLOR_CYAN;
+    if (strcmp(str, "Red") == 0) return VMEM_COLOR_RED;
+    if (strcmp(str, "Magenta") == 0) return VMEM_COLOR_MAGENTA;
+    if (strcmp(str, "Brown") == 0) return VMEM_COLOR_BROWN;
+    if (strcmp(str, "Light Gray") == 0) return VMEM_COLOR_LIGHT_GRAY;
+    if (strcmp(str, "Dark Gray") == 0) return VMEM_COLOR_DARK_GRAY;
+    if (strcmp(str, "Light Blue") == 0) return VMEM_COLOR_LIGHT_BLUE;
+    if (strcmp(str, "Light Green") == 0) return VMEM_COLOR_LIGHT_GREEN;
+    if (strcmp(str, "Light Cyan") == 0) return VMEM_COLOR_LIGHT_CYAN;
+    if (strcmp(str, "Light Red") == 0) return VMEM_COLOR_LIGHT_RED;
+    if (strcmp(str, "Light Magenta") == 0) return VEM_COLOR_LIGHT_MAGENTA;
+    if (strcmp(str, "Yellow") == 0) return VMEM_COLOR_YELLOW;
+    if (strcmp(str, "White") == 0) return VMEM_COLOR_WHITE;
+    return VMEM_COLOR_WHITE;
+}
+
+EFIAPI static const char* crash_verification_mode_to_str(uint8_t mode) {
+    switch (mode) {
+        case 0: return "None";
+        case 1: return "Only TSC";
+        case 2: return "Only Kernel";
+        case 3: return "Both TSC and Kernel";
+        default: return "Unknown";
+    }
+}
+
+EFIAPI static void ambrc_draw_data(struct ambrc* ambrc, struct VMemDesign* design, uint64_t selected, uint64_t data_selected) {
+    const uint8_t start_x = 14;
+    const uint8_t start_y = 3;
+    const uint8_t pane_width = (uefi_width - 15) - 14;
+
+    enum VMemColors bg = ambrc->display.ambrc_bg_color;
+    enum VMemColors fg = ambrc->display.ambrc_fg_color;
+
+	pefi_state.system_table->ConOut->SetAttribute(pefi_state.system_table->ConOut, vmem_to_uefi_attr(fg, bg));
+
+    switch (selected) {
+        case 0: { // Display Tab
+            const char* labels[] = {
+                "BG Color",
+                "FG Color",
+                "Sel BG",
+                "Sel FG",
+                "AMBRC BG Color",
+                "AMBRC FG Color",
+                "AMBRC Sel BG",
+                "AMBRC Sel FG",
+                "Error FG",
+                "Show Settings at Top",
+                "Splash Duration"
+            };
+            const size_t label_lens[] = {
+                9,
+                9,
+                7,
+                7,
+                15,
+                15,
+                13,
+                13,
+                9,
+                21,
+                16
+            };
+            const char* label_values[9];
+            label_values[0] = vmemc_to_str(ambrc->display.bg_color);
+            label_values[1] = vmemc_to_str(ambrc->display.fg_color);
+            label_values[2] = vmemc_to_str(ambrc->display.selected_bg_color);
+            label_values[3] = vmemc_to_str(ambrc->display.selected_fg_color);
+            label_values[4] = vmemc_to_str(ambrc->display.ambrc_bg_color);
+            label_values[5] = vmemc_to_str(ambrc->display.ambrc_fg_color);
+            label_values[6] = vmemc_to_str(ambrc->display.ambrc_selected_bg_color);
+            label_values[7] = vmemc_to_str(ambrc->display.ambrc_selected_fg_color);
+            label_values[8] = vmemc_to_str(ambrc->display.error_fg_color);
+            label_values[9] = ambrc->display.show_settings_at_top ? "True" : "False";
+
+            for (int i = 0; i < sizeof(labels) / sizeof(const char*); i++) {
+				pefi_state.system_table->ConOut->SetCursorPosition(pefi_state.system_table->ConOut, start_x, start_y+i);
+                
+                if (i == data_selected) {
+                    bg = ambrc->display.ambrc_selected_bg_color;
+                    fg = ambrc->display.ambrc_selected_fg_color;
+                } else {
+                    bg = ambrc->display.ambrc_bg_color;
+                    fg = ambrc->display.ambrc_fg_color;
+                }
+
+				pefi_state.system_table->ConOut->SetAttribute(pefi_state.system_table->ConOut, vmem_to_uefi_attr(fg, bg));
+
+                if (i != 10) {
+                    if (label_lens[i] + strlen(label_values[i]) + 3 > pane_width) {
+                        if (label_lens[i] + strlen(label_values[i]) + 1 < pane_width)
+                            uefi_printf("%s:%s", labels[i], label_values[i]);
+                        continue;
+                    }
+                    uefi_printf("%s : %s", labels[i], label_values[i]);
+                    for(int s = 0; s < (pane_width - (label_lens[i] + 3 + strlen(label_values[i]))); s++) uefi_printf("%c", ' ');
+                } else {
+                    if (label_lens[i] + 5 > pane_width) {
+                        if (label_lens[i] + 3 < pane_width)
+                            uefi_printf("%s:%u", labels[i], ambrc->display.splash_duration);
+                        continue;
+                    }
+                    uefi_printf("%s : %d", labels[i], ambrc->display.splash_duration);
+                    for(int s = 0; s < (pane_width - (label_lens[i] + 5)); s++) uefi_printf("%c", ' ');
+                }
+            }
+            break;
+        }
+
+        case 1: { // Boot Info Tab
+            const char* labels[] = {
+                "Def OS Idx",
+                "Safe OS Idx",
+                "Panic OS Idx",
+                "Timeout",
+                "Crash Verif. Mode"
+            };
+            const size_t label_lens[] = {
+                11,
+                12,
+                13,
+                8,
+                18
+            };
+            const uint32_t label_values[] = {
+                ambrc->boot_info.default_os_idx,
+                ambrc->boot_info.safe_os_idx,
+                ambrc->boot_info.panic_os_idx,
+                ambrc->boot_info.timeout,
+                ambrc->boot_info.crash_verification_mode
+            };
+
+            for (int i = 0; i < 5; i++) {
+                pefi_state.system_table->ConOut->SetCursorPosition(pefi_state.system_table->ConOut, start_x, start_y+i);
+                
+                if (i == data_selected) {
+                    bg = ambrc->display.ambrc_selected_bg_color;
+                    fg = ambrc->display.ambrc_selected_fg_color;
+                } else {
+                    bg = ambrc->display.ambrc_bg_color;
+                    fg = ambrc->display.ambrc_fg_color;
+                }
+
+				pefi_state.system_table->ConOut->SetAttribute(pefi_state.system_table->ConOut, vmem_to_uefi_attr(fg, bg));
+
+                if (i != 4) {
+                    if (label_lens[i] + 5 > pane_width) {
+                        if (label_lens[i] + 3 < pane_width)
+                            uefi_printf("%s:%d", labels[i], label_values[i]);
+                        continue;
+                    }
+                    uefi_printf("%s : %d", labels[i], label_values[i]);
+                    for(int s = 0; s < (pane_width - (label_lens[i] + 5)); s++) uefi_printf("%c", ' ');
+                } else {
+                    const char* mode = crash_verification_mode_to_str(label_values[i]);
+                    size_t mode_len = strlen(mode);
+                    if (label_lens[i] + mode_len + 3 > pane_width) {
+                        if (label_lens[i] + mode_len + 1 < pane_width)
+                            uefi_printf("%s:%s", labels[i], mode);
+                        continue;
+                    }
+                    uefi_printf("%s : %s", labels[i], mode);
+                    for(int s = 0; s < (pane_width - (label_lens[i] + mode_len + 3)); s++) uefi_printf("%c", ' ');
+                }
+            }
+            break;
+        }
+
+        case 2: { // Kernel Info Tab
+            const char* labels[3] = {
+                "Selected Kernel",
+                "Load Address",
+                "Entry Point"
+            };
+            const size_t label_lens[3] = {
+                16,
+                11,
+                12,
+            };
+            const uint32_t label_values[3] = {
+                active_k_idx,
+                ambrc->kernel_info[active_k_idx].load_addr,
+                ambrc->kernel_info[active_k_idx].entry_point
+            };
+
+            for (int i = 0; i < 3; i++) {
+                pefi_state.system_table->ConOut->SetCursorPosition(pefi_state.system_table->ConOut, start_x, start_y+i);
+                
+                if (i == data_selected) {
+                    bg = ambrc->display.ambrc_selected_bg_color;
+                    fg = ambrc->display.ambrc_selected_fg_color;
+                } else {
+                    bg = ambrc->display.ambrc_bg_color;
+                    fg = ambrc->display.ambrc_fg_color;
+                }
+
+				pefi_state.system_table->ConOut->SetAttribute(pefi_state.system_table->ConOut, vmem_to_uefi_attr(fg, bg));
+
+                if (i > 0) {
+                    if (label_lens[i] + 6 + 3 > pane_width) {
+                        if (label_lens[i] + 6 + 1 < pane_width)
+                            uefi_printf("%s:0x%lx", labels[i], label_values[i]);
+                        continue;
+                    }
+                    uefi_printf("%s : 0x%lx", labels[i], label_values[i]);
+                    for(int s = 0; s < (pane_width - (label_lens[i] + 6 + 3)); s++) uefi_printf("%c", ' ');
+                } else {
+                    if (label_lens[i] + 2 + 3 > pane_width) {
+                        if (label_lens[i] + 2 + 1 < pane_width)
+                            uefi_printf("%s:%d", labels[i], label_values[i]);
+                        continue;
+                    }
+                    uefi_printf("%s : %d", labels[i], label_values[i]);
+                    for(int s = 0; s < (pane_width - (label_lens[i] + 2 + 3)); s++) uefi_printf("%c", ' ');
+                }
+            }
+            break;
+        }
+        
+        default: return;
+    }
+}
+
+EFIAPI static UINT16 read_input(void) {
+    if (pefi_state.initialized != 1) return 0;
+    EFI_INPUT_KEY key;
+    EFI_STATUS status;
+
+    while (1) {
+        status = pefi_state.system_table->ConIn->ReadKeyStroke(pefi_state.system_table->ConIn, &key);
+        if (!EFI_ERROR(status)) {
+            return key.UnicodeChar ? key.UnicodeChar : key.ScanCode;
+        }
+    }
+}
+
+
+EFIAPI static void ambrc_reset_tab(struct ambrc* ambrc, uint64_t tab) {
+    switch (tab) {
+        case 0: // Reset Display
+            memcpy(&ambrc->display, &def_ambrc.display, sizeof(struct ambrc_display));
+            break;
+        case 1: // Reset Boot Info
+            memcpy(&ambrc->boot_info, &def_ambrc.boot_info, sizeof(struct ambrc_boot_info));
+            break;
+        case 2: // Reset Current Kernel Info
+            memcpy(&ambrc->kernel_info[active_k_idx], &def_ambrc.kernel_info[active_k_idx], sizeof(struct ambrc_kernel_info));
+            break;
+        default: break;
+    }
+}
+
+EFIAPI static void ambrc_display_popup(struct ambrc* ambrc, struct VMemDesign* design, const char* popup_msg) {
+    size_t pmsg_len = ALIGN_UP(strlen(popup_msg), 2);
+    uint32_t box_w = pmsg_len + 2 > uefi_width ? uefi_width : pmsg_len + 2;
+    uint32_t box_h = 12;
+    uint32_t start_x = (uefi_width / 2) - (box_w / 2);
+    uint32_t start_y = (uefi_height / 2) - (box_h / 2);
+
+    if (pmsg_len > box_w) {
+        int x = ((start_x + box_w) / 2) - (pmsg_len / 2);
+        int y = start_y + 2;
+        char* s = popup_msg;
+        int width = 0;
+        while (*s) {
+            if (width > box_w) {
+                x = ((start_x + box_w) / 2) - (pmsg_len / 2);
+                y++;
+                if (y > box_h) {
+                    if (++box_h > uefi_height) return;
+                }
+                width = 0;
+            }
+            s++;
+            width++;
+        }
+    }
+
+    enum VMemColors bg = ambrc->display.ambrc_bg_color;
+    enum VMemColors fg = ambrc->display.ambrc_fg_color;
+	pefi_state.system_table->ConOut->SetAttribute(pefi_state.system_table->ConOut, vmem_to_uefi_attr(fg, bg));
+	pefi_state.system_table->ConOut->SetCursorPosition(pefi_state.system_table->ConOut, start_x, start_y);
+
+    // Draw top
+    uefi_printf("%c", 0xC9);
+    for(int i = 0; i < box_w - 2; i++) uefi_printf("%c", 0xCD);
+    uefi_printf("%c", 0xBB);
+
+    // Draw Sides
+    for(int i = 1; i < box_h - 1; i++) {
+		pefi_state.system_table->ConOut->SetCursorPosition(pefi_state.system_table->ConOut, start_x, start_y + i);
+        uefi_printf("%c", 0xBA);
+
+        for(int j = 0; j < box_w - 2; j++) uefi_printf("%c", ' ');
+
+		pefi_state.system_table->ConOut->SetCursorPosition(pefi_state.system_table->ConOut, start_x + box_w - 1, start_y + i);
+        uefi_printf("%c", 0xBA);
+    }
+
+    // Draw Bottom
+	pefi_state.system_table->ConOut->SetCursorPosition(pefi_state.system_table->ConOut, start_x, start_y + box_h - 1);
+    uefi_printf("%c", 0xC8);
+    for(int i = 0; i < box_w - 2; i++) uefi_printf("%c", 0xCD);
+    uefi_printf("%c", 0xBC);
+
+    if (pmsg_len > box_w - 2) {
+        UINTN x = ((start_x + (box_w / 2)) - (pmsg_len / 2)) + 1;
+        UINTN y = start_y + 2;
+		pefi_state.system_table->ConOut->SetCursorPosition(pefi_state.system_table->ConOut, x, y);
+        char* s = popup_msg;
+        int width = 0;
+        while (*s) {
+            if (width > box_w - 1) {
+                y++;
+				pefi_state.system_table->ConOut->SetCursorPosition(pefi_state.system_table->ConOut, x, y);
+                width = 0;
+            }
+            uefi_printf("%c", *s);
+            s++;
+            width++;
+        }
+    } else {
+        UINTN x = ((start_x + (box_w / 2)) - (pmsg_len / 2)) + 1;
+        UINTN y = start_y + 2;
+		pefi_state.system_table->ConOut->SetCursorPosition(pefi_state.system_table->ConOut, x, y);
+        uefi_printf("%s", popup_msg);
+    }
+}
+
+EFIAPI static void ambrc_set_data(struct ambrc* ambrc, uint64_t tab, uint64_t row, int8_t dir) {
+    switch (tab) {
+        case 0: { // Display Tab - Cycle Colors
+            if (row == 9) {
+                ambrc->display.show_settings_at_top = !ambrc->display.show_settings_at_top;
+                break;
+            } else if (row == 10) {
+                if (dir > 0) ambrc->display.splash_duration++;
+                else if (dir < 0 && ambrc->display.splash_duration > 0) ambrc->display.splash_duration--;
+                break;
+            }
+            enum VMemColors* color_ptr = (enum VMemColors*)&ambrc->display;
+            color_ptr[row] = (enum VMemColors)((color_ptr[row] + dir) & 0xF); // Wrap 0-15
+            break;
+        }
+        case 1: { // Boot Info Tab - Increment/Decrement Indexes
+            uint16_t* val_ptr;
+            uint64_t max = AMBRC_MAX_KERNELS;
+            switch (row) {
+                case 0: val_ptr = &ambrc->boot_info.default_os_idx; break;
+                case 1: val_ptr = &ambrc->boot_info.safe_os_idx; break;
+                case 2: val_ptr = &ambrc->boot_info.panic_os_idx; break;
+                case 3: val_ptr = &ambrc->boot_info.timeout; max = 64; break;
+                case 4: val_ptr = &ambrc->boot_info.crash_verification_mode; max = 3; break;
+                default: return;
+            }
+            
+            // Bounds check
+            if (dir > 0 && *val_ptr < max) (*val_ptr)++;
+            else if (dir < 0 && *val_ptr > 0) (*val_ptr)--;
+            break;
+        }
+        case 2: { // Kernel Info Tab - Take input
+            switch(row) {
+                case 0: // "Selected Kernel" Row
+                    if (dir > 0 && active_k_idx < AMBRC_MAX_KERNELS - 1) active_k_idx++;
+                    else if (dir < 0 && active_k_idx > 0) active_k_idx--;
+                    break;
+                
+                case 1: // Load Address
+                    ambrc->kernel_info[active_k_idx].load_addr += (dir * 0x1000); 
+                    break;
+
+                case 2: // Entry Point
+                    ambrc->kernel_info[active_k_idx].entry_point += (dir * 0x1000);
+                    break;
+                default: return;
+            }
+            break;
+        }
+        default: break;
+    }
+    changes_made = 1;
+}
+
+EFIAPI static void ambrc_handle_data(struct ambrc* ambrc, struct VMemDesign* design, uint64_t tab, uint64_t* row, uint8_t scancode) {
+    switch (scancode) {
+        case 0x48: { // Up Arrow
+            if (*row > 0) (*row)--;
+            break;
+        }
+        case 0x50: { // Down Arrow
+            // Bounds check based on tab
+            uint64_t max_row = (tab == 0) ? 10 : (tab == 1) ? 4 : (AMBRC_MAX_KERNELS - 1);
+            if (*row < max_row) (*row)++;
+            break;
+        }
+        case 0x4D: { // Right Arrow (Increase/Next)
+            ambrc_set_data(ambrc, tab, *row, 1);
+            break;
+        }
+        case 0x4B: { // Left Arrow (Decrease/Prev)
+            ambrc_set_data(ambrc, tab, *row, -1);
+            break;
+        }
+        case 0x13: { // R
+            ambrc_display_popup(ambrc, design, "Are you sure you want to reset? (y/N)");
+            uint8_t valid = 0;
+            while (!valid) {
+                UINT16 scancode = read_input();
+                switch (scancode) {
+					case 'Y':
+                    case 'y': valid=1; break; // 'Y' key
+					case 'N':
+                    case 'n': // 'N' key
+                    case 0x17: // ESC also acts as no
+                        pefi_clear(pefi_state.system_table);
+                        ambrc_draw_base(design);
+                        ambrc_draw_tabs(ambrc, design, tab);
+                        ambrc_draw_data(ambrc, design, tab, *row);
+                        return;
+                    default: valid=0; break;
+                }
+            }
+            ambrc_reset_tab(ambrc, tab);
+            pefi_clear(pefi_state.system_table);
+            ambrc_draw_base(design);
+            ambrc_draw_tabs(ambrc, design, tab);
+            ambrc_draw_data(ambrc, design, tab, *row);
+            return;
+        }
+        default: return;
+    }
+    ambrc_draw_data(ambrc, design, tab, *row);
+}
+
+EFIAPI static void ambrc_handle_changes(struct ambrc* ambrc, struct VMemDesign* design, uint8_t* running) {
+    if (!changes_made) return;
+    ambrc_display_popup(ambrc, design, "Save changes to disk? (y/n/C)");
+
+    uint8_t valid = 0;
+    while (!valid) {
+        UINT16 scancode = read_input();
+        switch (scancode) {
+			case 'y':
+            case 'Y': valid=1; break; // 'Y' key
+			case 'n':
+            case 'N': *running=0; return; // 'N' key
+			case 'c':
+            case 'C': return; // 'C' key
+            case 0x17: return; // ESC also acts as cancel
+            default: valid=0; break;
+        }
+    }
+
+    ambrc->crc32 = 0;
+    ambrc->crc32 = calculate_crc32((const uint8_t*)ambrc, sizeof(struct ambrc));
+    gdrive->write_blk(gdrive->cur_port, 2046, 2, ambrc);
+    *running = 0;
+}
+
+EFIAPI void start_ambrc(struct drive_device* drive) {
+	if (pefi_state.initialized != 1) return;
+	pefi_state.system_table->ConOut->QueryMode(pefi_state.system_table->ConOut, pefi_state.system_table->ConOut->Mode->Mode, &uefi_width, &uefi_height);
+
+    gdrive = drive;
+    struct ambrc* ambrc = get_ambrc();
+
+    // Runtime loop
+    uint64_t selected = 0;
+    uint8_t within_data = 0;
+    uint64_t data_selected = 0;
+	struct VMemDesign designr = {0};
+	struct VMemDesign* design = &designr;
+    pefi_clear(pefi_state.system_table);
+    ambrc_draw_base(design);
+    ambrc_draw_tabs(ambrc, design, selected);
+
+    uint8_t running = 1;
+    while (running) {
+        UINT16 scancode = read_input(); 
+        if (within_data) {
+            switch(scancode) {
+                case 0x17: { // ESC
+                    within_data = 0;
+                    data_selected = 0;
+                    pefi_clear(pefi_state.system_table);
+                    ambrc_draw_base(design);
+                    ambrc_draw_tabs(ambrc, design, selected);
+                    break;
+                }
+                default: {
+                    ambrc_handle_data(ambrc, design, selected, &data_selected, scancode);
+                    break;
+                }
+            }
+        } else {
+            switch (scancode) {
+                case 0x1: { // Up Arrow
+                    if(selected > 0) ambrc_draw_tabs(ambrc, design, --selected);
+                    break;
+                }
+                case 0x2: { // Down Arrow
+                    if(selected < 2) ambrc_draw_tabs(ambrc, design, ++selected);
+                    break;
+                }
+                case '\r': { // Enter
+                    within_data = 1;
+                    data_selected = 0;
+                    ambrc_draw_data(ambrc, design, selected, data_selected);
+                    break;
+                }
+                case 0x17: { // ESC
+                    if (!changes_made) {running = 0; continue;}
+                    ambrc_handle_changes(ambrc, design, &running);
+                    if (running) {
+                        pefi_clear(pefi_state.system_table);
+                        ambrc_draw_base(design);
+                        ambrc_draw_tabs(ambrc, design, selected);
+                    }
+                    break;
+                }
+                default: break;
+            }
+        }
+    }
+}
