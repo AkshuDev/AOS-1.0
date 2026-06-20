@@ -54,7 +54,8 @@ LDENDFLAGS_UEFI := -lpbfs-ndrivers -lpefi
 ASMFLAGS_MBR := -f elf32
 ASMFLAGS_MBR_BIN := -f bin
 
-UEFI_BOOTLOADER_SRC := $(UEFI_SRC_DIR)/bootloader_uefi.c $(UEFI_SRC_DIR)/stdlib_freestanding.c $(UEFI_SRC_DIR)/ambrc.c
+UEFI_BOOTLOADER_SRC := $(UEFI_SRC_DIR)/bootloader_uefi.c $(UEFI_SRC_DIR)/stdlib_freestanding.c \
+					$(UEFI_SRC_DIR)/ambrc.c $(UEFI_SRC_DIR)/panic_shell.c
 UEFI_BOOTLOADER_EFI := $(UEFI_BUILD_DIR)/bootloader_uefi.efi
 UEFI_TARGET := $(UEFI_BIN_DIR)/aos_bootloader.img
 

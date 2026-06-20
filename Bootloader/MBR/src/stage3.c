@@ -448,6 +448,7 @@ void stage3(void) {
     SystemInfo->reserved0 = 0;
     SystemInfo->cpu_signature = cpuid_signature();
     cpuid_get_vendor(SystemInfo->cpu_vendor);
+	SystemInfo->tsc_freq_hz = cycles_per_ms * 1000;
     SystemInfo->checksum = 0;
     SystemInfo->checksum = compute_checksum((uint8_t*)SystemInfo, sizeof(aos_sysinfo_t));
 
