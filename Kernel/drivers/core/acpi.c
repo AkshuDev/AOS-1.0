@@ -116,13 +116,14 @@ static uint8_t acpi_checksum(void* table, uint32_t len) {
 
 static struct acpi_rsdp_descriptor* acpi_find_rsdp(void) {
 	// Try E820 Map
-	struct bs1_e820* e820 = (struct bs1_e820*)AOS_E820_INFO_ADDR;
+	struct bs1_e820* e820 = (struct bs1_e820*)(AOS_DIRECT_MAP_BASE + AOS_E820_INFO_ADDR);
 	if (e820->entry_count <= E820_MAX_ENT) {
 		for (int i = 0; i < e820->entry_count; i++) {
 			struct bs1_e820_entry* entry = &e820->entries[i];
-			if (entry->type != E820_TYPE_RESERVED) continue;
-			uint64_t base = entry->base;
-			uint64_t limit = entry->base + entry->len;
+			if (entry->type != E820_TYPE_RESERVED && entry->type != E820_TYPE_ACPI_RECLAIM && entry->type != E820_TYPE_ACPI_NVS)
+				continue;
+			uint64_t base = AOS_DIRECT_MAP_BASE + entry->base;
+			uint64_t limit = AOS_DIRECT_MAP_BASE + entry->base + entry->len;
 
 			for (uint64_t addr = base; addr < limit; addr += 16) {
 				if (memcmp((char*)addr, "RSD PTR ", 8) == 0) {
@@ -130,7 +131,7 @@ static struct acpi_rsdp_descriptor* acpi_find_rsdp(void) {
 					if (acpi_checksum(rsdp, 20) == 0) {
 						if (rsdp->revision >= 2) {
 							if (acpi_checksum(rsdp, sizeof(struct acpi_rsdp_descriptor_v2)) != 0)
-								return NULL;
+								continue;
 						}
 						return rsdp;
 					}
@@ -141,15 +142,15 @@ static struct acpi_rsdp_descriptor* acpi_find_rsdp(void) {
 
 	serial_print("[ACPI] Failed to find RSDP within E820 Map, Trying manual!\n");
     // fallbacks, try ebda first
-    uint16_t ebda_seg = *(uint16_t*)(EBDA_SEG_PTR); // 0x40E holds seg of ebda
+    uint16_t ebda_seg = *(uint16_t*)(AOS_DIRECT_MAP_BASE + EBDA_SEG_PTR); // 0x40E holds seg of ebda
     uint32_t ebda = ((uint32_t)ebda_seg) << 4;
-    for (uint64_t addr = (uint64_t)ebda; addr < ebda + 1024; addr += 16) {
+    for (uint64_t addr = AOS_DIRECT_MAP_BASE + (uint64_t)ebda; addr < ebda + 1024; addr += 16) {
         if (memcmp((char*)addr, "RSD PTR ", 8) == 0) {
             struct acpi_rsdp_descriptor* rsdp = (struct acpi_rsdp_descriptor*)addr;
             if (acpi_checksum(rsdp, 20) == 0) {
                 if (rsdp->revision >= 2) {
                     if (acpi_checksum(rsdp, sizeof(struct acpi_rsdp_descriptor_v2)) != 0)
-                        return NULL;
+                        continue;
                 }
                 return rsdp;
             }
@@ -157,13 +158,13 @@ static struct acpi_rsdp_descriptor* acpi_find_rsdp(void) {
     }
 
     // check bios area
-    for (uint64_t addr = 0xE0000; addr < 0x100000; addr += 16) {
+    for (uint64_t addr = AOS_DIRECT_MAP_BASE + 0xE0000; addr < AOS_DIRECT_MAP_BASE + 0x100000; addr += 16) {
         if (memcmp((char*)addr, "RSD PTR ", 8) == 0) {
             struct acpi_rsdp_descriptor* rsdp = (struct acpi_rsdp_descriptor*)addr;
             if (acpi_checksum(rsdp, 20) == 0) {
                 if (rsdp->revision >= 2) {
                     if (acpi_checksum(rsdp, sizeof(struct acpi_rsdp_descriptor_v2)) != 0)
-                        return NULL;
+                        continue;
                 }
                 return rsdp;
             }
@@ -285,6 +286,8 @@ static void acpi_parse_rsdt(struct acpi_rsdp_descriptor* rsdp) {
 
 void acpi_init(void) {
     uint64_t rflags = spin_lock_irqsave(&acpi_lock);
+
+	serial_printf("[ACPI] Initializing...\n");
 
     struct acpi_rsdp_descriptor *rsdp = acpi_find_rsdp();
     if (!rsdp) {

@@ -69,15 +69,27 @@ void enable_a20(void) {
 }
 
 __attribute__((naked, noreturn))
-void stage3_jump_to_kernel(void (*kernel)(void), uint64_t stack_top) {
-    __asm__ __volatile__ (
-        "mov %rsi, %rsp\n\t" // stack_top is 2nd arg (rsi)
-        "mov %rsi, %rbp\n\t"
+static void stage3_jump_to_kernel(void (*kernel)(void), uint64_t stack_top){
+    __asm__ __volatile__(
+        "movq %0, %%rsp\n\t"
+        "movq %0, %%rbp\n\t"
         "cli\n\t"
         "cld\n\t"
-        "jmp *%rdi\n\t" // kernel pointer is 1st arg (rdi)
+		:
+		: "r"(stack_top)
+		: "memory", "rsp", "rbp"
     );
+
+	__asm__ __volatile__(
+		"jmp *%0\n\t"
+		:
+		: "r"(kernel)
+		: "memory"
+	);
+
+	__builtin_unreachable();
 }
+
 
 uint8_t compute_checksum(const uint8_t* data, uint32_t len) {
     uint32_t sum = 0;
@@ -452,6 +464,8 @@ void stage3(void) {
     SystemInfo->checksum = 0;
     SystemInfo->checksum = compute_checksum((uint8_t*)SystemInfo, sizeof(aos_sysinfo_t));
 
+	uint8_t tsc_is_fine = 0;
+	uint8_t kernel_is_fine = 0;
 	switch (ambrc->boot_info.crash_verification_mode) {
         case 0: break;
         case 1: 
@@ -461,8 +475,8 @@ void stage3(void) {
             current_mode = SystemInfo->kernel_info & AOS_BOOTLOADER_KERNEL_ACTIVE_FLAG ? 2 : 0;
             break;
         case 3:
-            uint8_t tsc_is_fine = (uint64_t)(tsc_start / cycles_per_ms) > 64000 ? 0 : 1;
-            uint8_t kernel_is_fine = !(SystemInfo->kernel_info & AOS_BOOTLOADER_KERNEL_ACTIVE_FLAG);
+            tsc_is_fine = (uint64_t)(tsc_start / cycles_per_ms) > 64000 ? 0 : 1;
+            kernel_is_fine = !(SystemInfo->kernel_info & AOS_BOOTLOADER_KERNEL_ACTIVE_FLAG);
             current_mode = !tsc_is_fine && !kernel_is_fine ? 2 : tsc_is_fine && kernel_is_fine ? 0 : 1;
             break;
         default: break;
@@ -492,6 +506,7 @@ void stage3(void) {
 
     uint8_t force_redraw = 1;
     uint8_t popup_finished = 0;
+	uint8_t caps_active = 0;
 
     uint64_t timeout_start = read_tsc();
 
@@ -506,23 +521,27 @@ void stage3(void) {
             }
         }
         if (current_mode == 1 && !popup_finished) {
-            display_popup(ambrc, &cursor, "Did anything crash? (y/n/C)");
+			const char* popup_str = "Did anything crash? (y/n/C) (Reason: Unknown)";
+            if (!tsc_is_fine && !kernel_is_fine) popup_str = "Did anything crash? (y/n/C) (Reason: TSC and Kernel Both Checks Failed)";
+			else if (!tsc_is_fine) popup_str = "Did anything crash? (y/n/C) (Reason: TSC Check Failed)";
+			else if (!kernel_is_fine) popup_str = "Did anything crash? (y/n/C) (Reason: Kernel Check Failed)";
+			display_popup(ambrc, &cursor, popup_str);
             uint8_t popup_active = 1;
             while (popup_active) {
-                uint8_t scancode = ps2_read_scan(); 
+                uint16_t scancode = ps2_read_scan(); 
                 switch (scancode) {
-                    case 0x15: // Y key
+					case 0x15: // Y key
                         current_mode = 2;
                         start_panic_shell(&cur_drive, NULL, 0);
                         popup_active = 0;
                         popup_finished = 1;
                         break;
-                    case 0x31: // N key
+					case 0x31: // N key
                         current_mode = 0;
                         popup_active = 0;
                         popup_finished = 1;
                         break;
-                    case 0x2E: // C Key
+					case 0x2E: // C Key
                     case 0x01: // ESC Key
                         popup_active = 0;
                         popup_finished = 1;
@@ -590,7 +609,7 @@ void stage3(void) {
             old_selected = selected;
         }
 
-        uint8_t scancode = ps2_try_read_scan();
+        uint16_t scancode = ps2_try_read_scan();
         switch(scancode) {
             case 0x48: // Up
                 if (selected > 0) {
@@ -610,6 +629,19 @@ void stage3(void) {
                     }
                 }
                 break;
+			case 0x1F: // Start Shell
+				if (!caps_active) break;
+				start_panic_shell(&cur_drive, "User Initiated (Shift-S)", 1);
+				force_redraw = 1;
+				vmem_clear_screen(&cursor);
+				draw_menu_frame(&cursor);
+                break;
+			case 0xAA:
+			case 0xB6:
+			case 0x2A:
+			case 0x36:
+				caps_active = !caps_active;
+				break;
             case 0x1C: // Enter
                 if (selected == ambrc_entry) {
                     start_ambrc(&cur_drive);
@@ -650,7 +682,8 @@ void stage3(void) {
     }
     vmem_printf(&cursor, "Loading %s...\n", os_entries[final_kernel_idx].name);
 
-	pager_map_range((uint64_t)ambrc->kernel_info[final_kernel_idx].load_addr, (uint64_t)ambrc->kernel_info[final_kernel_idx].load_addr, (mnt.header64.block_size * uint128_to_u64(os_entries[final_kernel_idx].count)) + 0x40000000, PAGE_PRESENT | PAGE_RW);
+	pager_map_range((uint64_t)ambrc->kernel_info[final_kernel_idx].load_addr, (uint64_t)ambrc->kernel_info[final_kernel_idx].load_addr, (mnt.header64.block_size * uint128_to_u64(os_entries[final_kernel_idx].count)), PAGE_PRESENT | PAGE_RW);
+	pager_map_range(AOS_KERNEL_STACK_TOP - 0x10000, AOS_KERNEL_STACK_TOP, AOS_KERNEL_STACK_TOP - (AOS_KERNEL_STACK_TOP - 0x10000), PAGE_PRESENT | PAGE_RW);
 	
     if (!read_f(&cur_drive.block_dev, uint128_to_u64(os_entries[final_kernel_idx].lba), uint128_to_u32(os_entries[final_kernel_idx].count), (void*)ambrc->kernel_info[final_kernel_idx].load_addr)) {
         serial_print("Failed to read kernel, Disk error!\n");

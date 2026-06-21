@@ -59,6 +59,7 @@ static void lapic_timer_start(uint32_t ms) {
 
 static void lapic_init(uintptr_t phys_addr) {
     lapic_base_virt = phys_addr + AOS_DIRECT_MAP_BASE;
+	serial_printf("[SMP:LAPIC] Initializing at Virtual Addr 0x%llx (Phys 0x%llx)\n", lapic_base_virt, phys_addr);
     lapic_write(0x80, 0);
     lapic_write(0xF0, 0x1FF);
     lapic_timer_calibrate();

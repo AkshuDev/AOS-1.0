@@ -96,8 +96,21 @@ EFIAPI void ___chkstk_ms(void* size_in) {
 	return; // No NEED TO BE honest
 }
 
-EFIAPI static void uefi_print_ex_integer(uint64_t val, int base, int width, int zero_pad, int is_signed) {
+typedef struct {
+	CHAR16 c;
+	UINTN x;
+	UINTN y;
+	UINTN attr;
+} vmem_c_buf;
+vmem_c_buf buf[64];
+uint8_t buf_ptr = 0;
+uint64_t last_x = 0;
+uint64_t last_y = 0;
+UINTN last_attr = 0;
+
+EFIAPI static void uefi_print_ex_integer(struct VMemDesign* design, uint64_t val, int base, int width, int zero_pad, int is_signed) {
     if (pefi_state.initialized != 1) return;
+
 	char buf[64];
     const char* digits = "0123456789abcdef";
     int i = 0;
@@ -116,31 +129,24 @@ EFIAPI static void uefi_print_ex_integer(uint64_t val, int base, int width, int 
         int padding_count = width - total_len;
         if (zero_pad) {
             if (neg) {
-                pefi_print(pefi_state.system_table, u"-");
+                vmem_printc(design, '-');
                 neg = 0;
             }
-            while (padding_count--) pefi_print(pefi_state.system_table, u"0");
+            while (padding_count--) vmem_printc(design, '0');
         } else {
-            while(padding_count--) pefi_print(pefi_state.system_table, u" ");
+            while(padding_count--) vmem_printc(design, ' ');
         }
     }
 
-    if (neg) pefi_print(pefi_state.system_table, u"-");
+    if (neg) vmem_printc(design, '-');
     while (i > 0) {
-		CHAR16 w[2];
-		w[0] = (CHAR16)(unsigned char)buf[--i];
-		w[1] = 0;
-        pefi_print(pefi_state.system_table, (const CHAR16*)w);
+        vmem_printc(design, buf[--i]);
     }
 }
 
-EFIAPI void uefi_printf(const char* fmt, ...) {
-	if (pefi_state.initialized != 1) return;
-
-    va_list args;
-    va_start(args, fmt);
-
-    while (*fmt) {
+EFIAPI static void uefi_printvf_design(struct VMemDesign* design, const char* fmt, va_list args) {
+	vmem_flush();
+	while (*fmt) {
         if (*fmt == '%') {
             fmt++;
 
@@ -164,27 +170,21 @@ EFIAPI void uefi_printf(const char* fmt, ...) {
             switch (*fmt) {
                 case 'c': {
                     char c = (char)va_arg(args, int);
-					CHAR16 w[2];
-					w[0] = (CHAR16)(unsigned char)c;
-					w[1] = 0;
-                    pefi_print(pefi_state.system_table, (const CHAR16*)w);
+					vmem_printc(design, c);
                     break;
                 }
+				case '\n': {
+					vmem_printc(design, '\n');
+					vmem_printc(design, '\r');
+					break;
+				}
                 case 's': {
                     const char* s = va_arg(args, const char*);
                     if (!s) {
-						pefi_print(pefi_state.system_table, u"(NULL)");
-						break;
+						s = "(NULL)";
 					}
 
-					CHAR16 wbuf[256];
-					size_t i;
-
-					for (i = 0; s[i] && i < 255; i++) wbuf[i] = (CHAR16)(unsigned char)s[i];
-					wbuf[i] = 0;
-
-					pefi_print(pefi_state.system_table, (const CHAR16*)wbuf);
-
+					vmem_print(design, s);
                     break;
                 }
 				case 'S': {
@@ -197,14 +197,14 @@ EFIAPI void uefi_printf(const char* fmt, ...) {
                     int64_t d;
                     if (is_long >= 1) d = va_arg(args, int64_t);
                     else d = (int64_t)va_arg(args, int);
-                    uefi_print_ex_integer((uint64_t)d, 10, width, zero_pad, 1);
+                    uefi_print_ex_integer(design, (uint64_t)d, 10, width, zero_pad, 1);
                     break;
                 }
                 case 'u': { // unsigned 32/64-bit
                     uint64_t u;
                     if (is_long >= 1) u = va_arg(args, uint64_t);
                     else u = (uint64_t)va_arg(args, uint32_t);
-                    uefi_print_ex_integer(u, 10, width, zero_pad, 0);
+                    uefi_print_ex_integer(design, u, 10, width, zero_pad, 0);
                     break;
                 }
                 case 'x':
@@ -212,36 +212,51 @@ EFIAPI void uefi_printf(const char* fmt, ...) {
                     uint64_t p;
                     if (*fmt == 'p') {
                         p = (uintptr_t)va_arg(args, void*);
-                        pefi_print(pefi_state.system_table, u"0x");
+                        vmem_print(design, "0x");
                         if (width == 0) width = 16;
                         zero_pad = 1;
                     } else {
                         if (is_long >= 1) p = va_arg(args, uint64_t);
                         else p = (uint64_t)va_arg(args, uint32_t);
                     }
-                    uefi_print_ex_integer(p, 16, width, zero_pad, 0);
+                    uefi_print_ex_integer(design, p, 16, width, zero_pad, 0);
                     break;
                 }
                 case '%': {
-                    pefi_print(pefi_state.system_table, u"%");
+                    vmem_printc(design, *fmt);
                     break;
                 }
                 default: {
-					CHAR16 w[2];
-					w[0] = (CHAR16)(unsigned char)*fmt;
-					w[1] = 0;
-                    pefi_print(pefi_state.system_table, (const CHAR16*)w);
+					vmem_printc(design, *fmt);
                     break;
                 }
             }
         } else {
-            CHAR16 w[2];
-			w[0] = (CHAR16)(unsigned char)*fmt;
-			w[1] = 0;
-			pefi_print(pefi_state.system_table, (const CHAR16*)w);
+           vmem_printc(design, *fmt);
         }
         fmt++;
     }
+	vmem_flush();
+}
+
+EFIAPI static void uefi_printvf(const char* fmt, va_list args) {
+	struct VMemDesign design = {
+		.fg = (enum VMemColors)(last_attr & 0xF),
+		.bg = (enum VMemColors)(last_attr >> 4),
+		.x = last_x,
+		.y = last_y,
+		.serial_out = 0
+	};
+	uefi_printvf_design(&design, fmt, args);
+}
+
+EFIAPI void uefi_printf(const char* fmt, ...) {
+	if (pefi_state.initialized != 1) return;
+
+    va_list args;
+    va_start(args, fmt);
+
+    uefi_printvf(fmt, args);
 
     va_end(args);
 }
@@ -359,18 +374,6 @@ EFIAPI uint64_t kget_timestamp_ms(void) {
 	return (bootup_timestamp * 1000) + kget_ms_passed();
 }
 
-typedef struct {
-	CHAR16 c;
-	UINTN x;
-	UINTN y;
-	UINTN attr;
-} vmem_c_buf;
-vmem_c_buf buf[64];
-uint8_t buf_ptr = 0;
-uint64_t last_x = 0;
-uint64_t last_y = 0;
-UINTN last_attr = 0;
-
 EFIAPI void vmem_flush(void) {
     if (pefi_state.initialized != 1 || buf_ptr == 0) return;
 
@@ -459,22 +462,39 @@ EFIAPI void vmem_print(struct VMemDesign* design, const char* str) {
     if (pefi_state.initialized != 1) return;
 
 	vmem_flush();
-
-    UINTN attr = ((UINTN)design->bg << 4) | (UINTN)design->fg;
-	pefi_state.system_table->ConOut->SetAttribute(pefi_state.system_table->ConOut, attr);
-	vmem_set_cursor(design->x, design->y);
-	uefi_printf("%s", str);
-
-	while (*str++) {
-		if (*str == '\n') {
-			design->x = 0;
-			UINTN y = design->y + 1;
-			design->y = y;
-			return;
-		} else design->x++;
+	
+	UINTN attr = ((UINTN)design->bg << 4) | (UINTN)design->fg;
+	if (last_attr != attr) {
+		pefi_state.system_table->ConOut->SetAttribute(pefi_state.system_table->ConOut, attr);
+		last_attr = attr;
 	}
-    
-	vmem_set_cursor(design->x, design->y);
+	if (last_x != design->x || last_y != design->y) {
+		vmem_set_cursor(design->x, design->y);
+		last_x = design->x;
+		last_y = design->y;
+	}
+
+	CHAR16 wc[strlen(str)*2+1];
+	memset(wc, 0, sizeof(wc));
+	size_t i = 0;
+	for (char* p = (char*)str; *p; p++) {
+		switch(*p) {
+			case '\n': {
+				wc[i++] = (CHAR16)'\n';
+				wc[i++] = (CHAR16)'\r';
+				design->y++;
+				design->x = 0;
+				continue;
+			}
+			default: {
+				design->x++;
+				break;
+			}
+		}
+		wc[i++] = (CHAR16)(*p);
+	}
+	wc[i++] = '\0';
+	pefi_print(pefi_state.system_table, wc);
 }
 
 EFIAPI void vmem_clear_screen(struct VMemDesign* design) {
@@ -484,53 +504,13 @@ EFIAPI void vmem_clear_screen(struct VMemDesign* design) {
 		last_attr = attr;
 	}
 	pefi_state.system_table->ConOut->ClearScreen(pefi_state.system_table->ConOut);
+	design->x = 0;
+	design->y = 0;
 	if (last_x != 0 || last_y != 0) {
 		vmem_set_cursor(0, 0);
 		last_x = 0;
 		last_y = 0;
 	}
-}
-
-EFIAPI static void vmem_print_ex_integer(struct VMemDesign* design, uint64_t val, int base, int width, int zero_pad, int is_signed) {
-    if (pefi_state.initialized != 1) return;
-	UINTN attr = ((UINTN)design->bg << 4) | (UINTN)design->fg;
-	pefi_state.system_table->ConOut->SetAttribute(pefi_state.system_table->ConOut, attr);
-	vmem_set_cursor(design->x, design->y);
-
-	char buf[64];
-    const char* digits = "0123456789abcdef";
-    int i = 0;
-    int neg = 0;
-    if (is_signed && (int64_t)val < 0) {
-        neg = 1;
-        val = -(int64_t)val;
-    }
-    do {
-        buf[i++] = digits[val % base];
-        val /= base;
-    } while (val > 0);
-
-    int total_len = i + (neg ? 1 : 0);
-    if (width > total_len) {
-        int padding_count = width - total_len;
-        if (zero_pad) {
-            if (neg) {
-                pefi_print(pefi_state.system_table, u"-");
-                neg = 0;
-            }
-            while (padding_count--) pefi_print(pefi_state.system_table, u"0");
-        } else {
-            while(padding_count--) pefi_print(pefi_state.system_table, u" ");
-        }
-    }
-
-    if (neg) pefi_print(pefi_state.system_table, u"-");
-    while (i > 0) {
-		CHAR16 w[2];
-		w[0] = (CHAR16)(unsigned char)buf[--i];
-		w[1] = 0;
-        pefi_print(pefi_state.system_table, (const CHAR16*)w);
-    }
 }
 
 EFIAPI void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
@@ -539,83 +519,8 @@ EFIAPI void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
 
-    while (*fmt) {
-        if (*fmt == '%') {
-            fmt++;
-
-            int zero_pad = 0;
-            int width = 0;
-            int is_long = 0;
-
-            if (*fmt == '0') {
-                zero_pad = 1;
-                fmt++;
-            }
-            while (*fmt >= '0' && *fmt <= '9') {
-                width = width * 10 + (*fmt - '0');
-                fmt++;
-            }
-            while (*fmt == 'l') {
-                is_long++;
-                fmt++;
-            }
-
-            switch (*fmt) {
-                case 'c': {
-                    char c = (char)va_arg(args, int);
-                    vmem_printc(design, c);
-                    break;
-                }
-                case 's': {
-                    const char* s = va_arg(args, const char*);
-                    vmem_print(design, s ? s : "(NULL)");
-                    break;
-                }
-                case 'i':
-                case 'd': { // signed 32/64-bit
-                    int64_t d;
-                    if (is_long >= 1) d = va_arg(args, int64_t);
-                    else d = (int64_t)va_arg(args, int);
-                    vmem_print_ex_integer(design, (uint64_t)d, 10, width, zero_pad, 1);
-                    break;
-                }
-                case 'u': { // unsigned 32/64-bit
-                    uint64_t u;
-                    if (is_long >= 1) u = va_arg(args, uint64_t);
-                    else u = (uint64_t)va_arg(args, uint32_t);
-                    vmem_print_ex_integer(design, u, 10, width, zero_pad, 0);
-                    break;
-                }
-                case 'x':
-                case 'p': { // Pointer
-                    uint64_t p;
-                    if (*fmt == 'p') {
-                        p = (uintptr_t)va_arg(args, void*);
-                        if (width == 0) width = 16;
-                        zero_pad = 1;
-                    } else {
-                        if (is_long >= 1) p = va_arg(args, uint64_t);
-                        else p = (uint64_t)va_arg(args, uint32_t);
-                    }
-                    vmem_print_ex_integer(design, p, 16, width, zero_pad, 0);
-                    break;
-                }
-                case '%': {
-                    vmem_printc(design, '%');
-                    break;
-                }
-                default: {
-                    vmem_printc(design, *fmt);
-                    break;
-                }
-            }
-        } else {
-            vmem_printc(design, *fmt);
-        }
-        fmt++;
-    }
-
+	uefi_printvf_design(design, fmt, args);
+    
     va_end(args);
 }
-
 

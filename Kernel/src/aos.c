@@ -72,7 +72,13 @@ extern uint8_t stack_top__; // From linker script
 static uintptr_t stack_top = (uintptr_t)&stack_top__;
 
 void kernel_main(void) {
-    asm volatile (
+    asm volatile("cld");
+    serial_init();
+    // Reserve MMIO region at 0xF0000000, kernel starts at 0x100000
+    serial_print("AOS++ LOADED!\n");
+    pager_init(); // Inits AVMF Too
+
+	asm volatile (
 		"cld\n\t"
         "mov %0, %%rsp\n\t"
         "mov %%rsp, %%rbp"
@@ -82,11 +88,6 @@ void kernel_main(void) {
         :
         "memory"
     );
-
-    serial_init();
-    // Reserve MMIO region at 0xF0000000, kernel starts at 0x100000
-    serial_print("AOS++ LOADED!\n");
-    pager_init(); // Inits AVMF Too
 
 	aos_system_exception_handler_init(pre_halt_system);
     idt_init();

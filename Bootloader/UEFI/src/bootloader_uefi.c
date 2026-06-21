@@ -15,6 +15,7 @@
 #include <pefi.h>
 #include <pefi_block_io.h>
 #include <pefi_init.h>
+#include <pefi_variables.h>
 
 #include <PBFS/headers/pbfs-fs.h>
 #include <PBFS/headers/pbfs.h>
@@ -24,6 +25,7 @@
 #include <panic_shell.h>
 
 #include <system.h>
+#include <e820.h>
 
 #define MEDIA_DEVICE_PATH 0x04
 #define MEDIA_HARDDRIVE_DP 0x01
@@ -77,15 +79,26 @@ typedef struct {
     EFI_BLOCK_IO_PROTOCOL *partition;
 } blockio_pair_t;
 
-__attribute__((noreturn))
+__attribute__((noreturn, naked))
 EFIAPI static void stage3_jump_to_kernel(void (*kernel)(void), uint64_t stack_top){
     __asm__ __volatile__(
-        "mov %rdx, %rsp\n\t"
-        "mov %rdx, %rbp\n\t"
+        "movq %0, %%rsp\n\t"
+        "movq %0, %%rbp\n\t"
         "cli\n\t"
         "cld\n\t"
-        "jmp *%rcx\n\t"
+		:
+		: "r"(stack_top)
+		: "memory", "rsp", "rbp"
     );
+
+	__asm__ __volatile__(
+		"jmp *%0\n\t"
+		:
+		: "r"(kernel)
+		: "memory"
+	);
+
+	__builtin_unreachable();
 }
 
 EFIAPI static void* btl_malloc(size_t size) {
@@ -144,13 +157,6 @@ EFIAPI void draw_menu_frame(struct VMemDesign* cursor) {
     int start_x = 0;
     int start_y = 1; // After id
 
-    // Draw id
-    const char* id = "AOS Bootloader V1.0";
-    int id_x = (uefi_width - strlen(id)) / 2;
-    cursor->x = id_x;
-    cursor->y = 0;
-    vmem_print(cursor, id);
-
     // Draw Top
     cursor->x = start_x;
     cursor->y = start_y;
@@ -174,6 +180,13 @@ EFIAPI void draw_menu_frame(struct VMemDesign* cursor) {
     vmem_printwc(cursor, UEFI_BOX_DOUBLE_BOTTOM_RIGHT);
     for(int i = 0; i < width - 2; i++) vmem_printwc(cursor, UEFI_BOX_DOUBLE_HORIZONTAL);
     vmem_printwc(cursor, UEFI_BOX_DOUBLE_BOTTOM_LEFT);
+
+	// Draw id
+    const char* id = "AOS Bootloader V1.0";
+    int id_x = (uefi_width - strlen(id)) / 2;
+    cursor->x = id_x;
+    cursor->y = 0;
+    vmem_print(cursor, id);
 }
 
 EFIAPI void display_splash(struct ambrc* ambrc, struct VMemDesign* cursor) {
@@ -407,12 +420,18 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
         .serial_out = 0
     };
 
+	EFI_PHYSICAL_ADDRESS SystemInfoPhys = AOS_SYS_INFO_ADDR;
+	if (EFI_ERROR(SystemTable->BootServices->AllocatePages(AllocateAddress, EfiLoaderData, (ALIGN_UP(sizeof(aos_sysinfo_t), 0x1000))/0x1000, &SystemInfoPhys))) {
+		vmem_print(&cursor, "Failed to allocate System Information Structure!\n");
+		return EFI_OUT_OF_RESOURCES;
+	}
+
     ktimer_calibrate();
 
-    uint64_t tsc_start2 = kget_ms_passed();
-    kdelay(1);
-    uint64_t tsc_end = kget_ms_passed();
-    uint64_t cycles_per_ms = tsc_end - tsc_start2;
+    uint64_t tsc_start2 = timer_read_tsc();
+    kdelay(10);
+    uint64_t tsc_end = timer_read_tsc();
+    uint64_t cycles_per_ms = (tsc_end - tsc_start2) / 10;
 
     vmem_disable_cursor();
 
@@ -473,6 +492,8 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     SystemInfo->checksum = 0;
     SystemInfo->checksum = compute_checksum((uint8_t*)SystemInfo, sizeof(aos_sysinfo_t));
 
+	uint8_t tsc_is_fine = 0;
+	uint8_t kernel_is_fine = 0;
 	switch (ambrc->boot_info.crash_verification_mode) {
         case 0: break;
         case 1: 
@@ -482,8 +503,8 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
             current_mode = SystemInfo->kernel_info & AOS_BOOTLOADER_KERNEL_ACTIVE_FLAG ? 2 : 0;
             break;
         case 3:
-            uint8_t tsc_is_fine = (uint64_t)(tsc_start / cycles_per_ms) > 64000 ? 0 : 1;
-            uint8_t kernel_is_fine = !(SystemInfo->kernel_info & AOS_BOOTLOADER_KERNEL_ACTIVE_FLAG);
+            tsc_is_fine = (uint64_t)(tsc_start / cycles_per_ms) > 64000 ? 0 : 1;
+            kernel_is_fine = !(SystemInfo->kernel_info & AOS_BOOTLOADER_KERNEL_ACTIVE_FLAG);
             current_mode = !tsc_is_fine && !kernel_is_fine ? 2 : tsc_is_fine && kernel_is_fine ? 0 : 1;
             break;
         default: break;
@@ -529,7 +550,11 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
             }
         }
         if (current_mode == 1 && !popup_finished) {
-            display_popup(ambrc, &cursor, "Did anything crash? (y/n/C)");
+			const char* popup_str = "Did anything crash? (y/n/C) (Reason: Unknown)";
+            if (!tsc_is_fine && !kernel_is_fine) popup_str = "Did anything crash? (y/n/C) (Reason: TSC and Kernel Both Checks Failed)";
+			else if (!tsc_is_fine) popup_str = "Did anything crash? (y/n/C) (Reason: TSC Check Failed)";
+			else if (!kernel_is_fine) popup_str = "Did anything crash? (y/n/C) (Reason: Kernel Check Failed)";
+			display_popup(ambrc, &cursor, popup_str);
             uint8_t popup_active = 1;
             while (popup_active) {
                 UINT16 scancode = read_input(); 
@@ -641,6 +666,13 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
                     }
                 }
                 break;
+			case 'S': // Start Shell
+				start_panic_shell(&cur_drive, "User Initiated (CAPS-S)", 1);
+				vmem_clear_screen(&cursor);
+				draw_menu_frame(&cursor);
+				timeout_start = kget_ms_passed(); // Reset
+				force_redraw = 1;
+                break;
             case '\r': // Enter
                 if (selected == ambrc_entry) {
                     start_ambrc(&cur_drive);
@@ -653,13 +685,9 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
                     force_redraw = 1;
                     timeout_start = kget_ms_passed(); // Reset timeout
                 } else if (selected == uefi_settings_entry) {
-					#define EFI_VARIABLE_NON_VOLATILE 0x00000001
-					#define EFI_VARIABLE_BOOTSERVICE_ACCESS 0x00000002
-					#define EFI_VARIABLE_RUNTIME_ACCESS 0x00000004
-					UINT64 OsIndications = 1;
-					EFI_GUID gEfiGlobalVariableGuid = { 0x8BE4DF61, 0x93CA, 0x11D2, { 0xAA, 0x0D, 0x00, 0xE0, 0x98, 0x03, 0x2B, 0x8C } };
+					UINT64 OsIndications = EFI_OS_INDICATIONS_BOOT_TO_FW_UI;
 					EFI_STATUS status = SystemTable->RuntimeServices->SetVariable(
-						u"OsIndications",
+						EFI_OS_INDICATIONS_VARIABLE_NAME,
 						&gEfiGlobalVariableGuid,
 						EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS,
 						sizeof(OsIndications),
@@ -700,7 +728,7 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     }
     vmem_printf(&cursor, "Loading %s...\n", os_entries[final_kernel_idx].name);
 
-	UINTN pages = ((uint128_to_u64(os_entries[selected].count) * dev.block_size) + 0x1000 - 1) / 0x1000;
+	UINTN pages = ((uint128_to_u64(os_entries[final_kernel_idx].count) * dev.block_size) + 0x1000 - 1) / 0x1000;
 	EFI_PHYSICAL_ADDRESS load_addr = (EFI_PHYSICAL_ADDRESS)ambrc->kernel_info[final_kernel_idx].load_addr;
     EFI_STATUS status = SystemTable->BootServices->AllocatePages(AllocateAddress, EfiLoaderCode, pages, (EFI_PHYSICAL_ADDRESS*)&load_addr);
 	if (EFI_ERROR(status)) {
@@ -752,6 +780,53 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 		vmem_printf(&cursor, "Failed to allocate memory pool! : %llu\n", status);
 		return status;
 	}
+
+	vmem_print(&cursor, "Initializing E820 Map...\n");
+	struct bs1_e820_entry e820[E820_MAX_ENT];
+	size_t e820_count = 0;
+
+	for (UINTN off = 0; off < map_size; off += desc_size) {
+		EFI_MEMORY_DESCRIPTOR* desc = (EFI_MEMORY_DESCRIPTOR*)((uint8_t*)map + off);
+		e820[e820_count].base = desc->PhysicalStart;
+		e820[e820_count].len = desc->NumberOfPages * 0x1000ULL;
+		switch (desc->Type) {
+			case EfiConventionalMemory:
+			case EfiLoaderCode:
+			case EfiLoaderData:
+			case EfiBootServicesCode:
+			case EfiBootServicesData:
+			case EfiPersistentMemory:
+				e820[e820_count].type = E820_TYPE_RAM;
+				break;
+
+			case EfiACPIReclaimMemory:
+				e820[e820_count].type = E820_TYPE_ACPI_RECLAIM;
+				break;
+
+			case EfiACPIMemoryNVS:
+				e820[e820_count].type = E820_TYPE_ACPI_NVS;
+				break;
+
+			case EfiUnusableMemory:
+				e820[e820_count].type = E820_TYPE_BAD;
+				break;
+
+			default:
+				e820[e820_count].type = E820_TYPE_RESERVED;
+				break;
+		}
+		e820[e820_count].ext = 1;
+		e820_count++;
+	}
+
+	EFI_PHYSICAL_ADDRESS E820MapPhys = AOS_E820_INFO_ADDR;
+	if (EFI_ERROR(SystemTable->BootServices->AllocatePages(AllocateAddress, EfiLoaderData, (ALIGN_UP(sizeof(struct bs1_e820) + (sizeof(struct bs1_e820_entry)*e820_count), 0x1000))/0x1000, &E820MapPhys))) {
+		vmem_print(&cursor, "Failed to allocate E820 Map Structure!\n");
+		return EFI_OUT_OF_RESOURCES;
+	}
+	struct bs1_e820* e820_m = (struct bs1_e820*)AOS_E820_INFO_ADDR;
+	e820_m->entry_count = e820_count;
+	memcpy(e820_m->entries, e820, sizeof(struct bs1_e820_entry)*e820_count);
 
 	vmem_print(&cursor, "Jumping to Kernel...\n");
 	vmem_flush();

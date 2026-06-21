@@ -75,6 +75,8 @@ void idt_load_local(void) {
 }
 
 void idt_init(void) {
+	serial_print("[IDT] Initializing...\n");
+	
     idt = (idt_entry_t*)avmf_alloc(sizeof(idt_entry_t) * IDT_SIZE, MALLOC_TYPE_SENSITIVE, PAGE_PRESENT | PAGE_RW | PAGE_GLOBAL, NULL);
     if (!idt) {
         serial_print("[IDT] Failed to allocate memory for idt!\n");

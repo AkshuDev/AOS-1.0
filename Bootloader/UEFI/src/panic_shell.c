@@ -182,7 +182,7 @@ EFIAPI static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, u
                 vmem_print(design, "\tinfo     - Display AOS system information & checksums\n");
                 vmem_print(design, "\tacpi     - Show ACPI/APIC status\n");
                 vmem_print(design, "\treboot   - Restart the computer via ACPI\n");
-                vmem_print(design, "\tshutdown - Halt the CPU\n");
+                vmem_print(design, "\tshutdown - Shutdown the Computer\n");
                 vmem_print(design, "\texit     - Close the panic shell\n");
 
                 vmem_print(design, "\nHardware Debugging:\n");
@@ -290,7 +290,7 @@ EFIAPI static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, u
 
         case 's':
             if (!strcmp(c, "shutdown")) {
-                vmem_print(design, "\nShutdown (hlt)\n");
+                vmem_print(design, "\nShutting down...\n");
 				vmem_flush();
                 valid = 1;
                 pefi_state.runtime_services->ResetSystem(EfiResetShutdown, EFI_SUCCESS, 0, NULL);

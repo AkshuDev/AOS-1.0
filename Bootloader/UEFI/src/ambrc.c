@@ -146,12 +146,6 @@ EFIAPI static void ambrc_draw_base(struct VMemDesign* design) {
     design->x = 0;
     design->y = 0;
 
-    // Status Bar
-    vmem_printf(design, "AMBRC V%s [AOS Bootloader]", CURRENT_AMBRC_VERSION_STR);
-    design->x = 0;
-    design->y = 1;
-    for (int i=0;i<uefi_width;i++) vmem_printwc(design, UEFI_BOX_DOUBLE_HORIZONTAL);
-
     // Tab Section
     design->x = 12;
     design->y = 2;
@@ -165,6 +159,12 @@ EFIAPI static void ambrc_draw_base(struct VMemDesign* design) {
     // Bottom Line
     design->x = 0;
     design->y = uefi_height-1;
+    for (int i=0;i<uefi_width;i++) vmem_printwc(design, UEFI_BOX_DOUBLE_HORIZONTAL);
+
+	// Status Bar
+    vmem_printf(design, "AMBRC V%s [AOS Bootloader]", CURRENT_AMBRC_VERSION_STR);
+    design->x = 0;
+    design->y = 1;
     for (int i=0;i<uefi_width;i++) vmem_printwc(design, UEFI_BOX_DOUBLE_HORIZONTAL);
 }
 
@@ -279,7 +279,7 @@ EFIAPI static void ambrc_draw_data(struct ambrc* ambrc, struct VMemDesign* desig
                 21,
                 16
             };
-            const char* label_values[9];
+            const char* label_values[11];
             label_values[0] = vmemc_to_str(ambrc->display.bg_color);
             label_values[1] = vmemc_to_str(ambrc->display.fg_color);
             label_values[2] = vmemc_to_str(ambrc->display.selected_bg_color);
@@ -317,7 +317,7 @@ EFIAPI static void ambrc_draw_data(struct ambrc* ambrc, struct VMemDesign* desig
                             vmem_printf(design, "%s:%u", labels[i], ambrc->display.splash_duration);
                         continue;
                     }
-                    vmem_printf(design, "%s : %d", labels[i], ambrc->display.splash_duration);
+                    vmem_printf(design, "%s : %u", labels[i], ambrc->display.splash_duration);
                     for(int s = 0; s < (pane_width - (label_lens[i] + 5)); s++) vmem_printc(design, ' ');
                 }
             }
@@ -682,12 +682,22 @@ EFIAPI void start_ambrc(struct drive_device* drive) {
     uint64_t selected = 0;
     uint8_t within_data = 0;
     uint64_t data_selected = 0;
+	enum VMemColors last_fg = design->fg;
+	enum VMemColors last_bg = design->bg;
     vmem_clear_screen(design);
     ambrc_draw_base(design);
     ambrc_draw_tabs(ambrc, design, selected);
 
     uint8_t running = 1;
     while (running) {
+		if (last_fg != ambrc->display.ambrc_fg_color) {
+			design->fg = ambrc->display.ambrc_fg_color;
+			last_fg = design->fg;
+		}
+		if (last_bg != ambrc->display.ambrc_bg_color) {
+			design->bg = ambrc->display.ambrc_bg_color;
+			last_bg = design->bg;
+		}
         UINT16 scancode = read_input(); 
         if (within_data) {
             switch(scancode) {

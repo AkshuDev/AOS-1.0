@@ -122,6 +122,7 @@ void pager_init(void) {
     asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
     cpu_phys_bits = eax & 0xFF;
     cpu_virt_bits = (eax >> 8) & 0xFF;
+	uint64_t max_addr = (1ULL << cpu_phys_bits) - 1;
 
     uint64_t bits_req = bits_needed(max_phys_addr);
 
@@ -144,29 +145,11 @@ void pager_init(void) {
         }
     }
     serial_print("[PAGER] Allocated Virtual Memory for Page Tables\n");
-    uint64_t last_map_end = 0;
-    for (int i = 0; i < e820->entry_count; i++) {
-        struct bs1_e820_entry* e = &e820->entries[i];
-        if (e->len < 1) continue;
 
-        uint64_t start = e->base;
-        uint64_t len = e->len;
-        if (e->base > last_map_end) {
-            start = last_map_end;
-            len = (e->base - last_map_end) + e->len;
-        }
-
-        uint64_t end_addr = start + len;
-        if (end_addr & ~((1ULL << cpu_phys_bits) - 1)) {
-            serial_printf("[PAGER] Warning: Physical address %p exceeds CPU limit of %lu bits! Skipping...\n", end_addr, cpu_phys_bits);
-            break; // since now every addr will be larger
-        }
-        serial_printf("[PAGER] Mapping Direct Map (0x%lx-0x%lx) to 0x%lx\n", start, end_addr, AOS_DIRECT_MAP_BASE + e->base);
-        pager_map_range(AOS_DIRECT_MAP_BASE + start, start, len, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
-
-        last_map_end = end_addr;
-    }
-    serial_print("[PAGER] Mapped Direct Map\n");
+    serial_printf("[PAGER] Mapping Direct Map (0x%lx-0x%lx) to 0x%lx\n", 0x0, max_addr, AOS_DIRECT_MAP_BASE);
+    pager_map_range(AOS_DIRECT_MAP_BASE, 0x0, max_addr, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
+    
+	serial_print("[PAGER] Mapped Direct Map\n");
     pager_map_range(0x0, 0x0, bss_end, PAGE_PRESENT | PAGE_RW); // Identity Map the Kernel (<Kernel End> MB)
     serial_printf("[PAGER] Mapped Kernel (0x0-0x%x)\n", bss_end);
 

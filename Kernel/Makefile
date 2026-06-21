@@ -68,6 +68,9 @@ $(BUILD_DIR)/%.o: $(ASM_x86_64_DIR)/%.asm
 	$(ASM) $(ASMFLAGS) $< -o $@
 
 $(KERNEL_ELF): $(KERNEL_O) $(DRIVERS_O) $(MEMORY_FILES_O) $(ASM_x86_64_FILES_O)
+	@echo "Compiling PBFS..."
+	@make -C ../PBFS/PBFS/src-fs clean
+	@make -C ../PBFS/PBFS/src-fs
 	@echo "Linking Kernel..."
 	$(LD) $(LDFLAGS) $(KERNEL_O) $(MEMORY_FILES_O) $(ASM_x86_64_FILES_O) $(DRIVERS_O) $(LDPBFS) -o $(KERNEL_ELF)
 

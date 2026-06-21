@@ -124,6 +124,9 @@ $(MBR_BUILD_DIR)/%.o: $(MBR_SRC_DIR)/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(MBR_stage3_elf): $(MBR_stage3_o) $(MBR_DRIVERS_O) $(MBR_BTL_DRIVERS_O)
+	@echo "Compiling PBFS"
+	@make -C ../PBFS/PBFS/src-fs clean
+	@make -C ../PBFS/PBFS/src-fs
 	@echo "Linking MBR Stage 3 AOS Bootloader into elf..."
 	$(LD) $(LDFLAGS_MBR) $(MBR_stage3_o) $(MBR_DRIVERS_O) $(MBR_BTL_DRIVERS_O) -o $(MBR_stage3_elf) $(LDENDFLAGS)
 

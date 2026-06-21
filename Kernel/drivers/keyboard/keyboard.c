@@ -4,6 +4,8 @@
 #include <inc/drivers/io/io.h>
 #include <inc/drivers/keyboard/keyboard.h>
 
+#define isascii(c) ((c) >= 0 && (c) <= 127)
+
 struct keyboard_state {
     uint8_t lshift;
     uint8_t rshift;
@@ -233,6 +235,10 @@ char keyboard_ps2_get_char(void) {
     if (sc & 0x80) {spin_unlock_irqrestore(&keyboard_lock, rflags); return 0;}
 
     char ch;
+	if (!isascii(sc)) {
+		spin_unlock_irqrestore(&keyboard_lock, rflags);
+    	return (char)sc;
+	}
 
     if (SHIFT_DOWN) {
         ch = (cur_state.capslock) ? keymap_shift_cl[sc] : keymap_shift_ncl[sc];

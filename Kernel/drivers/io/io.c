@@ -852,27 +852,52 @@ int is_ps2_present(void) {
     return out;
 }
 
+static void ps2_wait_input_empty(void) {
+    while (asm_inb(0x64) & 0x02)
+        asm volatile("pause");
+}
+
+static void ps2_wait_output_full(void) {
+    while (!(asm_inb(0x64) & 0x01))
+        asm volatile("pause");
+}
+
+static void keyboard_send(uint8_t val) {
+    ps2_wait_input_empty();
+    asm_outb(0x60, val);
+}
+
+static uint8_t keyboard_read(void) {
+    ps2_wait_output_full();
+    return asm_inb(0x60);
+}
+
 void ps2_init(void) {
     uint64_t rflags = spin_lock_irqsave(&ps2_lock);
 
     uint8_t config;
-    while (asm_inb(0x64) & 0x02) { asm volatile("pause"); }
+    ps2_wait_input_empty();
     asm_outb(0x64, 0x20);
     while (!(asm_inb(0x64) & 0x01)) {}
     config = asm_inb(0x60);
 
     // Set bits: bit 0 = interrupt on keyboard, bit 4 = enable keyboard port
-    config |= (1 << 0) | (1 << 4);
+    config |= (1 << 0);
+	config &= ~(1 << 4);
 
     // Write config byte back
-    while (asm_inb(0x64) & 0x02) { asm volatile("pause"); }
+    ps2_wait_input_empty();
     asm_outb(0x64, 0x60);
-    while (asm_inb(0x64) & 0x02) { asm volatile("pause"); }
+    ps2_wait_input_empty();
     asm_outb(0x60, config);
 
+	keyboard_send(0xF0);
+	if (keyboard_read() == 0xFA) {
+		keyboard_send(0x01);
+	}
+
     // Send enable scanning command to keyboard
-    while (asm_inb(0x64) & 0x02) { asm volatile("pause"); }
-    asm_outb(0x60, 0xF4);
+    keyboard_send(0xF4);
 
     spin_unlock_irqrestore(&ps2_lock, rflags);
 }
