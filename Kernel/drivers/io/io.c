@@ -1,9 +1,12 @@
 #include <inttypes.h>
 #include <asm.h>
+#include <system.h>
 
 #include <stdarg.h>
 
 #include <inc/core/kfuncs.h>
+#include <inc/drivers/core/framebuffer.h>
+#include <inc/drivers/gpu/apis/pyrion.h>
 #include <inc/drivers/io/io.h>
 
 #include <inc/mm/avmf.h>
@@ -29,6 +32,13 @@ static spinlock_t vmem_cur_lock;
 static spinlock_t ps2_lock;
 
 static uint8_t serial_present;
+
+uint64_t IO_VMEM_MAX_COLS_true;
+uint64_t IO_VMEM_MAX_ROWS_true;
+uint64_t IO_VMEM_true;
+static uint8_t vmem_mode;
+static FB_Info_t vmem_fbi;
+static FB_Cursor_t vmem_fbc;
 
 // Kernel Log
 
@@ -361,14 +371,131 @@ void serial_printf(const char* fmt, ...) {
 }
 
 // VMem
-#define VMEM 0xB8000
-#define VMEM_MAX_COLS 80
-#define VMEM_MAX_ROWS 25
+static uint32_t pyrion_convert_color(uint8_t r, uint8_t g, uint8_t b, uint8_t a, enum pyrion_color_format fmt){
+    switch (fmt) {
+        case PYRION_COLORF_RGBA:
+            return ((uint32_t)r << 24) | ((uint32_t)g << 16) | ((uint32_t)b << 8) | a;
+
+        case PYRION_COLORF_BGRA:
+            return ((uint32_t)b << 24) | ((uint32_t)g << 16) | ((uint32_t)r << 8) | a;
+
+        case PYRION_COLORF_ABGR:
+            return ((uint32_t)a << 24) | ((uint32_t)b << 16) | ((uint32_t)g << 8) | r;
+
+        case PYRION_COLORF_ARGB:
+            return ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+
+        case PYRION_COLORF_RGB:
+            return ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+
+        case PYRION_COLORF_BGR:
+            return ((uint32_t)b << 16) | ((uint32_t)g << 8) | r;
+
+        default:
+            return 0;
+    }
+}
+
+static uint32_t vmem_convert_color_to_rgba(enum VMemColors color){
+	enum pyrion_color_format fmt = vmem_fbi.cformat;
+    switch (color) {
+        case VMEM_COLOR_BLACK:
+            return pyrion_convert_color(0x00,0x00,0x00,0xFF, fmt);
+
+        case VMEM_COLOR_BLUE:
+            return pyrion_convert_color(0x00,0x00,0xAA,0xFF, fmt);
+
+        case VMEM_COLOR_GREEN:
+            return pyrion_convert_color(0x00,0xAA,0x00,0xFF, fmt);
+
+        case VMEM_COLOR_CYAN:
+            return pyrion_convert_color(0x00,0xAA,0xAA,0xFF, fmt);
+
+        case VMEM_COLOR_RED:
+            return pyrion_convert_color(0xAA,0x00,0x00,0xFF, fmt);
+
+        case VMEM_COLOR_MAGENTA:
+            return pyrion_convert_color(0xAA,0x00,0xAA,0xFF, fmt);
+
+        case VMEM_COLOR_BROWN:
+            return pyrion_convert_color(0xAA,0x55,0x00,0xFF, fmt);
+
+        case VMEM_COLOR_LIGHT_GRAY:
+            return pyrion_convert_color(0xAA,0xAA,0xAA,0xFF, fmt);
+
+        case VMEM_COLOR_DARK_GRAY:
+            return pyrion_convert_color(0x55,0x55,0x55,0xFF, fmt);
+
+        case VMEM_COLOR_LIGHT_BLUE:
+            return pyrion_convert_color(0x55,0x55,0xFF,0xFF, fmt);
+
+        case VMEM_COLOR_LIGHT_GREEN:
+            return pyrion_convert_color(0x55,0xFF,0x55,0xFF, fmt);
+
+        case VMEM_COLOR_LIGHT_CYAN:
+            return pyrion_convert_color(0x55,0xFF,0xFF,0xFF, fmt);
+
+        case VMEM_COLOR_LIGHT_RED:
+            return pyrion_convert_color(0xFF,0x55,0x55,0xFF, fmt);
+
+        case VEM_COLOR_LIGHT_MAGENTA:
+            return pyrion_convert_color(0xFF,0x55,0xFF,0xFF, fmt);
+
+        case VMEM_COLOR_YELLOW:
+            return pyrion_convert_color(0xFF,0xFF,0x55,0xFF, fmt);
+
+        case VMEM_COLOR_WHITE:
+            return pyrion_convert_color(0xFF,0xFF,0xFF,0xFF, fmt);
+
+        default:
+            return pyrion_convert_color(0x00,0x00,0x00,0xFF, fmt);
+    }
+}
+
+void vmem_init(aos_sysinfo_t* sysinfo) {
+	vmem_fbc = (FB_Cursor_t){0};
+	if (!sysinfo) {
+		vmem_mode = AOS_SYSINFO_FB_MODE_VGA;
+		IO_VMEM_true = IO_VMEM;
+		IO_VMEM_MAX_COLS_true = IO_VMEM_MAX_COLS;
+		IO_VMEM_MAX_ROWS_true = IO_VMEM_MAX_ROWS;
+		vmem_fbi = (FB_Info_t){0};
+		return;
+	}
+
+	vmem_mode = sysinfo->fb_mode;
+	switch (vmem_mode) {
+		case AOS_SYSINFO_FB_MODE_VGA:
+		case AOS_SYSINFO_FB_MODE_FB: break;
+		default: vmem_mode = AOS_SYSINFO_FB_MODE_VGA; break;
+	}
+	IO_VMEM_true = AOS_DIRECT_MAP_BASE + sysinfo->fb_info.phys_addr;
+	IO_VMEM_MAX_COLS_true = sysinfo->fb_info.width;
+	IO_VMEM_MAX_ROWS_true = sysinfo->fb_info.height;
+
+	vmem_fbi = sysinfo->fb_info;
+	vmem_fbi.addr = IO_VMEM_true;
+
+	serial_printf("[IO:VMEM] FB Mode: %u\n", sysinfo->fb_mode);
+	serial_printf("[IO:VMEM] FB Addr: 0x%llx\n", sysinfo->fb_info.addr);
+	serial_printf("[IO:VMEM] FB Width: %u\n", sysinfo->fb_info.width);
+	serial_printf("[IO:VMEM] FB Height: %u\n", sysinfo->fb_info.height);
+	serial_printf("[IO:VMEM] FB Pitch: %u\n", sysinfo->fb_info.pitch);
+	serial_printf("[IO:VMEM] FB Size: %u\n", sysinfo->fb_info.size);
+}
 
 void vmem_set_cursor(uint16_t x, uint16_t y) {
     uint64_t rflags = spin_lock_irqsave(&vmem_cur_lock);
 
-    uint16_t pos = y * VMEM_MAX_COLS + x;
+	if (vmem_mode == AOS_SYSINFO_FB_MODE_FB) {
+		vmem_fbc.x = x;
+		vmem_fbc.y = y;
+
+		spin_unlock_irqrestore(&vmem_cur_lock, rflags);
+		return;
+	}
+
+    uint16_t pos = y * IO_VMEM_MAX_COLS_true + x;
     asm_outb(0x3D4, 0x0E);
     asm_outb(0x3D5, (pos >> 8) & 0xFF);
     asm_outb(0x3D4, 0x0F);
@@ -378,6 +505,8 @@ void vmem_set_cursor(uint16_t x, uint16_t y) {
 }
 
 void vmem_disable_cursor(void) {
+	if (vmem_mode != AOS_SYSINFO_FB_MODE_VGA) return;
+
     uint64_t rflags = spin_lock_irqsave(&vmem_cur_lock);
 
     asm_outb(0x3D4, 0x0A);
@@ -389,9 +518,26 @@ void vmem_disable_cursor(void) {
 void vmem_clear_screen(struct VMemDesign* design) {
     uint64_t rflags = spin_lock_irqsave(&vmem_lock);
 
-    volatile uint16_t* vmem = (volatile uint16_t*)VMEM;
+	if (vmem_mode == AOS_SYSINFO_FB_MODE_FB) {
+		vmem_fbc.x = design->x;
+		vmem_fbc.y = design->y;
+		vmem_fbc.bg_color = vmem_convert_color_to_rgba(design->bg);
+		vmem_fbc.fg_color = vmem_convert_color_to_rgba(design->fg);
+		
+		fb_clear(&vmem_fbi, vmem_fbc.bg_color);
+
+		vmem_fbc.x = 0;
+		vmem_fbc.y = 0;
+		design->x = 0;
+    	design->y = 0;
+
+		spin_unlock_irqrestore(&vmem_lock, rflags);
+		return;
+	}
+
+    volatile uint16_t* vmem = (volatile uint16_t*)IO_VMEM_true;
     uint16_t attr = (design->bg << 4) | design->fg;
-    for (uint16_t i = 0; i < VMEM_MAX_COLS*VMEM_MAX_ROWS; i++) vmem[i] = attr << 8;
+    for (uint16_t i = 0; i < IO_VMEM_MAX_COLS_true*IO_VMEM_MAX_ROWS_true; i++) vmem[i] = attr << 8;
     design->x = 0;
     design->y = 0;
 
@@ -399,30 +545,44 @@ void vmem_clear_screen(struct VMemDesign* design) {
 }
 
 void vmem_printc(struct VMemDesign* design, char c) {
+	if (design->serial_out == 1) serial_printc(c);
+
     uint64_t rflags = spin_lock_irqsave(&vmemc_lock);
 
-    volatile uint16_t* vmem = (volatile uint16_t*)VMEM;
+	if (vmem_mode == AOS_SYSINFO_FB_MODE_FB) {
+		vmem_fbc.x = design->x;
+		vmem_fbc.y = design->y;
+		vmem_fbc.bg_color = vmem_convert_color_to_rgba(design->bg);
+		vmem_fbc.fg_color = vmem_convert_color_to_rgba(design->fg);
+		
+		fb_printc(&vmem_fbi, &vmem_fbc, c);
+		design->x = vmem_fbc.x;
+		design->y = vmem_fbc.y;
+
+		spin_unlock_irqrestore(&vmemc_lock, rflags);
+		return;
+	}
+
+    volatile uint16_t* vmem = (volatile uint16_t*)IO_VMEM_true;
     uint16_t attr = (design->bg << 4) | design->fg;
     if (c == '\n') {
         design->x = 0;
-        uint16_t y = design->y + 1;
-        design->y = y;
+        design->y++;
         spin_unlock_irqrestore(&vmemc_lock, rflags);
-        vmem_set_cursor(design->x, y);
+        vmem_set_cursor(design->x, design->y);
         if (design->serial_out == 1) serial_printc(c);
         return;
     }
-    vmem[design->y * VMEM_MAX_COLS + design->x] = ((uint16_t)attr << 8) | c;
-    uint16_t x = design->x + 1;
-    design->x = x;
+    vmem[design->y * IO_VMEM_MAX_COLS_true + design->x] = ((uint16_t)attr << 8) | c;
+    design->x++;
 
     spin_unlock_irqrestore(&vmemc_lock, rflags);
-    vmem_set_cursor(x, design->y);
-    if (design->serial_out == 1) serial_printc(c);
+    vmem_set_cursor(design->x, design->y);
 }
 
-void vmem_print(struct VMemDesign* design, const char* str) {\
+void vmem_print(struct VMemDesign* design, const char* str) {
     uint64_t rflags = spin_lock_irqsave(&vmem_lock);
+
     while (*str) vmem_printc(design, *str++);
     spin_unlock_irqrestore(&vmem_lock, rflags);
 }
@@ -519,7 +679,7 @@ void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
                     uint64_t p;
                     if (*fmt == 'p') {
                         p = (uintptr_t)va_arg(args, void*);
-                        serial_print("0x");
+                        vmem_print(design, "0x");
                         if (width == 0) width = 16;
                         zero_pad = 1;
                     } else {
@@ -548,8 +708,13 @@ void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
     spin_unlock_irqrestore(&vmemf_lock, rflags);
 }
 void vmem_scroll_up(struct VMemDesign* design, uint32_t top, uint32_t bottom, uint32_t width) {
-    uint16_t* vmem = (uint16_t*)IO_VMEM;
-    uint32_t stride = IO_VMEM_MAX_COLS; 
+	if (vmem_mode == AOS_SYSINFO_FB_MODE_FB) {
+		design->x = 0;
+		design->y = 0;
+		return;
+	}
+    uint16_t* vmem = (uint16_t*)IO_VMEM_true;
+    uint32_t stride = IO_VMEM_MAX_COLS_true; 
 
     for (size_t y = top; y < bottom - 1; y++) {
         for (size_t x = 0; x < width; x++) {
@@ -947,7 +1112,7 @@ void ps2_read_line(char* buf, int max_len, struct VMemDesign* design) {
                 // Move cursor back visually
                 if (design->x == 0 && design->y > 0) {
                     design->y--;
-                    design->x = VMEM_MAX_COLS - 1;
+                    design->x = IO_VMEM_MAX_COLS_true - 1;
                 } else if (design->x > 0) {
                     design->x--;
                 }

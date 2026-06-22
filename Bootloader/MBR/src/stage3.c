@@ -70,6 +70,7 @@ void enable_a20(void) {
 
 __attribute__((naked, noreturn))
 static void stage3_jump_to_kernel(void (*kernel)(void), uint64_t stack_top){
+	serial_printf("Stack: %llx Entry: %p\n", stack_top, kernel);
     __asm__ __volatile__(
         "movq %0, %%rsp\n\t"
         "movq %0, %%rbp\n\t"
@@ -91,10 +92,10 @@ static void stage3_jump_to_kernel(void (*kernel)(void), uint64_t stack_top){
 }
 
 
-uint8_t compute_checksum(const uint8_t* data, uint32_t len) {
-    uint32_t sum = 0;
-    for (uint32_t i = 0; i < len; i++) sum += data[i];
-    return (uint8_t)(sum & 0xFF);
+uint64_t compute_checksum(const uint8_t* data, uint32_t len) {
+    uint64_t sum = 0;
+    for (uint64_t i = 0; i < len; i++) sum += data[i];
+    return sum;
 }
 
 static drive_device_t cur_drive = {0};
@@ -380,6 +381,7 @@ void stage3(void) {
     uint64_t tsc_end = read_tsc();
     uint64_t cycles_per_ms = tsc_end - tsc_start2;
 
+	vmem_init(NULL);
     vmem_disable_cursor();
 
     vmem_clear_screen(&cursor);
@@ -455,14 +457,19 @@ void stage3(void) {
 
     aos_sysinfo_t* SystemInfo = (aos_sysinfo_t*)AOS_SYS_INFO_LOC;
 	read_blk(&cur_drive.block_dev, mnt.header64.sysinfo_lba, SystemInfo);
+	
+	memset(&SystemInfo->fb_info, 0, sizeof(SystemInfo->fb_info));
+	SystemInfo->fb_mode = AOS_SYSINFO_FB_MODE_VGA;
+	SystemInfo->fb_info.phys_addr = IO_VMEM;
+	SystemInfo->fb_info.height = 25;
+	SystemInfo->fb_info.width = 80;
+
     SystemInfo->boot_drive = boot_drive;
     SystemInfo->boot_mode = 0;
     SystemInfo->reserved0 = 0;
     SystemInfo->cpu_signature = cpuid_signature();
     cpuid_get_vendor(SystemInfo->cpu_vendor);
 	SystemInfo->tsc_freq_hz = cycles_per_ms * 1000;
-    SystemInfo->checksum = 0;
-    SystemInfo->checksum = compute_checksum((uint8_t*)SystemInfo, sizeof(aos_sysinfo_t));
 
 	uint8_t tsc_is_fine = 0;
 	uint8_t kernel_is_fine = 0;
@@ -685,14 +692,17 @@ void stage3(void) {
 	pager_map_range((uint64_t)ambrc->kernel_info[final_kernel_idx].load_addr, (uint64_t)ambrc->kernel_info[final_kernel_idx].load_addr, (mnt.header64.block_size * uint128_to_u64(os_entries[final_kernel_idx].count)), PAGE_PRESENT | PAGE_RW);
 	pager_map_range(AOS_KERNEL_STACK_TOP - 0x10000, AOS_KERNEL_STACK_TOP, AOS_KERNEL_STACK_TOP - (AOS_KERNEL_STACK_TOP - 0x10000), PAGE_PRESENT | PAGE_RW);
 	
-    if (!read_f(&cur_drive.block_dev, uint128_to_u64(os_entries[final_kernel_idx].lba), uint128_to_u32(os_entries[final_kernel_idx].count), (void*)ambrc->kernel_info[final_kernel_idx].load_addr)) {
+    if (!read_f(&cur_drive.block_dev, uint128_to_u64(os_entries[final_kernel_idx].lba), uint128_to_u64(os_entries[final_kernel_idx].count), (void*)ambrc->kernel_info[final_kernel_idx].load_addr)) {
         serial_print("Failed to read kernel, Disk error!\n");
 		start_panic_shell(&cur_drive, "Failed to read kernel, Disk error!", 1);
         acpi_reboot();
     }
 
 	SystemInfo->kernel_info = AOS_BOOTLOADER_KERNEL_ACTIVE_FLAG;
+    SystemInfo->checksum = 0;
+    SystemInfo->checksum = compute_checksum((uint8_t*)SystemInfo, sizeof(aos_sysinfo_t));
 	write_blk(&cur_drive.block_dev, mnt.header64.sysinfo_lba, SystemInfo);
+	flush_f(&cur_drive.block_dev);
 
     vmem_print(&cursor, "Jumping to Kernel...\n");
 	stage3_jump_to_kernel((void(*)(void))((void*)ambrc->kernel_info[final_kernel_idx].entry_point), AOS_KERNEL_STACK_TOP);

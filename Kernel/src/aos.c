@@ -8,6 +8,7 @@
 #include <inc/core/pcie.h>
 #include <inc/core/smp.h>
 #include <inc/core/module.h>
+#include <inc/core/tss_gdt.h>
 
 #include <inc/drivers/io/drive.h>
 
@@ -89,6 +90,9 @@ void kernel_main(void) {
         "memory"
     );
 
+	gdt_init();
+	tss_init();
+
 	aos_system_exception_handler_init(pre_halt_system);
     idt_init();
 
@@ -169,6 +173,8 @@ void kernel_main(void) {
         .bg = VMEM_COLOR_BLACK,
         .serial_out = 1
     };
+
+	vmem_init(kget_sysinfo());
 
     vmem_set_cursor(0, 0);
     vmem_clear_screen(&vmem_design);
@@ -359,13 +365,13 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
         *lines += 1;
     }
     *lines += 1;
-    if (*lines > IO_VMEM_MAX_ROWS) {
-        vmem_scroll_up(vmem_design, 0, IO_VMEM_MAX_ROWS, IO_VMEM_MAX_COLS);
+    if (*lines > IO_VMEM_MAX_ROWS_true) {
+        vmem_scroll_up(vmem_design, 0, IO_VMEM_MAX_ROWS_true, IO_VMEM_MAX_COLS_true);
         vmem_design->x = 0;
-        vmem_design->y = IO_VMEM_MAX_ROWS - 2;
-        for (int i = 0; i < IO_VMEM_MAX_COLS; i++) vmem_printc(vmem_design, ' ');
+        vmem_design->y = IO_VMEM_MAX_ROWS_true - 2;
+        for (int i = 0; i < IO_VMEM_MAX_COLS_true; i++) vmem_printc(vmem_design, ' ');
         vmem_design->x = 0;
-        vmem_design->y = IO_VMEM_MAX_ROWS - 2;
+        vmem_design->y = IO_VMEM_MAX_ROWS_true - 2;
         *lines--;
     }
 }

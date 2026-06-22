@@ -15,6 +15,17 @@ static uint8_t pager_ready = 0;
 static uint64_t cpu_phys_bits = 0;
 static uint64_t cpu_virt_bits = 0;
 
+__attribute__((aligned(PAGE_SIZE)))
+static uint64_t pre_pml4[512] = {0};
+__attribute__((aligned(PAGE_SIZE)))
+static uint64_t pre_pdpt[512] = {0};
+__attribute__((aligned(PAGE_SIZE)))
+static uint64_t pre_pd[512] = {0};
+__attribute__((aligned(PAGE_SIZE)))
+static uint64_t pre_dm_pdpt[512] = {0};
+__attribute__((aligned(PAGE_SIZE)))
+static uint64_t pre_dm_pd[512] = {0};
+
 static void* pager_phys_to_virt(uint64_t phys) {
     if (!pager_ready) {
         return (void*)phys; // Identity

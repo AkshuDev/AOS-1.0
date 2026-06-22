@@ -1,5 +1,6 @@
 #include <inttypes.h>
 #include <asm.h>
+#include <system.h>
 
 #include <inc/drivers/core/framebuffer.h>
 

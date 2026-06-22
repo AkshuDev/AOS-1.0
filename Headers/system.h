@@ -1,6 +1,7 @@
 #pragma once
 
 #include <inttypes.h>
+#include <inc/drivers/core/framebuffer.h>
 
 #define AOS_KERNEL_LOC ((void *)0x100000)
 #define AOS_KERNEL_ADDR 0x100000
@@ -45,20 +46,25 @@
 	#define AOS_xHCI_VIRT_BASE 0xFFFFF90000000000ULL
 #endif
 
+#define AOS_SYSINFO_FB_MODE_VGA 0
+#define AOS_SYSINFO_FB_MODE_FB 1
+
 #pragma pack(push, 1)
 typedef struct {
 	uint8_t boot_drive; // BIOS DL Value
 	uint8_t boot_mode;  // 0=Normal | 1=Recovery | 2=Shell | 3=VGA | 4=VGA+Shell
 	uint16_t reserved0; // alignment
-	uint32_t cpu_signature;    // CPUID EAX from 0x1
-	char cpu_vendor[13];       // Cpu Vendor
-	uint8_t apic_present;      // 1 if APIC was found
-	uint64_t tsc_freq_hz;      // timing info
-	uint8_t kernel_info;       // Kernel information such as, kernel active flag
-	uint8_t checksum;          // additive checksum
+	uint32_t cpu_signature; // CPUID EAX from 0x1
+	char cpu_vendor[13]; // Cpu Vendor
+	uint8_t apic_present; // 1 if APIC was found
+	uint64_t tsc_freq_hz; // timing info
+	uint8_t kernel_info; // Kernel information such as, kernel active flag
+	FB_Info_t fb_info;
+	uint8_t fb_mode;
+	uint64_t checksum; // additive checksum
 } aos_sysinfo_t;
 #pragma pack(pop)
 
-#define AOS_SYS_INFO_ADDR 0x2000
+#define AOS_SYS_INFO_ADDR 0x10000
 #define AOS_SYS_INFO_LOC ((volatile aos_sysinfo_t*)AOS_SYS_INFO_ADDR)
 

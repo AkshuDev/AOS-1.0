@@ -68,10 +68,10 @@ EFIAPI static uint32_t cpuid_signature(void) {
     return eax;
 }
 
-EFIAPI static uint8_t compute_checksum(const uint8_t* data, uint32_t len) {
-    uint32_t sum = 0;
-    for (uint32_t i = 0; i < len; i++) sum += data[i];
-    return (uint8_t)(sum & 0xFF);
+EFIAPI static uint64_t compute_checksum(const uint8_t* data, uint32_t len) {
+    uint64_t sum = 0;
+    for (uint64_t i = 0; i < len; i++) sum += data[i];
+    return sum;
 }
 
 typedef struct {
@@ -484,13 +484,70 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
     aos_sysinfo_t* SystemInfo = (aos_sysinfo_t*)AOS_SYS_INFO_LOC;
 	read_blk(&cur_drive.block_dev, mnt.header64.sysinfo_lba, SystemInfo);
+
+	memset(&SystemInfo->fb_info, 0, sizeof(SystemInfo->fb_info));
+
+	if (EFI_ERROR(pefi_init_gop(SystemTable))) {
+		SystemInfo->fb_mode = AOS_SYSINFO_FB_MODE_VGA;
+
+		SystemInfo->fb_info.phys_addr = IO_VMEM;
+		SystemInfo->fb_info.width = IO_VMEM_MAX_COLS;
+		SystemInfo->fb_info.height = IO_VMEM_MAX_ROWS;
+	} else {
+		SystemInfo->fb_mode = AOS_SYSINFO_FB_MODE_FB;
+		SystemInfo->fb_info.phys_addr = (uint64_t)GOP->Mode->FrameBufferBase;
+		SystemInfo->fb_info.addr = (uint64_t)GOP->Mode->FrameBufferBase;
+		SystemInfo->fb_info.width = GOP->Mode->Info->HorizontalResolution;
+		SystemInfo->fb_info.height = GOP->Mode->Info->VerticalResolution;
+		SystemInfo->fb_info.bpp = sizeof(uint32_t)*8;
+		SystemInfo->fb_info.pitch = GOP->Mode->Info->PixelsPerScanLine * (SystemInfo->fb_info.bpp / 8);
+		SystemInfo->fb_info.size = GOP->Mode->FrameBufferSize;
+
+		switch (GOP->Mode->Info->PixelFormat) {
+			case PixelRedGreenBlueReserved8BitPerColor:
+				// R G B A
+				SystemInfo->fb_info.cformat = PYRION_COLORF_RGBA;
+				break;
+
+			case PixelBlueGreenRedReserved8BitPerColor:
+				// B G R A
+				SystemInfo->fb_info.cformat = PYRION_COLORF_BGRA;
+				break;
+
+			case PixelBitMask: {
+				EFI_PIXEL_BITMASK* mask = &GOP->Mode->Info->PixelInformation;
+
+				if (
+					mask->RedMask == 0xFF000000 &&
+					mask->GreenMask == 0x00FF0000 &&
+					mask->BlueMask == 0x0000FF00
+				) {
+					SystemInfo->fb_info.cformat = PYRION_COLORF_RGBA;
+				} else if (
+					mask->RedMask == 0x00FF0000 &&
+					mask->GreenMask == 0x0000FF00 &&
+					mask->BlueMask == 0x000000FF
+				) {
+					SystemInfo->fb_info.cformat = PYRION_COLORF_ARGB;
+				} else {
+					SystemInfo->fb_info.cformat = PYRION_COLORF_BGRA;
+				}
+
+				break;
+			}
+
+			case PixelBltOnly:
+			default:
+				SystemInfo->fb_info.cformat = PYRION_COLORF_BGRA;
+				break;
+		}
+	}
+
     SystemInfo->boot_drive = boot_drive;
     SystemInfo->boot_mode = 0;
     SystemInfo->reserved0 = 0;
     SystemInfo->cpu_signature = cpuid_signature();
     cpuid_get_vendor(SystemInfo->cpu_vendor);
-    SystemInfo->checksum = 0;
-    SystemInfo->checksum = compute_checksum((uint8_t*)SystemInfo, sizeof(aos_sysinfo_t));
 
 	uint8_t tsc_is_fine = 0;
 	uint8_t kernel_is_fine = 0;
@@ -742,6 +799,9 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     }
 
 	SystemInfo->kernel_info = AOS_BOOTLOADER_KERNEL_ACTIVE_FLAG;
+    SystemInfo->checksum = 0;
+    SystemInfo->checksum = compute_checksum((uint8_t*)SystemInfo, sizeof(aos_sysinfo_t));
+
 	write_blk(&cur_drive.block_dev, mnt.header64.sysinfo_lba, SystemInfo);
 	flush_f(&cur_drive.block_dev);
 	btl_free(dev.driver_data);

@@ -1,6 +1,6 @@
 #pragma once
 #include <asm.h>
-#include <sys/cdefs.h>
+#include <system.h>
 
 #ifdef PBFS_WDRIVERS
 #undef PBFS_WDRIVERS
@@ -11,6 +11,9 @@
 #define IO_VMEM 0xB8000
 #define IO_VMEM_MAX_COLS 80
 #define IO_VMEM_MAX_ROWS 25
+
+extern uint64_t IO_VMEM_MAX_COLS_true;
+extern uint64_t IO_VMEM_MAX_ROWS_true;
 
 enum VMemColors {
     VMEM_COLOR_BLACK = 0x0,
@@ -53,7 +56,6 @@ typedef struct {
 	uint16_t pad;
 } ata_identity_t;
 
-
 void serial_init_klog(const char* path, struct pbfs_mount* mnt) __attribute__((used));
 void serial_flush_klog(const char* path, struct pbfs_mount* mnt) __attribute__((used));
 void serial_deinit_klog(const char* path, struct pbfs_mount* mnt) __attribute__((used));
@@ -63,6 +65,7 @@ void serial_print(const char* str) __attribute__((used));
 int serial_is_transmit_empty(void) __attribute__((used));
 void serial_printf(const char* fmt, ...) __attribute__((used));
 
+void vmem_init(aos_sysinfo_t* sysinfo) __attribute__((used));
 void vmem_set_cursor(uint16_t x, uint16_t y) __attribute__((used));
 void vmem_disable_cursor(void) __attribute__((used));
 void vmem_clear_screen(struct VMemDesign* design) __attribute__((used));

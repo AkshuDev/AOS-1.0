@@ -298,10 +298,10 @@ uint64_t kget_timestamp_ms(void) {
 
 // Extras
 
-uint8_t kcompute_checksum(const uint8_t* data, uint32_t len) {
-    uint32_t sum = 0;
-    for (uint32_t i = 0; i < len; i++) sum += data[i];
-    return (uint8_t)(sum & 0xFF);
+uint64_t kcompute_checksum(const uint8_t* data, uint32_t len) {
+    uint64_t sum = 0;
+    for (uint64_t i = 0; i < len; i++) sum += data[i];
+    return sum;
 }
 
 #define ALLOC_HDR_SIG "AOS_ALLOC\0"
@@ -374,15 +374,14 @@ static uint8_t sysinfo_checked = 0;
 aos_sysinfo_t* kget_sysinfo(void) {
 	if (sysinfo_checked == 0) {
 		aos_sysinfo_t* sinfo = (aos_sysinfo_t*)(AOS_SYS_INFO_ADDR);
+		aos_sysinfo_t info = *sinfo;
 		
-		uint8_t checksum = sinfo->checksum;
-		sinfo->checksum = 0;
-		uint8_t checksum_comp = kcompute_checksum((const uint8_t*)sinfo, sizeof(aos_sysinfo_t));
-		sinfo->checksum = checksum;
+		info.checksum = 0;
+		uint64_t checksum_comp = kcompute_checksum((const uint8_t*)&info, sizeof(aos_sysinfo_t));
 
-		uint8_t out = (uint8_t)(checksum_comp == checksum);
+		uint8_t out = (uint8_t)(checksum_comp == sinfo->checksum);
 
-		serial_printf("[KFUNCS] Computed Checksum for SystemInfo = %d\n\tProvided Checksum = %d\n", checksum_comp, checksum);
+		serial_printf("[KFUNCS] Computed Checksum for SystemInfo = %llu\n\tProvided Checksum = %llu\n", checksum_comp, sinfo->checksum);
 
 		if (!out) system_info = NULL;
 		else system_info = sinfo;

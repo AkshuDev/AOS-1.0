@@ -1,5 +1,13 @@
 #pragma once 
 #include <inttypes.h>
+#include <inc/drivers/gpu/apis/pyrion_color.h>
+
+typedef struct {
+    uint32_t x;
+    uint32_t y;
+    uint32_t fg_color;
+    uint32_t bg_color;
+} FB_Cursor_t;
 
 typedef struct {
     uint64_t addr; // virtual framebuffer address
@@ -9,14 +17,8 @@ typedef struct {
     uint32_t pitch; // bytes per row
     uint8_t bpp; // bits per pixel (usually 32)
     uint64_t size;
+	enum pyrion_color_format cformat;
 } FB_Info_t;
-
-typedef struct {
-    uint32_t x;
-    uint32_t y;
-    uint32_t fg_color;
-    uint32_t bg_color;
-} FB_Cursor_t;
 
 void fb_clear(FB_Info_t* fb, uint32_t color) __attribute__((used));
 void fb_set_cursor(FB_Info_t* fb, FB_Cursor_t* cur, uint32_t x, uint32_t y) __attribute__((used));

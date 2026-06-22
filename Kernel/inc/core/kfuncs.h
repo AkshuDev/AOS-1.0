@@ -31,7 +31,7 @@ uint64_t kget_timestamp_seconds(void) __attribute__((used));
 uint64_t kget_timestamp_ms(void) __attribute__((used));
 
 
-uint8_t kcompute_checksum(const uint8_t* data, uint32_t len) __attribute__((used));
+uint64_t kcompute_checksum(const uint8_t* data, uint32_t len) __attribute__((used));
 
 void* kmalloc(size_t size) __attribute__((used));
 void klink(void* ptr1, void* ptr2) __attribute__((used));
