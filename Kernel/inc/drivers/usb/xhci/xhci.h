@@ -1,6 +1,6 @@
 #pragma once
 
-#include <inttypes.h>
+#include <aos_inttypes.h>
 
 #include <inc/core/module.h>
 

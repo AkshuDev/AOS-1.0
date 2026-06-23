@@ -99,10 +99,10 @@ uint64_t compute_checksum(const uint8_t* data, uint32_t len) {
 }
 
 static drive_device_t cur_drive = {0};
-static uint8_t found_drive = 0;
+static aos_bool found_drive = AOS_FALSE;
 
 static uint8_t current_mode = 0; // 1 = Safe, 2 = Panic, 0 = Normal
-static uint8_t rdtscp_supported = 0;
+static aos_bool rdtscp_supported = AOS_FALSE;
 
 // Fake funcs
 void smp_shutdown(void) {return;}
@@ -296,7 +296,7 @@ void display_popup(struct ambrc* ambrc, struct VMemDesign* design, const char* p
 uint64_t read_tsc(void) {
     uint32_t low = 0;
     uint32_t high = 0;
-    if (rdtscp_supported == 1) {
+    if (rdtscp_supported) {
         asm volatile("rdtscp" : "=a"(low), "=d"(high) : : "rcx");
     }
     else {
@@ -349,9 +349,9 @@ void stage3(void) {
     eax = 0x80000001;
     asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
     if (edx & (1 << 27)) {
-        rdtscp_supported = 1;
+        rdtscp_supported = AOS_TRUE;
     } else {
-        rdtscp_supported = 0;
+        rdtscp_supported = AOS_FALSE;
     }
     uint64_t tsc_start = read_tsc();
 
@@ -404,7 +404,14 @@ void stage3(void) {
 
 	vmem_clear_screen(&cursor);
 
-	uint8_t boot_drive = *AOS_BOOT_INFO_LOC; // Get Boot drive
+	uint64_t bdrive = *(AOS_DIRECT_MAP_BASE + AOS_BOOT_INFO_ADDR); // Get Boot drive
+	struct aos_sysinfo_pcie boot_drive = {
+		.bus = bdrive & 0xFFFF,
+		.slot = (bdrive >> 16) & 0xFFFF,
+		.func = (bdrive >> 32) & 0xFFFF
+	};
+	uint8_t bdrive_port = (bdrive >> 40) & 0xFF;
+	uint8_t bdrive_dl = (bdrive >> 48) & 0xFF;
 
     if (get_available_drives(&cur_drive) == 1) {
         if (cur_drive.active != 1) {
@@ -428,9 +435,9 @@ void stage3(void) {
 			cur_drive.read_blk = ata_read;
 			cur_drive.write_blk = ata_write;
 			cur_drive.flush = ata_flush;
-			cur_drive.cur_port = boot_drive;
+			cur_drive.cur_port = bdrive_port;
 			ata_identity_t iden;
-			if (ata_identify_device(boot_drive, &iden) != 1) {
+			if (ata_identify_device(bdrive_dl, &iden) != 1) {
 				serial_print("Failed to identify Legacy-ATA Drive\n");
         		start_panic_shell(&cur_drive, "Failed to identify Legacy-ATA Drive", 1);
         		acpi_reboot();
@@ -465,14 +472,15 @@ void stage3(void) {
 	SystemInfo->fb_info.width = 80;
 
     SystemInfo->boot_drive = boot_drive;
+	SystemInfo->boot_drive_raw = bdrive_dl;
     SystemInfo->boot_mode = 0;
     SystemInfo->reserved0 = 0;
     SystemInfo->cpu_signature = cpuid_signature();
     cpuid_get_vendor(SystemInfo->cpu_vendor);
 	SystemInfo->tsc_freq_hz = cycles_per_ms * 1000;
 
-	uint8_t tsc_is_fine = 0;
-	uint8_t kernel_is_fine = 0;
+	aos_bool tsc_is_fine = AOS_FALSE;
+	aos_bool kernel_is_fine = AOS_FALSE;
 	switch (ambrc->boot_info.crash_verification_mode) {
         case 0: break;
         case 1: 
@@ -511,9 +519,9 @@ void stage3(void) {
     const int VIEWPORT_HEIGHT = (IO_VMEM_MAX_ROWS - 6);
     const int MENU_START_Y = 4;
 
-    uint8_t force_redraw = 1;
-    uint8_t popup_finished = 0;
-	uint8_t caps_active = 0;
+    aos_bool force_redraw = AOS_TRUE;
+    aos_bool popup_finished = AOS_FALSE;
+	aos_bool caps_active = AOS_FALSE;
 
     uint64_t timeout_start = read_tsc();
 
@@ -523,7 +531,7 @@ void stage3(void) {
             uint64_t timeout_elapsed = timeout_cur - timeout_start;
             if ((uint64_t)(timeout_elapsed / cycles_per_ms) > ambrc->boot_info.timeout * 1000) {
                 timeout = 1;
-                running = 0;
+                running = AOS_FALSE;
                 continue;
             }
         }
@@ -533,7 +541,7 @@ void stage3(void) {
 			else if (!tsc_is_fine) popup_str = "Did anything crash? (y/n/C) (Reason: TSC Check Failed)";
 			else if (!kernel_is_fine) popup_str = "Did anything crash? (y/n/C) (Reason: Kernel Check Failed)";
 			display_popup(ambrc, &cursor, popup_str);
-            uint8_t popup_active = 1;
+            aos_bool popup_active = AOS_TRUE;
             while (popup_active) {
                 uint16_t scancode = ps2_read_scan(); 
                 switch (scancode) {
@@ -558,7 +566,7 @@ void stage3(void) {
             vmem_clear_screen(&cursor);
             draw_menu_frame(&cursor);
             timeout_start = read_tsc(); // Reset
-            force_redraw = 1; 
+            force_redraw = AOS_TRUE; 
         }
         if (force_redraw) {
             for (int i = 0; i < VIEWPORT_HEIGHT; i++) {
@@ -567,7 +575,7 @@ void stage3(void) {
                 cursor.y = MENU_START_Y + i;
                 
                 if (item_idx < total_items) {
-                    uint8_t is_sel = (item_idx == selected);
+                    aos_bool is_sel = (item_idx == selected);
                     cursor.fg = is_sel ? ambrc->display.selected_fg_color : ambrc->display.fg_color;
                     cursor.bg = is_sel ? ambrc->display.selected_bg_color : ambrc->display.bg_color;
 
@@ -587,7 +595,7 @@ void stage3(void) {
                     for (int j = 0; j < (IO_VMEM_MAX_COLS - 2); j++) vmem_printc(&cursor, ' ');
                 }
             }
-            force_redraw = 0;
+            force_redraw = AOS_FALSE;
             old_selected = selected;
         } 
         else if (selected != old_selected) {
@@ -597,7 +605,7 @@ void stage3(void) {
 
                 cursor.x = 1;
                 cursor.y = MENU_START_Y + (target - scroll_offset);
-                uint8_t is_sel = (target == selected);
+                aos_bool is_sel = (target == selected);
                 cursor.fg = is_sel ? ambrc->display.selected_fg_color : ambrc->display.fg_color;
                 cursor.bg = is_sel ? ambrc->display.selected_bg_color : ambrc->display.bg_color;
 
@@ -623,7 +631,7 @@ void stage3(void) {
                     selected--;
                     if (selected < scroll_offset) {
                         scroll_offset--;
-                        force_redraw = 1;
+                        force_redraw = AOS_TRUE;
                     }
                 }
                 break;
@@ -632,14 +640,14 @@ void stage3(void) {
                     selected++;
                     if (selected >= scroll_offset + VIEWPORT_HEIGHT) {
                         scroll_offset++;
-                        force_redraw = 1;
+                        force_redraw = AOS_TRUE;
                     }
                 }
                 break;
 			case 0x1F: // Start Shell
 				if (!caps_active) break;
 				start_panic_shell(&cur_drive, "User Initiated (Shift-S)", 1);
-				force_redraw = 1;
+				force_redraw = AOS_TRUE;
 				vmem_clear_screen(&cursor);
 				draw_menu_frame(&cursor);
                 break;
@@ -658,7 +666,7 @@ void stage3(void) {
                     ambrc_entry = ambrc->display.show_settings_at_top ? 0 : (int)entry_count;
                     vmem_clear_screen(&cursor);
                     draw_menu_frame(&cursor);
-                    force_redraw = 1;
+                    force_redraw = AOS_TRUE;
                     timeout_start = read_tsc(); // Reset timeout
                 } else {
                     running = 0;

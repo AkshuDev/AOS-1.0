@@ -1,6 +1,6 @@
 #include <stdarg.h>
 
-#include <inttypes.h>
+#include <aos_inttypes.h>
 #include <asm.h>
 #include <inc/core/pcie.h>
 #include <inc/core/kfuncs.h>
@@ -122,7 +122,7 @@ struct pyrion_ctx* pyrion_create_ctx(void) {
     ctx->display_info.pitch = gdevice->framebuffer->pitch;
     ctx->display_info.size = gdevice->framebuffer->size;
 
-    ctx->font_ready = 0;
+    ctx->font_ready = AOS_FALSE;
 
     ctx->fb_info.bg_color = 0xFFFFFFFF;
     ctx->fb_info.fg_color = 0x000000FF;
@@ -135,10 +135,10 @@ struct pyrion_ctx* pyrion_create_ctx(void) {
 void pyrion_destroy_ctx(struct pyrion_ctx *ctx) {
     if (!ctx) return;
 
-    if (ctx->font_ready == 1) {
+    if (ctx->font_ready) {
         if (ctx->font.atlas)
             avmf_free((uint64_t)ctx->font.atlas);
-        ctx->font_ready = 0;
+        ctx->font_ready = AOS_FALSE;
     }
     gdevice->pyrion.destroy_ctx(ctx);
 }
@@ -209,7 +209,7 @@ void pyrion_builtin_printc(struct pyrion_ctx *ctx, char c) {
             return;
         }
         ctx->font.res_id = res_id;
-        ctx->font_ready = 1;
+        ctx->font_ready = AOS_TRUE;
         serial_print("[PYRION] Font uploaded!\n");
     }
 

@@ -1,5 +1,5 @@
 #include <system.h>
-#include <inttypes.h>
+#include <aos_inttypes.h>
 #include <asm.h>
 
 #include <inc/core/module.h>
@@ -21,14 +21,14 @@
 #undef PBFS_NDRIVERS
 
 static pcie_device_t sata_device = {0};
-static uint8_t found_sata = 0;
+static aos_bool found_sata = AOS_FALSE;
 
 static volatile struct sata_hba_mem* hba_mem = NULL;
 
 static struct sata_port_state port_states[32] = {0};
 static uint8_t ports_available[32] = {0};
 
-static int sata_busy_wait(struct sata_hba_port* port) {
+static aos_bool sata_busy_wait(struct sata_hba_port* port) {
     uint64_t timeout = kget_ms_passed();
 	uint64_t ctime = kget_ms_passed();
     while ((port->tfd & (0x80 | 0x08)) && ctime - timeout < 1000) { // 1 second accurate timeout
@@ -38,12 +38,12 @@ static int sata_busy_wait(struct sata_hba_port* port) {
 
     if (ctime - timeout >= 1000) {
         serial_print("[AHCI] Port stuck busy\n");
-        return 0;
+        return AOS_FALSE;
     }
-    return 1;
+    return AOS_TRUE;
 }
 
-static int sata_port_stop(struct sata_hba_port* port) {
+static aos_bool sata_port_stop(struct sata_hba_port* port) {
     port->cmd &= ~((1 << 0) | (1 << 4)); // clear ST and FRE
 
 	uint64_t timeout = kget_ms_passed();
@@ -56,7 +56,7 @@ static int sata_port_stop(struct sata_hba_port* port) {
     while ((port->cmd & (1 << 14)) && kget_ms_passed() - timeout < 1000)
         asm volatile("pause");
 
-    return 0;
+    return AOS_TRUE;
 }
 
 static void sata_port_start(struct sata_hba_port* port) {
@@ -81,16 +81,16 @@ static int sata_find_cmdslot(struct sata_hba_port* port) {
     return -1;
 }
 
-static int sata_port_init(struct sata_hba_port* port, struct sata_port_state* state) {
+static aos_bool sata_port_init(struct sata_hba_port* port, struct sata_port_state* state) {
     uint32_t ssts = port->ssts;
     uint8_t det = ssts & 0x0F;
     uint8_t ipm = (ssts >> 8) & 0x0F;
 
     if (det != 3 || ipm != 1)
-        return 0;
+        return AOS_FALSE;
 
     sata_port_stop(port);
-    if (sata_busy_wait(port) != 1) return 0;
+    if (sata_busy_wait(port) != 1) return AOS_FALSE;
 
     port->is = 0xFFFFFFFF;
     port->serr = 0xFFFFFFFF;
@@ -98,14 +98,14 @@ static int sata_port_init(struct sata_hba_port* port, struct sata_port_state* st
     state->clb_virt = avmf_alloc(1024, MALLOC_TYPE_DRIVER, PAGE_RW | PAGE_PRESENT, &state->clb_phys);
     if (state->clb_virt == 0) {
         serial_print("[AHCI] Could not allocate 1024 bytes!\n");
-        return 0;
+        return AOS_FALSE;
     }
     memset((void*)state->clb_virt, 0, 1024);
     state->fis_virt = avmf_alloc(256, MALLOC_TYPE_DRIVER, PAGE_RW | PAGE_PRESENT, &state->fis_phys);
     if (state->fis_virt == 0) {
         serial_print("[AHCI] Could not allocate 256 bytes!\n");
         avmf_free(state->clb_virt);
-        return 0;
+        return AOS_FALSE;
     }
     memset((void*)state->fis_virt, 0, 256);
 
@@ -120,7 +120,7 @@ static int sata_port_init(struct sata_hba_port* port, struct sata_port_state* st
             serial_print("[AHCI] Could not allocate 256 bytes for command table!\n");
             avmf_free(state->clb_virt);
             avmf_free(state->fis_virt);
-            return 0;
+            return AOS_FALSE;
         }
         memset((void*)ct_virt, 0, 256);
 
@@ -143,8 +143,8 @@ static int sata_port_init(struct sata_hba_port* port, struct sata_port_state* st
     port->is = 0xFFFFFFFF;
     port->serr = 0xFFFFFFFF;
 
-    state->active = 1;
-    return 1;
+    state->active = AOS_TRUE;
+    return AOS_TRUE;
 }
 
 static void sata_map_bar(void) {
@@ -159,16 +159,16 @@ static void sata_map_bar(void) {
     hba_mem = (struct sata_hba_mem*)AOS_AHCI_VIRT_BASE;
 }
 
-static int sata_send_cmd(struct sata_port_state* state, uint8_t write, uint64_t lba, uint32_t count, void* buffer, uint8_t command, uint8_t fis_type) {
+static aos_bool sata_send_cmd(struct sata_port_state* state, uint8_t write, uint64_t lba, uint32_t count, void* buffer, uint8_t command, uint8_t fis_type) {
     serial_print("[AHCI] Sending command...\n");
     struct sata_hba_port* port = state->port;
     if (!sata_busy_wait(port))
-        return 0;
+        return AOS_FALSE;
 
     int slot = sata_find_cmdslot(port);
     if (slot < 0) {
         serial_print("[AHCI] No free command slot\n");
-        return 0;
+        return AOS_FALSE;
     }
 
     struct sata_hba_cmd_hdr* cmd = &state->cmd_hdrs[slot];
@@ -188,7 +188,7 @@ static int sata_send_cmd(struct sata_port_state* state, uint8_t write, uint64_t 
 
     uint64_t phys;
     void* virt = (void*)avmf_alloc(512, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, &phys);
-    if (!virt || !phys) return 0;
+    if (!virt || !phys) return AOS_FALSE;
 
     if (write) memcpy(virt, buffer, 512);
 
@@ -225,7 +225,7 @@ static int sata_send_cmd(struct sata_port_state* state, uint8_t write, uint64_t 
         if (port->is & (1 << 30)) {
             serial_print("[AHCI] Disk error\n");
             avmf_free((uint64_t)virt);
-            return 0;
+            return AOS_FALSE;
         }
     }
 
@@ -234,23 +234,23 @@ static int sata_send_cmd(struct sata_port_state* state, uint8_t write, uint64_t 
 
     if (kget_ms_passed() - timeout > 1000) {
         serial_print("[AHCI] Disk/Device Error (timeout)\n");
-        return 0;
+        return AOS_FALSE;
     }
 
     serial_print("[AHCI] Command sent successfully!\n");
-    return 1;
+    return AOS_TRUE;
 }
 
-static int sata_issue_cmd(struct sata_port_state* state, int write, uint64_t lba, uint32_t count, void* buffer) {
+static aos_bool sata_issue_cmd(struct sata_port_state* state, int write, uint64_t lba, uint32_t count, void* buffer) {
     serial_print("[AHCI] Issueing command...\n");
     struct sata_hba_port* port = state->port;
     if (!sata_busy_wait(port))
-        return 0;
+        return AOS_FALSE;
 
     int slot = sata_find_cmdslot(port);
     if (slot < 0) {
         serial_print("[AHCI] No free command slot\n");
-        return 0;
+        return AOS_FALSE;
     }
 
     struct sata_hba_cmd_hdr* cmd = &state->cmd_hdrs[slot];
@@ -271,7 +271,7 @@ static int sata_issue_cmd(struct sata_port_state* state, int write, uint64_t lba
 
     uint64_t phys;
     void* virt = (void*)avmf_alloc(512, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, &phys);
-    if (!virt || !phys) return 0;
+    if (!virt || !phys) return AOS_FALSE;
 
     if (write) memcpy(virt, buffer, 512);
 
@@ -308,7 +308,7 @@ static int sata_issue_cmd(struct sata_port_state* state, int write, uint64_t lba
         if (port->is & (1 << 30)) {
             serial_print("[AHCI] Disk error\n");
             avmf_free((uint64_t)virt);
-            return 0;
+            return AOS_FALSE;
         }
     }
 
@@ -317,22 +317,23 @@ static int sata_issue_cmd(struct sata_port_state* state, int write, uint64_t lba
 
     if (kget_ms_passed() - timeout > 1000) {
         serial_print("[AHCI] Disk/Device Error (timeout)\n");
-        return 0;
+        return AOS_FALSE;
     }
 
     serial_print("[AHCI] Command sent successfully!\n");
-    return 1;
+    return AOS_TRUE;
 }
 
-int sata_init(struct AOS_Module* m) {
-    if (m->hdr.type != MODULE_TYPE_DRIVER) return 0;
-    if (m->Modules.driver_module.type != MODULE_DRIVER_TYPE_SATA) return 0;
-    if (m->hdr.registered != 1) return 0;
+aos_bool sata_init(struct AOS_Module* m) {
+	return AOS_FALSE;
+    if (m->hdr.type != MODULE_TYPE_DRIVER) return AOS_FALSE;
+    if (m->Modules.driver_module.type != MODULE_DRIVER_TYPE_SATA) return AOS_FALSE;
+    if (m->hdr.registered != 1) return AOS_FALSE;
 
     sata_device = m->Modules.driver_module.pcie_device;
 
     sata_map_bar();
-    if (hba_mem == NULL) return 0;
+    if (hba_mem == NULL) return AOS_FALSE;
     pcie_enable_busmaster(sata_device.bus, sata_device.slot, sata_device.func);
 
     // Reset
@@ -353,7 +354,7 @@ int sata_init(struct AOS_Module* m) {
 
     if (!(hba_mem->cap & (1 << 31))) {
         serial_print("[AHCI] Controller does not support 64-bit DMA\n");
-        return 0;
+        return AOS_FALSE;
     }
 
     int ports = (hba_mem->cap & 0x1F) + 1;
@@ -420,53 +421,53 @@ int sata_init(struct AOS_Module* m) {
     }
 
     if (ports_found > 0) {
-        found_sata = 1;
+        found_sata = AOS_TRUE;
         serial_print("[AHCI] Controller Found and online\n");
-        return 1;
+        return AOS_TRUE;
     } else {
-        found_sata = 0;
+        found_sata = AOS_FALSE;
         serial_print("[AHCI] No Controller was found!\n");
-        return 0;
+        return AOS_FALSE;
     }
 }
 
-int sata_read_blk(int port_id, uint64_t lba, uint32_t count, void* buffer) {
+aos_bool sata_read_blk(int port_id, uint64_t lba, uint32_t count, void* buffer) {
     if (!found_sata)
-        return 0;
+        return AOS_FALSE;
 
     struct sata_port_state* state = &port_states[port_id];
 
     if (!state->active)
-        return 0;
+        return AOS_FALSE;
 
     return sata_issue_cmd(state, 0, lba, count, buffer);
 }
 
-int sata_write_blk(int port_id, uint64_t lba, uint32_t count, void* buffer) {
+aos_bool sata_write_blk(int port_id, uint64_t lba, uint32_t count, void* buffer) {
     if (!found_sata)
-        return 0;
+        return AOS_FALSE;
 
     struct sata_port_state* state = &port_states[port_id];
 
     if (!state->active)
-        return 0;
+        return AOS_FALSE;
 
     return sata_issue_cmd(state, 1, lba, count, buffer);
 }
 
-int sata_flush(int port_id) {
-    if (!found_sata) return 0;
+aos_bool sata_flush(int port_id) {
+    if (!found_sata) return AOS_FALSE;
 
     struct sata_port_state* state = &port_states[port_id];
-    if (!state->active) return 0;
+    if (!state->active) return AOS_FALSE;
 
     struct sata_hba_port* port = state->port;
-    if (!sata_busy_wait(port)) return 0;
+    if (!sata_busy_wait(port)) return AOS_FALSE;
 
     int slot = sata_find_cmdslot(port);
     if (slot < 0) {
         serial_print("[AHCI] No free command slot for flush\n");
-        return 0;
+        return AOS_FALSE;
     }
 
     struct sata_hba_cmd_hdr* cmd = &state->cmd_hdrs[slot];
@@ -488,41 +489,41 @@ int sata_flush(int port_id) {
     while (port->ci & (1 << slot)) {
         if (port->is & (1 << 30)) {
             serial_print("[AHCI] Flush failed, disk error\n");
-            return 0;
+            return AOS_FALSE;
         }
     }
 
-    return 1;
+    return AOS_TRUE;
 }
 
-static int sata_get_info(int port_id, struct sata_identify* id) {
+static aos_bool sata_get_info(int port_id, struct sata_identify* id) {
     if (!found_sata) {
         serial_print("[AHCI] State is not found!\n");
-        return 0;
+        return AOS_FALSE;
     }
 
     struct sata_port_state* state = &port_states[port_id];
     if (!state->active) {
         serial_print("[AHCI] State is not active!\n");
-        return 0;
+        return AOS_FALSE;
     }
     uint8_t buffer[512];
 
     if (!sata_send_cmd(state, 0, 0, 1, (void*)buffer, CMD_ATA_IDENTIFY, FIS_TYPE_REG_H2D)) {
         serial_print("[AHCI] Failed to issue command!\n");
-        return 0;
+        return AOS_FALSE;
     }
 
     memcpy(id, buffer, sizeof(struct sata_identify));
-    return 1;
+    return AOS_TRUE;
 }
 
-int sata_get_block_device(int port_id, struct block_device* out) {
+aos_bool sata_get_block_device(int port_id, struct block_device* out) {
     serial_print("[AHCI] Getting drive info...\n");
     struct sata_identify* idenvirt = (struct sata_identify*)avmf_alloc(sizeof(struct sata_identify), MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL);
     if (sata_get_info(port_id, idenvirt) != 1) {
         serial_print("[AHCI] Failed to get drive info!\n");
-        return 0;
+        return AOS_FALSE;
     }
     serial_print("[AHCI] Got drive info!\n");
     struct sata_identify iden = *idenvirt;
@@ -532,7 +533,7 @@ int sata_get_block_device(int port_id, struct block_device* out) {
     char* model = (char*)avmf_alloc(41, MALLOC_TYPE_DRIVER, PAGE_RW | PAGE_PRESENT, NULL);
     if (model == NULL) {
         out->name = NULL;
-        return 1;
+        return AOS_TRUE;
     }
     for (int i = 0; i < 20; i++) {
         model[i*2] = iden.model[i] >> 8; // high byte
@@ -541,7 +542,7 @@ int sata_get_block_device(int port_id, struct block_device* out) {
     model[40] = '\0';
     out->name = (const char*)model;
 
-    return 1;
+    return AOS_TRUE;
 }
 
 void sata_get_pcie(pcie_device_t *out) {

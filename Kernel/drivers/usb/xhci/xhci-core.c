@@ -1,4 +1,4 @@
-#include <inttypes.h>
+#include <aos_inttypes.h>
 #include <asm.h>
 #include <system.h>
 
@@ -80,7 +80,7 @@ static void destroy_n_unmap_xhci() {
 	for (uint64_t i = 0; i < mapping_size / PAGE_SIZE; i++) pager_unmap(AOS_xHCI_VIRT_BASE + (i * PAGE_SIZE));
 }
 
-static uint8_t map_xhci_mmio(void) {
+static aos_bool map_xhci_mmio(void) {
     uint8_t bus = xhci_controller.bus;
     uint8_t slot = xhci_controller.slot;
     uint8_t func = xhci_controller.func;
@@ -88,13 +88,13 @@ static uint8_t map_xhci_mmio(void) {
     uint32_t bar0 = pcie_read_bar(bus, slot, func, 0);
     uint64_t bar_phys = bar0 & ~0xFULL;
 
-    uint8_t is_64bit = ((bar0 >> 1) & 0b011) == 0x2;
+    aos_bool is_64bit = ((bar0 >> 1) & 0b011) == 0x2;
 	uint32_t orig0 = bar0;
     uint32_t orig1 = 0;
 
 	if ((bar0 & 0b001) == 0x1) {
 		serial_print("[xHCI] BAR0 is not a memory BAR, mapping failed!\n");
-		return 0;
+		return AOS_FALSE;
 	}
 
     if (is_64bit) {
@@ -130,7 +130,7 @@ static uint8_t map_xhci_mmio(void) {
 	trbs_per_page = PAGE_SIZE / sizeof(struct xhci_trb);
 
     serial_printf("[xHCI] Mapped all XHCI (Size: 0x%llx) (Version: %u)\n", mapping_size, cap->hc_version);
-	return 1;
+	return AOS_TRUE;
 }
 
 static struct xhci_trb* xhci_next_event(void) {
@@ -174,13 +174,13 @@ static void xhci_send_cmd(uint32_t type, uint64_t param) {
 	doorbells[0] = 0;
 }
 
-uint8_t xhci_init(struct AOS_Module* module) {
-    if (!module) return 0;
-    if (module->hdr.type != MODULE_TYPE_DRIVER) return 0;
-    if (module->Modules.driver_module.type != MODULE_DRIVER_TYPE_xHCI) return 0;
+aos_bool xhci_init(struct AOS_Module* module) {
+    if (!module) return AOS_FALSE;
+    if (module->hdr.type != MODULE_TYPE_DRIVER) return AOS_FALSE;
+    if (module->Modules.driver_module.type != MODULE_DRIVER_TYPE_xHCI) return AOS_FALSE;
     
     xhci_controller = module->Modules.driver_module.pcie_device;
-    if (!map_xhci_mmio()) return 0;
+    if (!map_xhci_mmio()) return AOS_FALSE;
 
 	// Reset
 	op_regs->usbcmd &= ~1;
@@ -189,7 +189,7 @@ uint8_t xhci_init(struct AOS_Module* module) {
 		if (kget_ms_passed() - timeout >= 10000) {
 			serial_print("[xHCI] Controller Timeout!\n");
 			for (uint64_t i = 0; i < mapping_size / PAGE_SIZE; i++) pager_unmap(AOS_xHCI_VIRT_BASE + (i * PAGE_SIZE));
-			return 0;
+			return AOS_FALSE;
 		}
 	}
 	op_regs->usbcmd |= (1 << 1); // Set HCRST
@@ -198,7 +198,7 @@ uint8_t xhci_init(struct AOS_Module* module) {
 		if (kget_ms_passed() - timeout >= 10000) {
 			serial_print("[xHCI] Controller Timeout!\n");
 			for (uint64_t i = 0; i < mapping_size / PAGE_SIZE; i++) pager_unmap(AOS_xHCI_VIRT_BASE + (i * PAGE_SIZE));
-			return 0;
+			return AOS_FALSE;
 		}
 	}
 	timeout = kget_ms_passed();
@@ -206,7 +206,7 @@ uint8_t xhci_init(struct AOS_Module* module) {
 		if (kget_ms_passed() - timeout >= 10000) {
 			serial_print("[xHCI] Controller Timeout!\n");
 			for (uint64_t i = 0; i < mapping_size / PAGE_SIZE; i++) pager_unmap(AOS_xHCI_VIRT_BASE + (i * PAGE_SIZE));
-			return 0;
+			return AOS_FALSE;
 		}
 	}
 
@@ -214,7 +214,7 @@ uint8_t xhci_init(struct AOS_Module* module) {
 	if (!dcbaa) {
 		serial_print("[xHCI] Failed to allocate DCBAA\n");
 		for (uint64_t i = 0; i < mapping_size / PAGE_SIZE; i++) pager_unmap(AOS_xHCI_VIRT_BASE + (i * PAGE_SIZE));
-		return 0;
+		return AOS_FALSE;
 	}
 	memset((void*)dcbaa, 0, (max_slots + 1) * sizeof(uint64_t));
 
@@ -222,7 +222,7 @@ uint8_t xhci_init(struct AOS_Module* module) {
 	if (!cmd_ring) {
 		serial_print("[xHCI] Failed to allocate CMD Ring\n");
 		destroy_n_unmap_xhci();
-		return 0;
+		return AOS_FALSE;
 	}
 	memset(cmd_ring, 0, PAGE_SIZE);
 
@@ -233,7 +233,7 @@ uint8_t xhci_init(struct AOS_Module* module) {
 	if (!event_ring) {
 		serial_print("[xHCI] Failed to allocate EVENT Ring\n");
 		destroy_n_unmap_xhci();
-		return 0;
+		return AOS_FALSE;
 	}
 	memset(event_ring, 0, PAGE_SIZE);
 
@@ -241,7 +241,7 @@ uint8_t xhci_init(struct AOS_Module* module) {
 	if (!erst) {
 		serial_print("[xHCI] Failed to allocate ERST\n");
 		destroy_n_unmap_xhci();
-		return 0;
+		return AOS_FALSE;
 	}
 	memset(erst, 0, PAGE_SIZE);
 
@@ -267,7 +267,7 @@ uint8_t xhci_init(struct AOS_Module* module) {
 		if (kget_ms_passed() - timeout >= 10000) {
 			serial_print("[xHCI] Controller Timeout!\n");
 			destroy_n_unmap_xhci();
-			return 0;
+			return AOS_FALSE;
 		}
 	}
 
@@ -279,13 +279,13 @@ uint8_t xhci_init(struct AOS_Module* module) {
 	if (!event) {
 		serial_print("[xHCI] Enable Slot timeout\n");
 		destroy_n_unmap_xhci();
-		return 0;
+		return AOS_FALSE;
 	}
 
 	if (((event->status >> 24) & 0xFF) != 1) {
 		serial_printf("[xHCI] Enable Slot Command failed: %u\n", ((event->status >> 24) & 0xFF));
 		destroy_n_unmap_xhci();
-		return 0;
+		return AOS_FALSE;
 	}
 	
 	port = UINT64_MAX;
@@ -302,7 +302,7 @@ uint8_t xhci_init(struct AOS_Module* module) {
 	if (port == UINT64_MAX) {
 		serial_print("[xHCI] No devices found!\n");
 		destroy_n_unmap_xhci();
-		return 0;
+		return AOS_FALSE;
 	}
 
 	uint32_t portsc = op_regs->ports[port].portsc;
@@ -315,7 +315,7 @@ uint8_t xhci_init(struct AOS_Module* module) {
 		if (kget_ms_passed() - timeout >= 10000) {
 			serial_print("[xHCI] Port reset timed out!\n");
 			destroy_n_unmap_xhci();
-			return 0;
+			return AOS_FALSE;
 		}
 	}
 	timeout = kget_ms_passed();
@@ -323,12 +323,12 @@ uint8_t xhci_init(struct AOS_Module* module) {
 		if (kget_ms_passed() - timeout >= 10000) {
 			serial_print("[xHCI] Port Enable timed out!\n");
 			destroy_n_unmap_xhci();
-			return 0;
+			return AOS_FALSE;
 		}
 	}
 
 	speed = (op_regs->ports[port].portsc >> 10) & 0xF;
 	serial_printf("[xHCI] Port speed: %u\n", speed);
 
-    return 1;
+    return AOS_TRUE;
 }

@@ -1,4 +1,4 @@
-#include <inttypes.h>
+#include <aos_inttypes.h>
 #include <asm.h>
 #include <system.h>
 
@@ -8,6 +8,7 @@
 #include <inc/drivers/core/framebuffer.h>
 #include <inc/drivers/gpu/apis/pyrion.h>
 #include <inc/drivers/io/io.h>
+#include <inc/drivers/keyboard/keyboard.h>
 
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
@@ -31,7 +32,7 @@ static spinlock_t vmemc_lock;
 static spinlock_t vmem_cur_lock;
 static spinlock_t ps2_lock;
 
-static uint8_t serial_present;
+static aos_bool serial_present;
 
 uint64_t IO_VMEM_MAX_COLS_true;
 uint64_t IO_VMEM_MAX_ROWS_true;
@@ -49,8 +50,8 @@ static char* klog; // 4KB Log
 static uint64_t klog_cap;
 static uint64_t klog_end;
 static uint64_t klog_pos;
-static uint8_t klog_present;
-static uint8_t klog_msg_started;
+static aos_bool klog_present;
+static aos_bool klog_msg_started;
 
 // Returns n / d
 static uint64_t udiv64(uint64_t n, uint64_t d) {
@@ -77,7 +78,7 @@ static uint64_t umod64(uint64_t n, uint64_t d) {
     return n;
 }
 
-static uint8_t klog_realloc(void) {
+static aos_bool klog_realloc(void) {
 	if (klog_cap - klog_pos >= 32) return 1;
 	size_t size = klog_cap;
 	char* nptr = (char*)avmf_alloc(size + 1024, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL); // +1KB
@@ -118,7 +119,7 @@ static void klog_printc(char c) {
 		}
 
 		memcpy(&klog[klog_pos], "] ", 2); klog_pos += 2;
-		klog_msg_started = 1;
+		klog_msg_started = AOS_TRUE;
 	}
 
 	klog[klog_pos++] = c;
@@ -149,15 +150,15 @@ void serial_init(void) {
 	asm_outb(SERIAL_SCRATCH_PORT, 0xAE);
 
     if (asm_inb(SERIAL_SCRATCH_PORT) == 0xAE)
-        serial_present = 1;
+        serial_present = AOS_TRUE;
     else
-        serial_present = 0;
+        serial_present = AOS_FALSE;
 
 	klog = NULL;
 	klog_end = 0;
 	klog_pos = 0;
-	klog_present = 0;
-	klog_msg_started = 0;
+	klog_present = AOS_FALSE;
+	klog_msg_started = AOS_FALSE;
 	klog_cap = 0;
 
     spin_unlock_irqrestore(&serial_lock, rflags);
@@ -172,10 +173,10 @@ void serial_init_klog(const char* path, struct pbfs_mount* mnt) {
 	size_t size = 0;
 	uint8_t* data = NULL;
 
-	klog_present = 0;
+	klog_present = AOS_FALSE;
 	if (pbfs_find_entry(path, &out, &out_lba, mnt) == PBFS_RES_SUCCESS && out.type & METADATA_FLAG_SYS) {
 		pbfs_read_file(mnt, path, &data, &size);
-		klog_present = 1;
+		klog_present = AOS_TRUE;
 	}
 
 	klog = (char*)avmf_alloc(size + 4096, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL); // +4KB
@@ -214,7 +215,7 @@ void serial_deinit_klog(const char* path, struct pbfs_mount* mnt) {
 	klog_end = 0;
 	klog_pos = 0;
 	klog_cap = 0;
-	klog_present = 1;
+	klog_present = AOS_TRUE;
 }
 
 // Check if transmit buffer is empty
@@ -243,7 +244,7 @@ void serial_print(const char* str) {
         if (*str == '\n') serial_printc('\r'); // Carriage return for terminals
         serial_printc(*str++);
     }
-    klog_msg_started = 0;
+    klog_msg_started = AOS_FALSE;
 	spin_unlock_irqrestore(&serial_lock, rflags);
 }
 
@@ -366,7 +367,7 @@ void serial_printf(const char* fmt, ...) {
 
     va_end(args);
 
-	klog_msg_started = 0;
+	klog_msg_started = AOS_FALSE;
     spin_unlock_irqrestore(&serialf_lock, rflags);
 }
 
@@ -545,13 +546,18 @@ void vmem_clear_screen(struct VMemDesign* design) {
 }
 
 void vmem_printc(struct VMemDesign* design, char c) {
-	if (design->serial_out == 1) serial_printc(c);
+	if (design->serial_out) serial_printc(c);
+
+	if (design->x > IO_VMEM_MAX_COLS_true) design->x = IO_VMEM_MAX_COLS_true;
+	else if (design->x < 0) design->x = 0;
+	if (design->y > IO_VMEM_MAX_ROWS_true) design->y = IO_VMEM_MAX_ROWS_true;
+	else if (design->y < 0) design->y = 0;
+
+	vmem_set_cursor(design->x, design->y);
 
     uint64_t rflags = spin_lock_irqsave(&vmemc_lock);
 
 	if (vmem_mode == AOS_SYSINFO_FB_MODE_FB) {
-		vmem_fbc.x = design->x;
-		vmem_fbc.y = design->y;
 		vmem_fbc.bg_color = vmem_convert_color_to_rgba(design->bg);
 		vmem_fbc.fg_color = vmem_convert_color_to_rgba(design->fg);
 		
@@ -569,15 +575,28 @@ void vmem_printc(struct VMemDesign* design, char c) {
         design->x = 0;
         design->y++;
         spin_unlock_irqrestore(&vmemc_lock, rflags);
-        vmem_set_cursor(design->x, design->y);
-        if (design->serial_out == 1) serial_printc(c);
         return;
-    }
+    } else if (c == '\b') {
+		if (design->x == 0 && design->y == 0) {
+			spin_unlock_irqrestore(&vmemc_lock, rflags);
+			return;
+		}
+		if (design->x > 0) design->x--;
+		else {
+			design->x = IO_VMEM_MAX_COLS_true;
+			design->y--;
+		}
+
+        vmem_set_cursor(design->x, design->y);
+		vmem[design->y * IO_VMEM_MAX_COLS_true + design->x] = ((uint16_t)attr << 8) | ' ';
+
+		spin_unlock_irqrestore(&vmemc_lock, rflags);
+        return;
+	}
     vmem[design->y * IO_VMEM_MAX_COLS_true + design->x] = ((uint16_t)attr << 8) | c;
     design->x++;
 
     spin_unlock_irqrestore(&vmemc_lock, rflags);
-    vmem_set_cursor(design->x, design->y);
 }
 
 void vmem_print(struct VMemDesign* design, const char* str) {
@@ -795,9 +814,9 @@ static inline void _ata_wait_ready(uint16_t io_base) {
     }
 }
 
-int ata_exists(void) {
+aos_bool ata_exists(void) {
 	uint64_t rflags = spin_lock_irqsave(&ata_lock);
-	int exists = asm_inb(ATA_PRIMARY_STATUS) == 0xFF ? 0 : 1;
+	aos_bool exists = asm_inb(ATA_PRIMARY_STATUS) == 0xFF ? 0 : 1;
 	spin_unlock_irqrestore(&ata_lock, rflags);
 	return exists;
 }
@@ -1067,11 +1086,11 @@ void ps2_init(void) {
     spin_unlock_irqrestore(&ps2_lock, rflags);
 }
 
-int8_t ps2_read_scan(void) {
+int16_t ps2_read_scan(void) {
     uint64_t rflags = spin_lock_irqsave(&ps2_lock);
 
     while (!(asm_inb(0x64) & 1)); // wait for data
-    int8_t out = asm_inb(0x60);
+    int16_t out = (int16_t)asm_inb(0x60);
     spin_unlock_irqrestore(&ps2_lock, rflags);
 
     return out;
@@ -1093,13 +1112,7 @@ int16_t ps2_try_read_scan(void) {
 void ps2_read_line(char* buf, int max_len, struct VMemDesign* design) {
     int idx = 0;
     for (;;) {
-        uint8_t sc = ps2_read_scan(); // read a scan code
-        char c = 0;
-
-        // Ignore key releases (high bit set)
-        if (sc & 0x80) continue;
-
-        c = scan_to_ascii[sc];
+        char c = keyboard_ps2_get_char();
         if (!c) continue;
 
         if (c == '\n') { // Enter
@@ -1109,17 +1122,8 @@ void ps2_read_line(char* buf, int max_len, struct VMemDesign* design) {
         } else if (c == '\b') { // Backspace
             if (idx > 0) {
                 idx--;
-                // Move cursor back visually
-                if (design->x == 0 && design->y > 0) {
-                    design->y--;
-                    design->x = IO_VMEM_MAX_COLS_true - 1;
-                } else if (design->x > 0) {
-                    design->x--;
-                }
-                vmem_set_cursor(design->x, design->y);
-                vmem_printc(design, ' '); // erase
-                design->x--;
-                vmem_set_cursor(design->x, design->y);
+				// Move cursor back visually
+                vmem_printc(design, '\b'); // erase
             }
         } else {
             if (idx < max_len - 1) {

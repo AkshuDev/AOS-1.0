@@ -1,5 +1,5 @@
 #pragma once
-#include <inttypes.h>
+#include <aos_inttypes.h>
 #include <stddef.h>
 
 #define PAGE_SIZE 4096

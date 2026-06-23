@@ -1,4 +1,4 @@
-#include <inttypes.h>
+#include <aos_inttypes.h>
 #include <asm.h>
 #include <system.h>
 
@@ -13,7 +13,8 @@ void fb_clear(FB_Info_t* fb, uint32_t color) {
 void fb_put_pixel(FB_Info_t* fb, int x, int y, uint32_t color) {
     if (x >= fb->width || y >= fb->height) return;
     uint32_t* pixel = (uint32_t*)((uint8_t*)fb->addr + y * fb->pitch + x * (fb->bpp / 8));
-    *pixel = color;
+	// convert LE to BE
+    *pixel = ((color & 0xFF) << 24) | (((color >> 8) & 0xFF) << 16) | (((color >> 16) & 0xFF) << 8) | ((color >> 24) & 0xFF);
 }
 
 void fb_draw_rect(FB_Info_t* fb, int x, int y, int w, int h, uint32_t color) {

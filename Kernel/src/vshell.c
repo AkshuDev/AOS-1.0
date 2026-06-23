@@ -1,4 +1,4 @@
-#include <inttypes.h>
+#include <aos_inttypes.h>
 #include <asm.h>
 #include <system.h>
 
@@ -23,12 +23,12 @@
 static struct pyrion_ctx* vshell_ctx = NULL;
 static struct pyrion_rect vshell_viewport = (struct pyrion_rect){.x=0,.y=0,.width=800,.height=600,.color=0x121212FF};
 static struct pyrion_ctx* gdisplay_ctx = NULL;
-static uint8_t vshell_running = 0;
+static aos_bool vshell_running = AOS_FALSE;
 static char* prompt = DEF_PROMPT;
 
 static int last_cmd = 0;
 
-static uint8_t is_ascii(char c) {
+aos_bool is_ascii(char c) {
     return (c >= 0x20 && c <= 0x7E);
 }
 
@@ -40,7 +40,7 @@ static void vshell_cmd_sysinfo(void) {
 	}
 
     pyrion_builtin_print(vshell_ctx, "Boot Information:\n");
-    pyrion_builtin_printf(vshell_ctx, "  Boot Drive: %d\n  Boot Mode: %d\n", SystemInfo->boot_drive, SystemInfo->boot_mode);
+    pyrion_builtin_printf(vshell_ctx, "  Boot Drive: %d\n  Boot Mode: B=0x%x S=0x%x F=0x%x\n", SystemInfo->boot_drive.bus, SystemInfo->boot_drive.slot, SystemInfo->boot_drive.func, SystemInfo->boot_mode);
 
     char cpu_vendor[14];
     memcpy(cpu_vendor, SystemInfo->cpu_vendor, 13);
@@ -58,12 +58,12 @@ static void vshell_cmd_sysinfo(void) {
     pyrion_builtin_printf(vshell_ctx, "  CPU Clock: %llu.%03llu GHz\n", ghz, mhz);
 }
 
-static uint8_t vshell_handle_user_input(char* buf, int max_len, int* len) {
+static aos_bool vshell_handle_user_input(char* buf, int max_len, int* len) {
     int chars_typed = *len;
 
     char key = keyboard_ps2_try_get_char();
     if (key == 0) {
-        return 0;
+        return AOS_FALSE;
     }
     switch (key) {
         case '\b':
@@ -75,7 +75,7 @@ static uint8_t vshell_handle_user_input(char* buf, int max_len, int* len) {
         case '\n':
             pyrion_builtin_printc(vshell_ctx, '\n');
             *len = chars_typed;
-            return 1;
+            return AOS_TRUE;
 
         default:
             if (chars_typed == max_len || is_ascii(key) == 0) break;
@@ -85,7 +85,7 @@ static uint8_t vshell_handle_user_input(char* buf, int max_len, int* len) {
     }
 
     *len = chars_typed;
-    return 0;
+    return AOS_FALSE;
 }
 
 static void vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len) {
@@ -99,7 +99,7 @@ static void vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len) {
     if (last_cmd == 1 || strcmp(cmd_buf, "exit") == 0) {
         if (last_cmd == 1) {
             if ((cmd_buf[0] == 'y' || cmd_buf[0] == 'Y') && *cmd_len == 1) {
-                vshell_running = 0;
+                vshell_running = AOS_FALSE;
                 asm("int $0x50");
             } else {
                 pyrion_builtin_print(vshell_ctx, "\nCancelled 'exit' Command!");
@@ -177,7 +177,7 @@ void start_vshell(struct pyrion_ctx* display_ctx) {
 
     pyrion_builtin_print(vshell_ctx, prompt);
 
-    vshell_running = 1;
+    vshell_running = AOS_TRUE;
     while (vshell_running) { 
         vshell_handle_shell((char*)cmd_buf, 512, &cmd_len);
         pyrion_flush(vshell_ctx);

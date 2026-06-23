@@ -1,4 +1,4 @@
-#include <inttypes.h>
+#include <aos_inttypes.h>
 
 #include <inc/core/kfuncs.h>
 #include <inc/mm/avmf.h>
@@ -64,36 +64,36 @@ static uint64_t find_entry_in_handler_list(PBFS_DMM_Entry e, uint8_t* valid) {
 	return 0;
 }
 
-static uint8_t read_file(struct aos_file* self, uint64_t size, void* buf) {
-	if (!self || !buf) return 0;
-	if (size == 0) return 1; // Dont need to do anything
+static aos_bool read_file(struct aos_file* self, uint64_t size, void* buf) {
+	if (!self || !buf) return AOS_FALSE;
+	if (size == 0) return AOS_TRUE; // Dont need to do anything
 
 	struct aos_dmm_handler* h = self->handle;
-	if (!h) return 0;
-	if (h->sign != AOS_FS_SIGN) return 0;
+	if (!h) return AOS_FALSE;
+	if (h->sign != AOS_FS_SIGN) return AOS_FALSE;
 
-	return 0; // Needs PBFS read file fast Update
+	return AOS_FALSE; // Needs PBFS read file fast Update
 }
 
-static uint8_t write_file(struct aos_file* self, uint64_t size, void* buf) {
-	if (!self || !buf) return 0;
-	if (size == 0) return 1; // Dont need to do anything
+static aos_bool write_file(struct aos_file* self, uint64_t size, void* buf) {
+	if (!self || !buf) return AOS_FALSE;
+	if (size == 0) return AOS_TRUE; // Dont need to do anything
 
 	struct aos_dmm_handler* h = self->handle;
-	if (!h) return 0;
-	if (h->sign != AOS_FS_SIGN) return 0;
+	if (!h) return AOS_FALSE;
+	if (h->sign != AOS_FS_SIGN) return AOS_FALSE;
 
-	return 0; // Needs PBFS write file fast Update
+	return AOS_FALSE; // Needs PBFS write file fast Update
 }
 
-static uint8_t flush_file(struct aos_file* self) {
-	if (!self) return 0;
+static aos_bool flush_file(struct aos_file* self) {
+	if (!self) return AOS_FALSE;
 
 	struct aos_dmm_handler* h = self->handle;
-	if (!h) return 0;
-	if (h->sign != AOS_FS_SIGN) return 0;
+	if (!h) return AOS_FALSE;
+	if (h->sign != AOS_FS_SIGN) return AOS_FALSE;
 
-	return 0; // Needs AOS flush file Update
+	return AOS_FALSE; // Needs AOS flush file Update
 }
 
 void aos_fs_init(struct pbfs_mount* mnt) {
@@ -121,7 +121,7 @@ uint64_t fs_open(const char* path) {
 	
 	setup_ifndone_handler_list(1);
 
-	uint8_t valid_e = 0;
+	aos_bool valid_e = AOS_FALSE;
 	uint64_t idx = find_entry_in_handler_list(e, &valid_e);
 	if (valid_e && idx < handler_list_count) {
 		file->handle = &handler_list[idx];

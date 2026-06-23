@@ -1,6 +1,6 @@
 #pragma once
 
-#include <inttypes.h>
+#include <aos_inttypes.h>
 #include <stddef.h>
 #include <system.h>
 
@@ -40,3 +40,15 @@ void* kcalloc(size_t nmemb, size_t size) __attribute__((used));
 void* krealloc(void* ptr, size_t new_size) __attribute__((used));
 
 aos_sysinfo_t* kget_sysinfo(void) __attribute__((used));
+
+aos_bool kc_is_alpha(char c) __attribute__((used));
+aos_bool kc_is_digit(char c) __attribute__((used));
+aos_bool kc_is_alphanum(char c) __attribute__((used));
+aos_bool kis_alpha(char* s) __attribute__((used));
+aos_bool kis_digit(char* s) __attribute__((used));
+aos_bool kis_alphanum(char* s) __attribute__((used));
+aos_bool kis_float(char* s) __attribute__((used));
+int kchar_to_digit(char c) __attribute__((used));
+uint64_t kstr_to_u64(const char* str, int base) __attribute__((used));
+int64_t kstr_to_i64(const char* str, int base) __attribute__((used));
+double kstr_to_double(const char* str) __attribute__((used));

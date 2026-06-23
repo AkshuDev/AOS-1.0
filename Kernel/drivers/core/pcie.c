@@ -1,5 +1,5 @@
 #include <asm.h>
-#include <inttypes.h>
+#include <aos_inttypes.h>
 #include <system.h>
 
 #include <inc/core/pcie.h>
@@ -13,11 +13,11 @@
 static struct acpi_mcfg* mcfg_table = NULL;
 static int mcfg_num_segs = 0;
 
-uint8_t pcie_init() {
+aos_bool pcie_init() {
     mcfg_table = acpi_get_mcfg();
     if (mcfg_table == NULL) {
         serial_print("[PCIe] Did not get MCFG Table! Using PCI\n");
-        return 1;
+        return AOS_TRUE;
     }
     mcfg_num_segs = (mcfg_table->header.length - sizeof(struct acpi_mcfg) - 8) / sizeof(struct acpi_mcfg_entry);
     for (int i = 0; i < mcfg_num_segs; i++) {
@@ -75,10 +75,10 @@ uint8_t pcie_init() {
     }
     serial_print("[PCIe] Modules Registered\n");
 
-    return 1;
+    return AOS_TRUE;
 }
 
-static int get_segment(uint8_t bus) {
+static aos_bool get_segment(uint8_t bus) {
     if (mcfg_table) {
         for (int i = 0; i < mcfg_num_segs; i++) {
             struct acpi_mcfg_entry* e = &mcfg_table->entries[i];
@@ -107,7 +107,7 @@ uint32_t pcie_read(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
     return asm_inl(0xCFC);
 }
 
-int pcie_find(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint16_t target_vendor, uint8_t use_vendor) {
+aos_bool pcie_find(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint16_t target_vendor, uint8_t use_vendor) {
     for (uint16_t b = 0; b < PCI_MAX_BUS; b++) {
         for (uint8_t s = 0; s < PCI_MAX_SLOT; s++) {
             for (uint8_t f = 0; f < PCI_MAX_FUNC; f++) {
@@ -121,15 +121,15 @@ int pcie_find(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_
                     *slot = s;
                     *func = f;
                     *bar0 = pcie_read(b, s, f, 0x10);
-                    return 1;
+                    return AOS_TRUE;
                 }
             }
         }
     }
-    return 0;
+    return AOS_FALSE;
 }
 
-int pcie_find_ex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint8_t target_subclass, uint8_t target_progifclass, uint16_t target_vendor, uint8_t use_vendor) {
+aos_bool pcie_find_ex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint8_t target_subclass, uint8_t target_progifclass, uint16_t target_vendor, uint8_t use_vendor) {
     // Pci find Extended
     for (uint16_t b = 0; b < PCI_MAX_BUS; b++) {
         for (uint8_t s = 0; s < PCI_MAX_SLOT; s++) {
@@ -150,15 +150,15 @@ int pcie_find_ex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uin
                     *slot = s;
                     *func = f;
                     *bar0 = pcie_read(b, s, f, 0x10);
-                    return 1;
+                    return AOS_TRUE;
                 }
             }
         }
     }
-    return 0;
+    return AOS_FALSE;
 }
 
-int pcie_find_rex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint8_t target_subclass, uint8_t target_progifclass, uint8_t target_revision, uint16_t target_vendor, uint8_t use_vendor) {
+aos_bool pcie_find_rex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint8_t target_subclass, uint8_t target_progifclass, uint8_t target_revision, uint16_t target_vendor, uint8_t use_vendor) {
     // Pci find Revision-Extended
     for (uint16_t b = 0; b < PCI_MAX_BUS; b++) {
         for (uint8_t s = 0; s < PCI_MAX_SLOT; s++) {
@@ -181,12 +181,12 @@ int pcie_find_rex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, ui
                     *slot = s;
                     *func = f;
                     *bar0 = pcie_read(b, s, f, 0x10);
-                    return 1;
+                    return AOS_TRUE;
                 }
             }
         }
     }
-    return 0;
+    return AOS_FALSE;
 }
 
 uint16_t pcie_config_read16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
@@ -198,11 +198,11 @@ uint16_t pcie_config_read16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t off
         return (uint16_t)(value & 0xFFFF);
 }
 
-int pcie_write_bar(uint8_t bus, uint8_t slot, uint8_t func, uint8_t bar_index, uint32_t value) {
+aos_bool pcie_write_bar(uint8_t bus, uint8_t slot, uint8_t func, uint8_t bar_index, uint32_t value) {
     return pcie_write(bus, slot, func, PCI_BAR0 + (bar_index * 4), value);
 }
 
-int pcie_write(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value) {
+aos_bool pcie_write(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value) {
     if (mcfg_table) {
         int eidx = get_segment(bus);
         if (eidx >= 0 && eidx < mcfg_num_segs) {
@@ -211,7 +211,7 @@ int pcie_write(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t
             uint64_t virt_addr =(uint64_t)(PCIE_VIRT_BASE + ((uint64_t)e->pcie_segment << 28) + (((uint64_t)bus - e->start_bus) << 20) + ((uint64_t)slot << 15) + ((uint64_t)func << 12) + offset);
 
             *(volatile uint32_t*)virt_addr = value;
-            return 1;
+            return AOS_TRUE;
         }
     }
 
@@ -220,12 +220,12 @@ int pcie_write(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t
 
     asm_outl(0xCF8, addr);
     asm_outl(0xCFC, value);
-    return 1;
+    return AOS_TRUE;
 }
 
-void pcie_enable_busmaster(uint8_t bus, uint8_t slot, uint8_t func) {
+aos_bool pcie_enable_busmaster(uint8_t bus, uint8_t slot, uint8_t func) {
     uint32_t cmd_reg = pcie_read(bus, slot, func, 0x04);
     cmd_reg |= (1 << 1); // memory space enable
     cmd_reg |= (1 << 2); // bus master enable
-    pcie_write(bus, slot, func, 0x04, cmd_reg);
+    return pcie_write(bus, slot, func, 0x04, cmd_reg);
 }

@@ -1,5 +1,5 @@
 #pragma once
-#include <inttypes.h>
+#include <aos_inttypes.h>
 
 // Output a single byte to a port
 static inline void asm_outb(uint16_t port, uint8_t value) {

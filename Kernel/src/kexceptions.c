@@ -1,7 +1,7 @@
 #include <inc/core/kexceptions.h>
 #include <inc/core/kfuncs.h>
 
-#include <inttypes.h>
+#include <aos_inttypes.h>
 #include <asm.h>
 
 #include <inc/drivers/io/io.h>

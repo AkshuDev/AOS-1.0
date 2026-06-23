@@ -1,4 +1,4 @@
-#include <inttypes.h>
+#include <aos_inttypes.h>
 #include <system.h>
 
 #include <inc/core/kfuncs.h>
@@ -15,7 +15,7 @@
 #include <inc/mm/pager.h>
 
 // Legacy-ATA
-int legacy_ata_read(int port_id, uint64_t lba, uint32_t count, void* buffer) {
+aos_bool legacy_ata_read(int port_id, uint64_t lba, uint32_t count, void* buffer) {
 	struct ATA_DP dp = {
 		.lba = lba,
 		.count = count
@@ -23,7 +23,7 @@ int legacy_ata_read(int port_id, uint64_t lba, uint32_t count, void* buffer) {
 	return (ata_read_sectors(&dp, buffer, (uint8_t)port_id) == 0);
 }
 
-int legacy_ata_write(int port_id, uint64_t lba, uint32_t count, void* buffer) {
+aos_bool legacy_ata_write(int port_id, uint64_t lba, uint32_t count, void* buffer) {
 	struct ATA_DP dp = {
 		.lba = lba,
 		.count = count
@@ -31,12 +31,12 @@ int legacy_ata_write(int port_id, uint64_t lba, uint32_t count, void* buffer) {
 	return (ata_write_sectors(&dp, buffer, (uint8_t)port_id) == 0);
 }
 
-int legacy_ata_get_block_device(int port_id, struct block_device* out) {
+aos_bool legacy_ata_get_block_device(int port_id, struct block_device* out) {
 	aos_sysinfo_t* sinfo = kget_sysinfo();
-	if (!sinfo) return 0;
+	if (!sinfo) return AOS_FALSE;
 
 	ata_identity_t iden = {0};
-	ata_identify_device(sinfo->boot_drive, &iden);
+	ata_identify_device(sinfo->boot_drive_raw, &iden);
 
 	out->block_count = iden.block_count;
 	out->block_size = iden.block_size;
@@ -50,7 +50,7 @@ int legacy_ata_get_block_device(int port_id, struct block_device* out) {
 		out->name = "Unamed Drive";
 	}
 	
-	return 1;
+	return AOS_TRUE;
 }
 
 // Setters
@@ -81,7 +81,7 @@ static void set_legacy_ata(struct drive_device* out) {
 		out->cur_port = -1;
 		return;
 	}
-	uint8_t drive = sinfo->boot_drive;
+	uint8_t drive = sinfo->boot_drive_raw;
 
     ata_identity_t iden = {0};
 	ata_identify_device(drive, &iden);
@@ -103,7 +103,7 @@ static void set_legacy_ata(struct drive_device* out) {
     out->active = 1;
 }
 
-int get_available_drives(struct drive_device* out) {
+aos_bool get_available_drives(struct drive_device* out) {
     serial_print("[Drive Controller] Trying to find registered drives...\n");
     
     struct AOS_Module* reg_driver = module_get_first_applicable_registered_driver(PCI_CLASS_MASS_STORAGE, 0, 0, 0, 0, 0, 0, 0, 0);
@@ -112,28 +112,28 @@ int get_available_drives(struct drive_device* out) {
 			set_legacy_ata(&reg_driver->Modules.driver_module.DriverConnections.drive_connector);
 			if (reg_driver->Modules.driver_module.DriverConnections.drive_connector.cur_port < 0) {
 				serial_print("[Drive Controller] No registered drives!\n");
-				return 0;
+				return AOS_FALSE;
 			}
 			memcpy(out, &reg_driver->Modules.driver_module.DriverConnections.drive_connector, sizeof(drive_device_t));
 			serial_printf("[Drive Controller] Using 'Legacy-ATA' driver for '%s' disk\n", reg_driver->Modules.driver_module.DriverConnections.drive_connector.name);
-			return 1;
+			return AOS_TRUE;
 		} else {
         	serial_print("[Drive Controller] No registered drives!\n");
-        	return 0;
+        	return AOS_FALSE;
 		}
     } else if (reg_driver->hdr.type != MODULE_TYPE_DRIVER) {
 		if (ata_exists()) {
 			set_legacy_ata(&reg_driver->Modules.driver_module.DriverConnections.drive_connector);
 			if (reg_driver->Modules.driver_module.DriverConnections.drive_connector.cur_port < 0) {
 				serial_print("[Drive Controller] No registered drives!\n");
-				return 0;
+				return AOS_FALSE;
 			}
 			memcpy(out, &reg_driver->Modules.driver_module.DriverConnections.drive_connector, sizeof(drive_device_t));
 			serial_printf("[Drive Controller] Using 'Legacy-ATA' driver for '%s' disk\n", reg_driver->Modules.driver_module.DriverConnections.drive_connector.name);
-			return 1;
+			return AOS_TRUE;
 		} else {
         	serial_print("[Drive Controller] No registered drivers for drives!\n");
-        	return 0;
+        	return AOS_FALSE;
 		}
     }
 
@@ -141,19 +141,19 @@ int get_available_drives(struct drive_device* out) {
         case MODULE_DRIVER_TYPE_SATA: {
             if (sata_init(reg_driver) != 1) {
                 serial_print("[Drive Controller] SATA Initialization failed!\n");
-                return 0;
+                return AOS_FALSE;
             }
             set_sata(&reg_driver->Modules.driver_module.DriverConnections.drive_connector);
             break;
         }
         default: {
             serial_print("[Drive Controller] No supported drives found!\n");
-            return 0;
+            return AOS_FALSE;
         }
     }
 
     memcpy(out, &reg_driver->Modules.driver_module.DriverConnections.drive_connector, sizeof(drive_device_t));
 
     serial_printf("[Drive Controller] Using '%s' driver\n", reg_driver->hdr.name);
-    return 1;
+    return AOS_TRUE;
 }

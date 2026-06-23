@@ -1,6 +1,6 @@
 #pragma once
 // AOS Virtual Memory Format
-#include <inttypes.h>
+#include <aos_inttypes.h>
 
 #define AVMF_VERSION 1
 #define AVMF_SIGNATURE (uint32_t)0xA1322F // A, V (13th letter), M (22nd letter), F
@@ -11,7 +11,7 @@ typedef struct AVMF_Header {
     uint64_t virt_addr;
     uint64_t phys_addr;
     uint64_t size;
-    uint8_t used;
+    aos_bool used;
     uint32_t flags;
     uint32_t attributes;
     struct AVMF_Header* next;
@@ -60,7 +60,7 @@ void avmf_init(uint64_t* base_phys, uint64_t* limit_phys, uint8_t entries) __att
 
 uint64_t avmf_alloc_virt(uint64_t size, MemoryAllocType type) __attribute__((used));
 uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, int flags, uint64_t* phys_out) __attribute__((used));
-uint8_t avmf_alloc_region(uint64_t virt, uint64_t phys, uint64_t size, uint32_t flags) __attribute__((used));
+aos_bool avmf_alloc_region(uint64_t virt, uint64_t phys, uint64_t size, uint32_t flags) __attribute__((used));
 
 void avmf_free(uint64_t virt) __attribute__((used));
 void avmf_free_phys(uint64_t virt) __attribute__((used));

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <inttypes.h>
+#include <aos_inttypes.h>
 #include <stddef.h>
 #include <inc/drivers/gpu/gpu.h>
 #include <inc/drivers/io/drive.h>
@@ -24,7 +24,7 @@ struct AOS_ModuleHeader {
     uint64_t signature;
     enum AOS_ModuleTypes type;
 
-    uint8_t registered;
+    aos_bool registered;
 };
 
 struct AOS_ModuleDriver {
@@ -54,9 +54,9 @@ struct AOS_Module {
     } Modules;
 };
 
-uint8_t modules_init(void) __attribute__((used));
-uint8_t module_register(struct AOS_Module* module) __attribute__((used));
-uint8_t module_already_initialized(struct AOS_Module* module) __attribute__((used));
+aos_bool modules_init(void) __attribute__((used));
+aos_bool module_register(struct AOS_Module* module) __attribute__((used));
+aos_bool module_already_initialized(struct AOS_Module* module) __attribute__((used));
 
 struct AOS_Module* module_get_first_applicable_driver(uint8_t class, uint8_t subclass, uint8_t use_subclass, uint8_t progif, uint8_t use_progif, uint8_t revision, uint8_t use_revision, uint16_t vendor, uint8_t use_vendor) __attribute__((used));
 struct AOS_Module* module_get_first_applicable_registered_driver(uint8_t class, uint8_t subclass, uint8_t use_subclass, uint8_t progif, uint8_t use_progif, uint8_t revision, uint8_t use_revision, uint16_t vendor, uint8_t use_vendor) __attribute__((used));

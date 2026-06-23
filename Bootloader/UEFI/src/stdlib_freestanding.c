@@ -1,5 +1,6 @@
+#include <aos_inttypes.h>
+
 #include <stddef.h>
-#include <stdint.h>
 #include <stdarg.h>
 
 #include <system.h>
@@ -264,7 +265,7 @@ EFIAPI void uefi_printf(const char* fmt, ...) {
 #define BCD_TO_BIN(bcd) (((bcd) & 0x0F) + (((bcd) >> 4) * 10))
 
 static uint64_t tsc_ticks_per_ms = 0;
-static uint8_t rdtscp_supported = 0;
+static aos_bool rdtscp_supported = AOS_FALSE;
 static uint64_t bootup_timestamp = 0;
 
 static const uint8_t month_days[12] = {
@@ -274,7 +275,7 @@ static const uint8_t month_days[12] = {
 EFIAPI static inline uint64_t ktimer_read_tsc(void) {
     uint32_t low = 0;
     uint32_t high = 0;
-    if (rdtscp_supported == 1) {
+    if (rdtscp_supported) {
         asm volatile("rdtscp" : "=a"(low), "=d"(high) : : "rcx");
     }
     else {
@@ -306,9 +307,9 @@ EFIAPI void ktimer_calibrate(void) {
     eax = 0x80000001;
     asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
     if (edx & (1 << 27)) {
-        rdtscp_supported = 1;
+        rdtscp_supported = AOS_TRUE;
     } else {
-        rdtscp_supported = 0;
+        rdtscp_supported = AOS_FALSE;
     }
 
     uint64_t start = ktimer_read_tsc();
@@ -327,7 +328,7 @@ EFIAPI void ktimer_calibrate(void) {
 
 	// Read CMOS RTC (0x00=s, 0x02=min, 0x04=hrs, 0x07=day, 0x08=month, 0x09=year, 0x32=century)
 	asm_outb(0x70, 0x0B);
-	uint8_t is_bin = (asm_inb(0x71) & 0x04) != 0;
+	aos_bool is_bin = (asm_inb(0x71) & 0x04) != 0;
 	asm_outb(0x70, 0x00);
 	uint8_t sec = is_bin ? asm_inb(0x71) : BCD_TO_BIN(asm_inb(0x71));
 	asm_outb(0x70, 0x02);

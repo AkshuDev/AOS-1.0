@@ -30,7 +30,12 @@ show_help() {
         -mouse, --mouse                       Enable USB mouse
 
     Memory:
-        -ram=<size, --max-ram=<size>   Set RAM (e.g., 512M, 2G)
+        -ram=<size>, --max-ram=<size>           Set RAM (e.g., 512M, 2G)
+		-bdev=<device>, --boot-device=<device>  Specify Boot Storage Device from -
+													sata, nvme, ide, usb
+		-adev=<device>, --add-device=<device>   Specify Extra Device from -
+													sata, nvme, ide, usb, xhci, ehci, uhci, scsi,
+													virtio, floppy, cdrom, sd, mtd, pflash, sas, iscsi
 
     Logging:
         -log=a,b,c, --logs=a,b,c       QEMU debug logs (comma-separated)
@@ -71,6 +76,8 @@ arch="x86_64"
 serial="stdio"
 file_out="none"
 uefi=0
+boot_device="sata"
+extra_devices=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -83,6 +90,8 @@ while [[ $# -gt 0 ]]; do
         --keyboard-type=*|-kbd=*) kbd_type="${1#*=}" ;;
         --mouse|-mouse) mouse_enabled=1 ;;
         --max-ram=*|-ram=*) ram="${1#*=}" ;;
+		--boot-device=*|-bdev=*) boot_device="${1#*=}" ;;
+		--add-device=*|-adev=*) extra_devices+=("${1#*=}") ;;
         --logs=*|-log=*) logs="${1#*=}" ;;
         --use-uefi|-uefi) uefi=1 ;;
         --architecture=*|-arch=*) arch="${1#*=}" ;;
@@ -241,6 +250,118 @@ append_uefi_bios() {
     fi
 }
 
+declare -A CONTROLLERS
+declare -A BUS_NAMES
+
+ensure_controller() {
+    local type="$1"
+
+    if [[ -z "${CONTROLLERS[$type]}" ]]; then
+        CONTROLLERS[$type]=1
+
+        case "$type" in
+            ahci)
+                CONTROLLER_OPTS+=" -device ahci,id=ahci"
+                ;;
+            xhci)
+                CONTROLLER_OPTS+=" -device qemu-xhci,id=xhci"
+                ;;
+            scsi)
+                CONTROLLER_OPTS+=" -device virtio-scsi-pci,id=scsi"
+                ;;
+            sas)
+                CONTROLLER_OPTS+=" -device megasas,id=sas"
+                ;;
+        esac
+    fi
+}
+
+get_device() {
+    local devtype="$1"
+    local id="$2"
+    local img="$3"
+
+    case "$devtype" in
+        sata)
+            ensure_controller ahci
+            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
+            STORAGE_OPTS+=" -device ide-hd,bus=ahci.0,drive=drive$id"
+            ;;
+
+        nvme)
+            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
+            STORAGE_OPTS+=" -device nvme,serial=deadbeef$id,drive=drive$id"
+            ;;
+
+        usb|xhci)
+            ensure_controller xhci
+            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
+            STORAGE_OPTS+=" -device usb-storage,bus=xhci.0,drive=drive$id"
+            ;;
+
+        ehci)
+            ensure_controller ehci
+            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
+            STORAGE_OPTS+=" -device usb-storage,bus=ehci.0,drive=drive$id"
+            ;;
+
+        uhci)
+            ensure_controller uhci
+            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
+            STORAGE_OPTS+=" -device usb-storage,bus=uhci.0,drive=drive$id"
+            ;;
+
+        scsi)
+            ensure_controller scsi
+            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
+            STORAGE_OPTS+=" -device scsi-hd,bus=scsi.0,drive=drive$id"
+            ;;
+
+        sas)
+            ensure_controller sas
+            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
+            STORAGE_OPTS+=" -device scsi-hd,bus=sas.0,drive=drive$id"
+            ;;
+
+        virtio)
+            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
+            STORAGE_OPTS+=" -device virtio-blk-pci,drive=drive$id"
+            ;;
+
+        ide)
+            STORAGE_OPTS+=" -drive file=$img,format=raw,index=$id,media=disk"
+            ;;
+
+        floppy)
+            STORAGE_OPTS+=" -drive file=$img,format=raw,if=floppy,index=$id"
+            ;;
+
+        cdrom)
+            STORAGE_OPTS+=" -drive file=$img,media=cdrom,index=$id"
+            ;;
+
+        sd)
+            STORAGE_OPTS+=" -drive file=$img,format=raw,if=sd"
+            ;;
+
+        mtd)
+            STORAGE_OPTS+=" -drive file=$img,format=raw,if=mtd"
+            ;;
+
+        pflash)
+            STORAGE_OPTS+=" -drive file=$img,format=raw,if=pflash"
+            ;;
+
+        iscsi)
+            STORAGE_OPTS+=" -drive file=iscsi:$img"
+            ;;
+
+        *)
+            echo "[Warning] Unsupported device type '$devtype'" >&2
+            ;;
+    esac
+}
+
 CPU_OPTS="-cpu $(get_cpu)"
 SMP_OPTS="$(get_smp)"
 GPU_OPTS="$(get_gpu)"
@@ -253,6 +374,22 @@ EXTRA_OPTS="$(get_extra_options)"
 SERIAL_OPTS="-serial $serial"
 FILE_OPTS="$(get_file_options)"
 UEFI_OPTS="$(append_uefi_bios)"
+STORAGE_OPTS=""
+CONTROLLER_OPTS=""
+
+get_device "$boot_device" 0 "Bin/disk.pbfs"
+
+devnum=1
+for dev in "${extra_devices[@]}"; do
+    get_device "$dev" "$devnum" "Bin/disk${devnum}.pbfs"
+    ((devnum++))
+done
+
+devnum=1
+for dev in "${extra_devices[@]}"; do
+    STORAGE_OPTS+=" $(get_device "$dev" "$devnum" "Bin/disk${devnum}.pbfs")"
+    ((devnum++))
+done
 
 case "$mode" in
     2) # KVM
@@ -262,10 +399,8 @@ case "$mode" in
             $CPU_OPTS \
             $SMP_OPTS \
             -enable-kvm \
-            -drive file=Bin/disk.pbfs,format=raw,if=none,id=drive0 \
-            -device ahci,id=ahci \
-            -device ide-hd,bus=ahci.0,drive=drive0 \
-			-device qemu-xhci \
+			$CONTROLLER_OPTS \
+            $STORAGE_OPTS \
             $GPU_OPTS \
             $KBD_OPTS \
             $MOUSE_OPTS \
@@ -283,10 +418,8 @@ case "$mode" in
             -M q35 \
             $CPU_OPTS \
             $SMP_OPTS \
-            -drive file=Bin/disk.pbfs,format=raw,if=none,id=drive0 \
-            -device ahci,id=ahci \
-            -device ide-hd,bus=ahci.0,drive=drive0 \
-			-device qemu-xhci \
+			$CONTROLLER_OPTS \
+            $STORAGE_OPTS \
             $GPU_OPTS \
             $KBD_OPTS \
             $MOUSE_OPTS \
@@ -303,8 +436,8 @@ case "$mode" in
             -m $ram \
             $CPU_OPTS \
             $SMP_OPTS \
-            -hda Bin/disk.pbfs \
-			-device qemu-xhci \
+			$CONTROLLER_OPTS \
+           	$STORAGE_OPTS \
             $GPU_OPTS \
             $KBD_OPTS \
             $MOUSE_OPTS \

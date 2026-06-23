@@ -22,7 +22,7 @@ struct ambrc backup_ambrc = {
         .ambrc_selected_bg_color = VMEM_COLOR_WHITE,
         .ambrc_selected_fg_color = VMEM_COLOR_BLACK,
         .splash_duration = 3,
-        .show_settings_at_top = 0
+        .show_settings_at_top = AOS_FALSE
     },
     .boot_info=(struct ambrc_boot_info){
         .default_os_idx=0,
@@ -45,7 +45,7 @@ struct ambrc def_ambrc = {
         .ambrc_selected_bg_color = VMEM_COLOR_WHITE,
         .ambrc_selected_fg_color = VMEM_COLOR_BLACK,
         .splash_duration = 3,
-        .show_settings_at_top = 0
+        .show_settings_at_top = AOS_FALSE
     },
     .boot_info=(struct ambrc_boot_info){
         .default_os_idx=0,
@@ -59,7 +59,7 @@ static uint32_t crc32_table[256];
 static int table_computed = 0;
 
 static uint16_t active_k_idx = 0;
-static uint8_t changes_made = 0;
+static aos_bool changes_made = AOS_FALSE;
 
 static drive_device_t* gdrive = NULL;
 
@@ -91,7 +91,7 @@ void init_backup_ambrc(void) {
     struct ambrc_kernel_info kinfo = {
         .load_addr=AOS_KERNEL_ADDR,
         .entry_point=AOS_KERNEL_ADDR,
-        .safe_mode_flags=0
+        .safe_mode_flags=AOS_FALSE
     };
     
     for (int i = 0; i < AMBRC_MAX_KERNELS; i++) memcpy(&backup_ambrc.kernel_info[i], &kinfo, sizeof(struct ambrc_kernel_info));
@@ -561,7 +561,7 @@ static void ambrc_set_data(struct ambrc* ambrc, uint64_t tab, uint64_t row, int8
     changes_made = 1;
 }
 
-static void ambrc_handle_data(struct ambrc* ambrc, struct VMemDesign* design, uint64_t tab, uint64_t* row, uint8_t scancode) {
+static void ambrc_handle_data(struct ambrc* ambrc, struct VMemDesign* design, uint64_t tab, uint64_t* row, uint16_t scancode) {
     switch (scancode) {
         case 0x48: { // Up Arrow
             if (*row > 0) (*row)--;
@@ -583,11 +583,11 @@ static void ambrc_handle_data(struct ambrc* ambrc, struct VMemDesign* design, ui
         }
         case 0x13: { // R
             ambrc_display_popup(ambrc, design, "Are you sure you want to reset? (y/N)");
-            uint8_t valid = 0;
+            aos_bool valid = AOS_FALSE;
             while (!valid) {
-                uint8_t scancode = ps2_read_scan();
+                uint16_t scancode = ps2_read_scan();
                 switch (scancode) {
-                    case 0x15: valid=1; break; // 'Y' key
+                    case 0x15: valid=AOS_TRUE; break; // 'Y' key
                     case 0x31: // 'N' key
                     case 0x01: // ESC also acts as no
                         vmem_clear_screen(design);
@@ -595,7 +595,7 @@ static void ambrc_handle_data(struct ambrc* ambrc, struct VMemDesign* design, ui
                         ambrc_draw_tabs(ambrc, design, tab);
                         ambrc_draw_data(ambrc, design, tab, *row);
                         return;
-                    default: valid=0; break;
+                    default: valid=AOS_FALSE; break;
                 }
             }
             ambrc_reset_tab(ambrc, tab);
@@ -614,15 +614,15 @@ static void ambrc_handle_changes(struct ambrc* ambrc, struct VMemDesign* design,
     if (!changes_made) return;
     ambrc_display_popup(ambrc, design, "Save changes to disk? (y/n/C)");
 
-    uint8_t valid = 0;
+    aos_bool valid = AOS_FALSE;
     while (!valid) {
-        uint8_t scancode = ps2_read_scan();
+        uint16_t scancode = ps2_read_scan();
         switch (scancode) {
-            case 0x15: valid=1; break; // 'Y' key
-            case 0x31: *running=0; return; // 'N' key
+            case 0x15: valid=AOS_TRUE; break; // 'Y' key
+            case 0x31: *running=AOS_FALSE; return; // 'N' key
             case 0x2E: return; // 'C' key
             case 0x01: return; // ESC also acts as cancel
-            default: valid=0; break;
+            default: valid=AOS_FALSE; break;
         }
     }
 
@@ -648,7 +648,7 @@ void start_ambrc(struct drive_device* drive) {
 
     // Runtime loop
     uint64_t selected = 0;
-    uint8_t within_data = 0;
+    aos_bool within_data = AOS_FALSE;
     uint64_t data_selected = 0;
 	enum VMemColors last_fg = design->fg;
 	enum VMemColors last_bg = design->bg;
@@ -656,7 +656,7 @@ void start_ambrc(struct drive_device* drive) {
     ambrc_draw_base(design);
     ambrc_draw_tabs(ambrc, design, selected);
 
-    uint8_t running = 1;
+    aos_bool running = AOS_TRUE;
     while (running) {
 		if (last_fg != ambrc->display.ambrc_fg_color) {
 			design->fg = ambrc->display.ambrc_fg_color;
@@ -667,11 +667,11 @@ void start_ambrc(struct drive_device* drive) {
 			last_bg = design->bg;
 		}
         
-        uint8_t scancode = ps2_read_scan(); 
+        uint16_t scancode = ps2_read_scan(); 
         if (within_data) {
             switch(scancode) {
                 case 0x01: { // ESC
-                    within_data = 0;
+                    within_data = AOS_FALSE;
                     data_selected = 0;
                     vmem_clear_screen(design);
                     ambrc_draw_base(design);
@@ -694,13 +694,13 @@ void start_ambrc(struct drive_device* drive) {
                     break;
                 }
                 case 0x1C: { // Enter
-                    within_data = 1;
+                    within_data = AOS_TRUE;
                     data_selected = 0;
                     ambrc_draw_data(ambrc, design, selected, data_selected);
                     break;
                 }
                 case 0x01: { // ESC
-                    if (!changes_made) {running = 0; continue;}
+                    if (!changes_made) {running = AOS_FALSE; continue;}
                     ambrc_handle_changes(ambrc, design, &running);
                     if (running) {
                         vmem_clear_screen(design);

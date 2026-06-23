@@ -1,8 +1,9 @@
-#include <inttypes.h>
+#include <aos_inttypes.h>
 #include <asm.h>
 #include <system.h>
 
 #include <stddef.h>
+#include <limits.h>
 
 #include <inc/core/acpi.h>
 #include <inc/core/kfuncs.h>
@@ -182,7 +183,7 @@ void spin_unlock_irqrestore(spinlock_t* lock, uint64_t flags) {
 #define BCD_TO_BIN(bcd) (((bcd) & 0x0F) + (((bcd) >> 4) * 10))
 
 static uint64_t tsc_ticks_per_ms = 0;
-static uint8_t rdtscp_supported = 0;
+static aos_bool rdtscp_supported = 0;
 static uint64_t bootup_timestamp = 0;
 
 static const uint8_t month_days[12] = {
@@ -192,7 +193,7 @@ static const uint8_t month_days[12] = {
 static inline uint64_t ktimer_read_tsc(void) {
     uint32_t low = 0;
     uint32_t high = 0;
-    if (rdtscp_supported == 1) {
+    if (rdtscp_supported) {
         asm volatile("rdtscp" : "=a"(low), "=d"(high) : : "rcx");
     }
     else {
@@ -224,9 +225,9 @@ void ktimer_calibrate(void) {
     eax = 0x80000001;
     asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
     if (edx & (1 << 27)) {
-        rdtscp_supported = 1;
+        rdtscp_supported = AOS_TRUE;
     } else {
-        rdtscp_supported = 0;
+        rdtscp_supported = AOS_FALSE;
     }
 
     uint64_t start = ktimer_read_tsc();
@@ -369,10 +370,10 @@ void* krealloc(void* ptr, size_t new_size) {
 
 // System info
 static aos_sysinfo_t* system_info;
-static uint8_t sysinfo_checked = 0;
+static aos_bool sysinfo_checked = AOS_FALSE;
 
 aos_sysinfo_t* kget_sysinfo(void) {
-	if (sysinfo_checked == 0) {
+	if (!sysinfo_checked) {
 		aos_sysinfo_t* sinfo = (aos_sysinfo_t*)(AOS_SYS_INFO_ADDR);
 		aos_sysinfo_t info = *sinfo;
 		
@@ -386,7 +387,169 @@ aos_sysinfo_t* kget_sysinfo(void) {
 		if (!out) system_info = NULL;
 		else system_info = sinfo;
 
-		sysinfo_checked = 1;
+		sysinfo_checked = AOS_TRUE;
 	}
 	return system_info;
+}
+
+// Pheonix STDLIB Functions
+
+aos_bool kc_is_alpha(char c) {
+    c |= 0x20;
+    return (c >= 'a' && c <= 'z');
+}
+
+aos_bool kc_is_digit(char c) {
+    return (c >= '0' && c <= '9');
+}
+
+aos_bool kc_is_alphanum(char c) {
+    return kc_is_alpha(c) || kc_is_digit(c);
+}
+
+aos_bool kis_alpha(char* s) {
+    for (char* p = s; *p; p++) {
+        if (!kc_is_alpha(*p)) return AOS_FALSE;
+    }
+    return AOS_TRUE;
+}
+
+aos_bool kis_digit(char* s) {
+    for (char* p = s; *p; p++) {
+        if (!kc_is_digit(*p)) return AOS_FALSE;
+    }
+    return AOS_TRUE;
+}
+
+aos_bool kis_alphanum(char* s) {
+    for (char* p = s; *p; p++) {
+        if (!kc_is_alphanum(*p)) return AOS_FALSE;
+    }
+    return AOS_TRUE;
+}
+
+aos_bool kis_float(char* s) {
+    if (!s || !*s) return 0;
+
+    aos_bool has_digit = AOS_FALSE;
+    aos_bool has_dot = AOS_FALSE;
+
+    if (*s == '+' || *s == '-') s++;
+
+    while (*s) {
+        if (kc_is_digit(*s)) {
+            has_digit = AOS_TRUE;
+        } else if (*s == '.' && !has_dot) {
+            has_dot = AOS_TRUE;
+        } else {
+            return AOS_FALSE;
+        }
+        s++;
+    }
+
+    return has_digit;
+}
+
+int kchar_to_digit(char c) {
+    if (c >= '0' && c <= '9')
+        return c - '0';
+
+    if (c >= 'a' && c <= 'z')
+        return c - 'a' + 10;
+
+    if (c >= 'A' && c <= 'Z')
+        return c - 'A' + 10;
+
+    return -1;
+}
+
+uint64_t kstr_to_u64(const char* str, int base) {
+    if (!str || base < 2 || base > 36) return 0;
+
+    uint64_t result = 0;
+
+    if (*str == '+') str++;
+
+    while (*str) {
+        int digit = kchar_to_digit(*str);
+        if (digit < 0 || digit >= base)
+            break;
+
+        if (result > (UINT64_MAX - digit) / base) {
+            return UINT64_MAX;
+        }
+
+        result = result * base + digit;
+        str++;
+    }
+
+    return result;
+}
+
+int64_t kstr_to_i64(const char* str, int base) {
+    if (!str || base < 2 || base > 36) return 0;
+
+    aos_bool neg = AOS_FALSE;
+
+    if (*str == '-') {
+        neg = AOS_TRUE;
+        str++;
+    } else if (*str == '+') {
+        str++;
+    }
+
+    uint64_t result = 0;
+
+    while (*str) {
+        int digit = kchar_to_digit(*str);
+        if (digit < 0 || digit >= base)
+            break;
+
+        if (result > (UINT64_MAX - digit) / base) {
+            return neg ? INT64_MIN : INT64_MAX;
+        }
+
+        result = result * base + digit;
+        str++;
+    }
+
+    if (neg) {
+        if (result > (uint64_t)INT64_MAX + 1)
+            return INT64_MIN;
+        return -(int64_t)result;
+    }
+
+    if (result > (uint64_t)INT64_MAX)
+        return INT64_MAX;
+
+    return (int64_t)result;
+}
+
+double kstr_to_double(const char* str) {
+    if (!str) return 0.0;
+
+    double result = 0.0;
+    double frac = 0.0;
+    double div = 1.0;
+    int sign = 1;
+
+    if (*str == '-') { sign = -1; str++; }
+    else if (*str == '+') { str++; }
+
+    while (kc_is_digit(*str)) {
+        result = result * 10.0 + (*str - '0');
+        str++;
+    }
+
+    if (*str == '.') {
+        str++;
+        while (kc_is_digit(*str)) {
+            frac = frac * 10.0 + (*str - '0');
+            div *= 10.0;
+            str++;
+        }
+        result += frac / div;
+    }
+
+    return result * sign;
 }

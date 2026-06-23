@@ -1,6 +1,6 @@
 #pragma once
 
-#include <inttypes.h>
+#include <aos_inttypes.h>
 
 enum aml_single_bytes_opcodes {
     AML_ZERO_OP = 0x00,

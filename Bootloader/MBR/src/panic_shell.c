@@ -27,13 +27,13 @@ static struct drive_device* cdrive = NULL;
 static char cmd[1024] = {0};
 static int cmd_len = 0;
 
-static uint8_t compute_checksum(const uint8_t* data, uint32_t len) {
+static uint64_t compute_checksum(const uint8_t* data, uint32_t len) {
     uint32_t sum = 0;
     for (uint32_t i = 0; i < len; i++) sum += data[i];
-    return (uint8_t)(sum & 0xFF);
+    return (uint64_t)(sum & 0xFF);
 }
 
-static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, uint8_t* running) {
+static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, aos_bool* running) {
     if (cmd_len == 0) return;
 
     char* c = cmd;
@@ -42,17 +42,17 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, uint8_t*
 
     design->y++;
     design->x = 0;
-    uint8_t valid = 0;
+    aos_bool value = AOS_FALSE;
     switch (c[0]) {
         case 'a':
             if (!strcmp(c, "about")) {
                 vmem_print(design, "\nAOS Bootloader Panic Shell\nA place where you can debug crashes and fix them!\n");
-                valid = 1;
+                valid = AOS_TRUE;
             } else if (!strcmp(c, "acpi")) {
                 aos_sysinfo_t* sysinfo = AOS_SYS_INFO_LOC;
                 vmem_print(design, "\nUsing ACPI, Info:\n");
                 vmem_print(design, sysinfo->apic_present == 1 ? "\tAPIC: Available\n" : "\tAPIC: Unavailable\n");
-                valid = 1;
+                valid = AOS_TRUE;
             }
             break;
 
@@ -61,7 +61,7 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, uint8_t*
                 vmem_clear_screen(design);
                 design->x = 0;
                 design->y = 0;
-                valid = 1;
+                value = AOS_TRUE;
             } else if (!strcmp(c, "cpu")) {
                 uint32_t eax, ebx, ecx, edx;
                 asm volatile (
@@ -94,7 +94,7 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, uint8_t*
                 brand[48] = '\0';
 
                 vmem_printf(design, "CPU Brand: %s\n", brand);
-                valid = 1;
+                value = AOS_TRUE;
             }
             break;
 
@@ -140,7 +140,7 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, uint8_t*
                     vmem_printf(design, "\tFunc: %u\n", cdrive->pcie_device->func);
                 }
 
-                valid = 1;
+                value = AOS_TRUE;
             }
             break;
 
@@ -150,10 +150,10 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, uint8_t*
                 vmem_print(design, "\n");
                 vmem_print(design, msg);
                 vmem_print(design, "\n");
-                valid = 1;
+                value = AOS_TRUE;
             } else if (!strcmp(c, "exit")) {
-                *running = 0;
-                valid = 1;
+                *running = AOS_FALSE;
+                value = AOS_TRUE;
             }
             break;
 
@@ -181,7 +181,7 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, uint8_t*
                 vmem_print(design, "\twhoami   - Show current user\n");
                 
                 vmem_print(design, "----------------------------\n");
-                valid = 1;
+                value = AOS_TRUE;
             }
             break;
 
@@ -192,7 +192,7 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, uint8_t*
                 vmem_printf(design, "Sysinfo:\n");
                 vmem_printf(design, "--------------------------------\n");
 
-                vmem_printf(design, "Boot Drive      : 0x%02x\n", sysinfo->boot_drive);
+                vmem_printf(design, "Boot Drive      : B=0x%02x S=%02x F=0x%02x\n", sysinfo->boot_drive.bus, sysinfo->boot_drive.slot, sysinfo->boot_drive.func);
 
                 vmem_printf(design, "Boot Mode       : ");
                 switch (sysinfo->boot_mode) {
@@ -214,22 +214,22 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, uint8_t*
                 vmem_printf(design, "TSC (MHz)       : %lu MHz\n", sysinfo->tsc_freq_hz / 1000000);
 
                 aos_sysinfo_t sysinfo_cpy = *sysinfo;
-                uint8_t sum = compute_checksum((uint8_t*)&sysinfo_cpy, sizeof(aos_sysinfo_t));
+                uint64_t sum = compute_checksum((uint8_t*)&sysinfo_cpy, sizeof(aos_sysinfo_t));
 
-                vmem_printf(design, "Checksum Stored : 0x%02x\n", sysinfo->checksum);
-                vmem_printf(design, "Checksum Calc   : 0x%02x\n", sum);
+                vmem_printf(design, "Checksum Stored : 0x%02llx\n", sysinfo->checksum);
+                vmem_printf(design, "Checksum Calc   : 0x%02llx\n", sum);
                 vmem_printf(design, "Checksum Valid  : %s\n", (sum == sysinfo->checksum) ? "Yes" : "No");
 
                 vmem_printf(design, "--------------------------------\n");
 
-                valid = 1;
+                value = AOS_TRUE;
             }
             break;
 
         case 'm':
             if (!strcmp(c, "memtest")) {
                 volatile uint32_t* addr = (uint32_t*)0x100000;
-                uint8_t passed = 1;
+                aos_bool passed = AOS_TRUE;
 
                 for (int i = 0; i < 4; i++) {
                     *(addr + i) = 0xAA;
@@ -238,12 +238,12 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, uint8_t*
                 for (int i = 0; i < 4; i++) {
                     if (*(addr + i) != 0xAA) {
                         vmem_print(design, "\nMemory Test 1: Failed\n");
-                        passed = 0;
+                        passed = AOS_FALSE;
                     }
                 }
 
                 if (passed) vmem_print(design, "Memory Test 1: Passed\n");
-                else passed = 1; // Reset
+                else passed = AOS_TRUE; // Reset
 
                 for (int i = 0; i < 4; i++) {
                     *(addr + i) = 0x55;
@@ -252,19 +252,19 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, uint8_t*
                 for (int i = 0; i < 4; i++) {
                     if (*(addr + i) != 0x55) {
                         vmem_print(design, "Memory Test 2: Failed\n");
-                        passed = 0;
+                        passed = AOS_FALSE;
                     }
                 }
 
                 if (passed) vmem_print(design, "Memory Test 2: Passed\n");
-                valid = 1;
+                value = AOS_TRUE;
             }
             break;
 
         case 'r':
             if (!strcmp(c, "reboot")) {
                 vmem_print(design, "\nRebooting...\n");
-                valid = 1;
+                value = AOS_TRUE;
                 acpi_reboot();
             }
             break;
@@ -272,7 +272,7 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, uint8_t*
         case 's':
             if (!strcmp(c, "shutdown")) {
                 vmem_print(design, "\nShutdown (hlt)\n");
-                valid = 1;
+                value = AOS_TRUE;
                 for (;;) asm("hlt");
             }
             break;
@@ -280,14 +280,14 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, uint8_t*
         case 'v':
             if (!strcmp(c, "version")) {
                 vmem_print(design, "\nAOS Panic Shell v1.0\n");
-                valid = 1;
+                value = AOS_TRUE;
             }
             break;
 
         case 'w':
             if (!strcmp(c, "whoami")) {
                 vmem_print(design, "\naos-panic-shell-user\n");
-                valid = 1;
+                value = AOS_TRUE;
             }
             break;
 
@@ -337,7 +337,7 @@ void start_panic_shell(struct drive_device* current_drive, const char* err, size
     design->y = tstart_y;
     vmem_print(design, "$> ");
 
-    uint8_t running = 1;
+    aos_bool running = AOS_TRUE;
     uint64_t cmd_start_x = tstart_x + 3;
     uint64_t cmd_start_y = tstart_y;
     while (running) {

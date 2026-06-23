@@ -1,4 +1,4 @@
-#include <stdint.h>
+#include <aos_inttypes.h>
 #include <stddef.h>
 #include <stdbool.h>
 #include <string.h>
@@ -29,12 +29,19 @@
 
 #define MEDIA_DEVICE_PATH 0x04
 #define MEDIA_HARDDRIVE_DP 0x01
+#define MEDIA_HW_PCI_DP 0x01
 #define END_DEVICE_PATH_TYPE 0x7F
 #define END_ENTIRE_DEVICE_PATH_SUBTYPE 0xFF
 #define IS_DEVICE_PATH_END(dp) ((dp) == NULL || ((dp)->Type == END_DEVICE_PATH_TYPE && (dp)->SubType == END_ENTIRE_DEVICE_PATH_SUBTYPE))
 
+typedef struct {
+	EFI_DEVICE_PATH_PROTOCOL Header;
+	UINT8 Function;
+	UINT8 Device;
+} EFI_PCI_DEVICE_PATH;
+
 static uint8_t current_mode = 0;
-static uint8_t rdtscp_supported = 0;
+static aos_bool rdtscp_supported = AOS_FALSE;
 static UINTN uefi_width = 0;
 static UINTN uefi_height = 0;
 
@@ -368,7 +375,7 @@ EFIAPI static EFI_BLOCK_IO_PROTOCOL* get_physical_disk_io(void) {
 EFIAPI static inline uint64_t timer_read_tsc(void) {
     uint32_t low = 0;
     uint32_t high = 0;
-    if (rdtscp_supported == 1) {
+    if (rdtscp_supported) {
         asm volatile("rdtscp" : "=a"(low), "=d"(high) : : "rcx");
     }
     else {
@@ -378,6 +385,15 @@ EFIAPI static inline uint64_t timer_read_tsc(void) {
 }
 
 EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
+	uint32_t eax, ebx, ecx, edx;
+    eax = 0x80000001;
+    asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
+    if (edx & (1 << 27)) {
+        rdtscp_supported = AOS_TRUE;
+    } else {
+        rdtscp_supported = AOS_FALSE;
+    }
+
 	uint64_t tsc_start = timer_read_tsc();
 	if (SystemTable == NULL) return EFI_LOAD_ERROR;
 
@@ -447,7 +463,29 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
 	vmem_clear_screen(&cursor);
 
-	uint8_t boot_drive = 0x80; // Get Boot drive
+	EFI_LOADED_IMAGE_PROTOCOL* LoadedImage;
+	if (EFI_ERROR(SystemTable->BootServices->HandleProtocol(ImageHandle, &gEfiLoadedImageProtocolGuid, (VOID**)&LoadedImage))) {
+		vmem_print(&cursor, "Failed to retrieve current drive!\n");
+		return EFI_LOAD_ERROR;
+	}
+	EFI_DEVICE_PATH_PROTOCOL* DevicePath;
+	if (EFI_ERROR(SystemTable->BootServices->HandleProtocol(LoadedImage->DeviceHandle, &gEfiDevicePathProtocolGuid, (VOID**)&DevicePath))) {
+		vmem_print(&cursor, "Failed to retrieve current drive path protocol!\n");
+		return EFI_LOAD_ERROR;
+	}
+
+	EFI_DEVICE_PATH_PROTOCOL* Node = DevicePath;
+	struct aos_sysinfo_pcie boot_drive = {0};
+	while (!IS_DEVICE_PATH_END(Node)) {
+		if (Node->Type == MEDIA_HARDDRIVE_DP && Node->SubType == MEDIA_HW_PCI_DP) {
+			EFI_PCI_DEVICE_PATH *PciNode = (EFI_PCI_DEVICE_PATH*)Node;
+
+			boot_drive.slot = (uint16_t)PciNode->Device;
+			boot_drive.func = (uint16_t)PciNode->Function;
+		}
+
+		Node = (EFI_DEVICE_PATH_PROTOCOL*)((uint8_t*)Node + Node->Length[0] + (Node->Length[1] << 8));
+	}
 
 	vmem_print(&cursor, "Initializing PBFS...\n");
 	struct block_device dev = {0};
@@ -544,13 +582,14 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 	}
 
     SystemInfo->boot_drive = boot_drive;
+	SystemInfo->boot_drive_raw = 0;
     SystemInfo->boot_mode = 0;
     SystemInfo->reserved0 = 0;
     SystemInfo->cpu_signature = cpuid_signature();
     cpuid_get_vendor(SystemInfo->cpu_vendor);
 
-	uint8_t tsc_is_fine = 0;
-	uint8_t kernel_is_fine = 0;
+	aos_bool tsc_is_fine = 0;
+	aos_bool kernel_is_fine = 0;
 	switch (ambrc->boot_info.crash_verification_mode) {
         case 0: break;
         case 1: 
@@ -591,8 +630,8 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     const int VIEWPORT_HEIGHT = (uefi_height - 6);
     const int MENU_START_Y = 4;
 
-    uint8_t force_redraw = 1;
-    uint8_t popup_finished = 0;
+    aos_bool force_redraw = 1;
+    aos_bool popup_finished = 0;
 
     uint64_t timeout_start = kget_ms_passed();
 
@@ -612,7 +651,7 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 			else if (!tsc_is_fine) popup_str = "Did anything crash? (y/n/C) (Reason: TSC Check Failed)";
 			else if (!kernel_is_fine) popup_str = "Did anything crash? (y/n/C) (Reason: Kernel Check Failed)";
 			display_popup(ambrc, &cursor, popup_str);
-            uint8_t popup_active = 1;
+            aos_bool popup_active = 1;
             while (popup_active) {
                 UINT16 scancode = read_input(); 
                 switch (scancode) {
@@ -649,7 +688,7 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
                 cursor.y = MENU_START_Y + i;
                 
                 if (item_idx < total_items) {
-                    uint8_t is_sel = (item_idx == selected);
+                    aos_bool is_sel = (item_idx == selected);
                     cursor.fg = is_sel ? ambrc->display.selected_fg_color : ambrc->display.fg_color;
                     cursor.bg = is_sel ? ambrc->display.selected_bg_color : ambrc->display.bg_color;
 
@@ -682,7 +721,7 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
                 cursor.x = 1;
                 cursor.y = MENU_START_Y + (target - scroll_offset);
-                uint8_t is_sel = (target == selected);
+                aos_bool is_sel = (target == selected);
                 cursor.fg = is_sel ? ambrc->display.selected_fg_color : ambrc->display.fg_color;
                 cursor.bg = is_sel ? ambrc->display.selected_bg_color : ambrc->display.bg_color;
 

@@ -1,5 +1,5 @@
 #include <system.h>
-#include <inttypes.h>
+#include <aos_inttypes.h>
 
 #include <inc/core/kfuncs.h>
 #include <inc/core/acpi.h>
@@ -29,8 +29,9 @@
 static char* help_shell = "Usage: [COMMAND]\n"
     "Commands:\n"
     "\thelp: Provides this output.\n"
-    "\techo [msg]: Prints [msg] on stdout.\n"
+    "\techo <msg>: Prints <msg> on stdout.\n"
     "\treboot: Reboots the system.\n"
+	"\tcolor <attribute>: Change the color to specified decoded color from VGA Attribute.\n"
     "\tclear: Clears the screen.\n"
     "\tshutdown: Shuts down the system.\n"
     "\tstart <program>: Starts a Program, Use 'start -help' for more info\n"
@@ -44,8 +45,8 @@ static char* help_shell = "Usage: [COMMAND]\n"
 static int help_shell_nlines = 8;
 
 static drive_device_t current_drive = {0};
-static uint8_t current_drive_works = 0;
-static uint8_t current_drive_mounted = 0;
+static aos_bool current_drive_works = AOS_FALSE;
+static aos_bool current_drive_mounted = AOS_FALSE;
 
 static struct pbfs_funcs pbfs_init_funcs = {
     .malloc = kmalloc,
@@ -122,31 +123,40 @@ void kernel_main(void) {
     smp_init();
 
     // Search for drives
-    current_drive_works = 0;
-    if (get_available_drives(&current_drive) != 1) {
+    current_drive_works = AOS_FALSE;
+    if (!get_available_drives(&current_drive)) {
         serial_print("[AOS] Failed to find any I/O Drives!\n");
     } else {
-        // Print info
-        serial_printf("[AOS] Found I/O Drive ->\n\tName: %s\n\tBlock Size: %u\n\tTotal Blocks: %u\n", current_drive.name, current_drive.block_dev.block_size, current_drive.block_dev.block_count);
-        // do test read for now
-        char tmp[512];
-        uint8_t read = 0;
-        if (current_drive.read_blk != NULL) {
-            if (current_drive.read_blk(current_drive.cur_port, 0, 1, tmp) == 1)
-                read = 1;
-        }
-        if (read == 0) {
-            serial_print("[AOS] Test read from drive failed! Scrapping drive!\n");
-        } else {
-            serial_print("[AOS] Drive passed the tests, using drive!\n");
-            current_drive_works = 1;
-            current_drive.block_dev.read_block = bd_read_blk;
-            current_drive.block_dev.read = bd_read;
-            current_drive.block_dev.write_block = bd_write_blk;
-            current_drive.block_dev.write = bd_write;
-            current_drive.block_dev.flush = bd_flush;
-        }
-    }
+		aos_sysinfo_t* sinfo = kget_sysinfo();
+		if (!sinfo) {
+			current_drive_works = AOS_FALSE;
+		} else {
+			if ((uint16_t)current_drive.pcie_device->bus == sinfo->boot_drive.bus && (uint16_t)current_drive.pcie_device->slot == sinfo->boot_drive.slot && (uint16_t)current_drive.pcie_device->func == sinfo->boot_drive.func) {
+				// Print info
+				serial_printf("[AOS] Found I/O Drive ->\n\tName: %s\n\tBlock Size: %u\n\tTotal Blocks: %u\n", current_drive.name, current_drive.block_dev.block_size, current_drive.block_dev.block_count);
+				// do test read for now
+				char tmp[512];
+				aos_bool read = AOS_FALSE;
+				if (current_drive.read_blk != NULL) {
+					if (current_drive.read_blk(current_drive.cur_port, 0, 1, tmp) == 1)
+						read = 1;
+				}
+				if (read == 0) {
+					serial_print("[AOS] Test read from drive failed! Scrapping drive!\n");
+				} else {
+					serial_print("[AOS] Drive passed the tests, using drive!\n");
+					current_drive_works = AOS_TRUE;
+					current_drive.block_dev.read_block = bd_read_blk;
+					current_drive.block_dev.read = bd_read;
+					current_drive.block_dev.write_block = bd_write_blk;
+					current_drive.block_dev.write = bd_write;
+					current_drive.block_dev.flush = bd_flush;
+				}
+			} else {
+				current_drive_works = AOS_FALSE;
+			}
+		}
+	}
 
     pbfs_init(&pbfs_init_funcs);
     if (current_drive_works) {
@@ -154,11 +164,11 @@ void kernel_main(void) {
         if (out != PBFS_RES_SUCCESS) {
             serial_printf("Error: Failed to mount\n\tPBFS Error: %s\n", pbfs_get_err_str(out));
             g_pbfs_cwd[0] = '\0';
-            current_drive_mounted = 0;
+            current_drive_mounted = AOS_FALSE;
         } else {
             g_pbfs_cwd[0] = '/';
             g_pbfs_cwd[1] = '\0';
-            current_drive_mounted = 1;
+            current_drive_mounted = AOS_TRUE;
 			serial_init_klog("/aos/klog.log", &g_pbfs_mnt);
         }
     } else {
@@ -196,11 +206,10 @@ void aos_shell_pm(void) {
     int lines = 1;
 
     // Read sysinfo
-    uint8_t boot_drive = *AOS_BOOT_INFO_LOC;
     aos_sysinfo_t* SystemInfo = kget_sysinfo();
 	if (SystemInfo) {
 		vmem_print(&vmem_design, "SystemInfo:\n");
-		vmem_printf(&vmem_design, "Boot Drive: 0x%llx (%llu)\nBoot Mode: 0x%llx (%llu)\n", (uint64_t)SystemInfo->boot_drive, (uint64_t)SystemInfo->boot_drive, (uint64_t)SystemInfo->boot_mode, (uint64_t)SystemInfo->boot_mode);
+		vmem_printf(&vmem_design, "Boot Drive: B=0x%x S=0x%x F=0x%x\nBoot Mode: 0x%x (%u)\n", SystemInfo->boot_drive.bus, SystemInfo->boot_drive.slot, SystemInfo->boot_drive.func, SystemInfo->boot_mode, SystemInfo->boot_mode);
 		vmem_printf(&vmem_design, "CPU Vendor: %s\n", (uintptr_t)&SystemInfo->cpu_vendor);
 		lines += 7;
 	}
@@ -226,7 +235,10 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
 		serial_deinit_klog("/aos/klog.log", &g_pbfs_mnt);
         pager_destroy_table(4);
         acpi_reboot();
-    } else if (strcmp(cmd, "clear") == 0) {
+    } else if (strncmp(cmd, "color ", 6) == 0) {
+		char* s = cmd + 6;
+
+	} else if (strcmp(cmd, "clear") == 0) {
         vmem_clear_screen(vmem_design);
         *lines = 0;
     } else if (strncmp(cmd, "start ", 6) == 0) {
@@ -243,7 +255,7 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
             } else {
                 bd_flush(&current_drive.block_dev);
             }
-            current_drive_mounted = 0;
+            current_drive_mounted = AOS_FALSE;
         }
     } else if (strcmp(cmd, "pbfsctl-mnt") == 0) {
         if (current_drive_works != 1) {
@@ -254,17 +266,17 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
             if (out != PBFS_RES_SUCCESS) {
                 vmem_printf(vmem_design, "Error: %s\n", pbfs_get_err_str(out));
                 *lines += 1;
-                current_drive_mounted = 0;
+                current_drive_mounted = AOS_FALSE;
             } else {
-                current_drive_mounted = 1;
+                current_drive_mounted = AOS_TRUE;
             }
         }
     } else if (strncmp(cmd, "cd ", 3) == 0) {
-        if (current_drive_works == 0) {
+        if (!current_drive_works) {
             vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
             *lines += 1;
         } else {
-            if (current_drive_mounted == 0) {
+            if (!current_drive_mounted) {
                 vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
                 *lines += 1;
             } else {
@@ -284,11 +296,11 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
             }
         }
     } else if (strncmp(cmd, "mkdir ", 6) == 0) {
-        if (current_drive_works == 0) {
+        if (!current_drive_works) {
             vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
             *lines += 1;
         } else {
-            if (current_drive_mounted == 0) {
+            if (!current_drive_mounted) {
                 vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
                 *lines += 1;
             } else {
@@ -314,11 +326,11 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
             }
         }
     } else if (strncmp(cmd, "ls ", 3) == 0) {
-        if (current_drive_works == 0) {
+        if (!current_drive_works) {
             vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
             *lines += 1;
         } else {
-            if (current_drive_mounted == 0) {
+            if (!current_drive_mounted) {
                 vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
                 *lines += 1;
             } else {
@@ -349,11 +361,11 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
             }
         }
     } else if (strcmp(cmd, "flush-klog") == 0) {
-        if (current_drive_works == 0) {
+        if (!current_drive_works) {
             vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
             *lines += 1;
         } else {
-            if (current_drive_mounted == 0) {
+            if (!current_drive_mounted) {
                 vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
                 *lines += 1;
             } else if (g_pbfs_mnt.active) {
@@ -426,7 +438,7 @@ void pre_halt_system(void) {
 }
 
 static int bd_read_blk(struct block_device* dev, uint64_t lba, void* buf) {
-    if (current_drive_works == 1) {
+    if (current_drive_works) {
         current_drive.read_blk(current_drive.cur_port, lba, 1, buf);
         return 1;
     }
@@ -434,7 +446,7 @@ static int bd_read_blk(struct block_device* dev, uint64_t lba, void* buf) {
 }
 
 static int bd_write_blk(struct block_device* dev, uint64_t lba, const void* buf) {
-    if (current_drive_works == 1) {
+    if (current_drive_works) {
         current_drive.write_blk(current_drive.cur_port, lba, 1, buf);
         return 1;
     }
@@ -442,7 +454,7 @@ static int bd_write_blk(struct block_device* dev, uint64_t lba, const void* buf)
 }
 
 static int bd_read(struct block_device* dev, uint64_t lba, uint64_t count, void* buf) {
-    if (current_drive_works == 1) {
+    if (current_drive_works) {
         current_drive.read_blk(current_drive.cur_port, lba, count, buf);
         return 1;
     }
@@ -450,7 +462,7 @@ static int bd_read(struct block_device* dev, uint64_t lba, uint64_t count, void*
 }
 
 static int bd_write(struct block_device* dev, uint64_t lba, uint64_t count, const void* buf) {
-    if (current_drive_works == 1) {
+    if (current_drive_works) {
         current_drive.write_blk(current_drive.cur_port, lba, count, buf);
         return 1;
     }
@@ -458,7 +470,7 @@ static int bd_write(struct block_device* dev, uint64_t lba, uint64_t count, cons
 }
 
 static int bd_flush(struct block_device* dev) {
-    if (current_drive_works == 1) {
+    if (current_drive_works) {
         current_drive.flush(current_drive.cur_port);
         return 1;
     }

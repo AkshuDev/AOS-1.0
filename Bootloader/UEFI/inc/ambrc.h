@@ -1,6 +1,7 @@
 #pragma once
 
-#include <stdint.h>
+#include <aos_inttypes.h>
+
 #include <pefilib.h>
 #include <inc/drivers/io/drive.h>
 #include <inc/drivers/io/io.h>
@@ -25,7 +26,7 @@ struct ambrc_display {
 
     enum VMemColors error_fg_color;
 
-    uint8_t show_settings_at_top;
+    aos_bool show_settings_at_top;
     uint32_t splash_duration;
 } __attribute__((packed));
 

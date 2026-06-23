@@ -1,12 +1,12 @@
 // AOS Master Boot Record Config
 #include <system.h>
+#include <aos_inttypes.h>
 
 #include <freestanding.h>
 #include <pefilib.h>
 #include <pefi.h>
 #include <pefi_simple_text_in.h>
 
-#include <stdint.h>
 #include <string.h>
 
 #include <inc/drivers/io/io.h>
@@ -66,7 +66,7 @@ static uint32_t crc32_table[256];
 static int table_computed = 0;
 
 static uint16_t active_k_idx = 0;
-static uint8_t changes_made = 0;
+static aos_bool changes_made = AOS_FALSE;
 
 static UINTN uefi_width = 0;
 static UINTN uefi_height = 0;
@@ -584,7 +584,7 @@ EFIAPI static void ambrc_set_data(struct ambrc* ambrc, uint64_t tab, uint64_t ro
     changes_made = 1;
 }
 
-EFIAPI static void ambrc_handle_data(struct ambrc* ambrc, struct VMemDesign* design, uint64_t tab, uint64_t* row, uint8_t scancode) {
+EFIAPI static void ambrc_handle_data(struct ambrc* ambrc, struct VMemDesign* design, uint64_t tab, uint64_t* row, UINT16 scancode) {
     switch (scancode) {
         case 0x1: { // Up Arrow
             if (*row > 0) (*row)--;
@@ -607,12 +607,12 @@ EFIAPI static void ambrc_handle_data(struct ambrc* ambrc, struct VMemDesign* des
 		case 'r':
         case 'R': { // R
             ambrc_display_popup(ambrc, design, "Are you sure you want to reset? (y/N)");
-            uint8_t valid = 0;
+            aos_bool valid = AOS_FALSE;
             while (!valid) {
                 UINT16 scancode = read_input();
                 switch (scancode) {
 					case 'y':
-                    case 'Y': valid=1; break; // 'Y' key
+                    case 'Y': valid=AOS_TRUE; break; // 'Y' key
 					case 'n':
                     case 'N': // 'N' key
                     case 0x17: // ESC also acts as no
@@ -621,7 +621,7 @@ EFIAPI static void ambrc_handle_data(struct ambrc* ambrc, struct VMemDesign* des
                         ambrc_draw_tabs(ambrc, design, tab);
                         ambrc_draw_data(ambrc, design, tab, *row);
                         return;
-                    default: valid=0; break;
+                    default: valid=AOS_FALSE; break;
                 }
             }
             ambrc_reset_tab(ambrc, tab);
@@ -636,11 +636,11 @@ EFIAPI static void ambrc_handle_data(struct ambrc* ambrc, struct VMemDesign* des
     ambrc_draw_data(ambrc, design, tab, *row);
 }
 
-EFIAPI static void ambrc_handle_changes(struct ambrc* ambrc, struct VMemDesign* design, uint8_t* running) {
+EFIAPI static void ambrc_handle_changes(struct ambrc* ambrc, struct VMemDesign* design, aos_bool* running) {
     if (!changes_made) return;
     ambrc_display_popup(ambrc, design, "Save changes to disk? (y/n/C)");
 
-    uint8_t valid = 0;
+    aos_bool valid = AOS_FALSE;
     while (!valid) {
         UINT16 scancode = read_input();
         switch (scancode) {
@@ -680,7 +680,7 @@ EFIAPI void start_ambrc(struct drive_device* drive) {
 
     // Runtime loop
     uint64_t selected = 0;
-    uint8_t within_data = 0;
+    aos_bool within_data = AOS_FALSE;
     uint64_t data_selected = 0;
 	enum VMemColors last_fg = design->fg;
 	enum VMemColors last_bg = design->bg;
@@ -688,7 +688,7 @@ EFIAPI void start_ambrc(struct drive_device* drive) {
     ambrc_draw_base(design);
     ambrc_draw_tabs(ambrc, design, selected);
 
-    uint8_t running = 1;
+    aos_bool running = AOS_TRUE;
     while (running) {
 		if (last_fg != ambrc->display.ambrc_fg_color) {
 			design->fg = ambrc->display.ambrc_fg_color;
@@ -702,7 +702,7 @@ EFIAPI void start_ambrc(struct drive_device* drive) {
         if (within_data) {
             switch(scancode) {
                 case 0x17: { // ESC
-                    within_data = 0;
+                    within_data = AOS_FALSE;
                     data_selected = 0;
                     vmem_clear_screen(design);
                     ambrc_draw_base(design);
@@ -725,7 +725,7 @@ EFIAPI void start_ambrc(struct drive_device* drive) {
                     break;
                 }
                 case '\r': { // Enter
-                    within_data = 1;
+                    within_data = AOS_TRUE;
                     data_selected = 0;
                     ambrc_draw_data(ambrc, design, selected, data_selected);
                     break;

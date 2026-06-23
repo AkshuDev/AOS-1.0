@@ -1,5 +1,5 @@
 #pragma once
-#include <inttypes.h>
+#include <aos_inttypes.h>
 
 
 // Credits to - https://github.com/hubenchang0515/font8x16/blob/master/font8x16.h

@@ -19,9 +19,34 @@ start:
     cld ; Clear directional flag
 
     mov [disk], dl ; Get DISK
-    mov ah, 0
-    mov al, dl
-    mov [boot_info], al ; Save it some known place
+	mov ah, 48h ; Get Extended DISK info
+	mov dl, [disk]
+	mov si, edd_buffer
+	int 13h
+	jc disk_info_error
+
+	cmp dword [edd_buffer+36], ' ICP'
+	jne disk_info_error
+
+	xor ax, ax
+	mov al, [edd_buffer+48] ; Bus
+	mov word [boot_info], ax
+
+	mov al, [edd_buffer+49] ; Slot
+	shr al, 3
+	xor ah, ah
+	mov word [boot_info+2], ax
+
+	mov al, [edd_buffer+49] ; Func
+	and al, 7
+	xor ah, ah
+	mov word [boot_info+4], ax
+
+	mov al, [edd_buffer+50] ; Port
+	mov byte [boot_info+6], al
+
+	mov al, [disk]
+	mov byte [boot_info+7], al ; Disk
 
     ; Setup VGA 80x25
     mov ah, 0x0 ; Ask for VGA
@@ -104,6 +129,12 @@ disk_error:
 
     hlt
 
+disk_info_error:
+    mov si, disk_info_err_msg
+    call print_string
+
+    hlt
+
 video_mode_setup_error:
     mov si, video_mode_setup_errormsg
     call print_string
@@ -135,10 +166,13 @@ read_dap_s3:
 	ret
 
 disk db 0x80 ; Default 0x80
+
 disk_read_msg db "Reading and Loading Stage2...", 0xa, 0xd, 0
 disk_err_msg db "Error Reading Disk!", 0xa, 0xd, 0
+disk_info_err_msg db "Error Getting Disk Information!", 0xa, 0xd, 0
 video_mode_setup_errormsg db "Failed to Setup VGA 80x25 TEXT Mode!", 0xa, 0xd, 0
 video_set_cursor_errormsg db "Failed to set cursor position to (0, 0)!", 0xa, 0xd, 0
+
 boot_info equ 0x7FF0
 ebx_info equ 0x8000
 ebx_struct_addr equ 0x8004
@@ -166,5 +200,10 @@ dap_ambrc: ; AOS Master Boot Record Config
     dw 0x0500 ; dest offset
     dw 0x0000 ; dest segment
     dq 2046 ; starting lba
+
+edd_buffer:
+    dw 74 ; size
+    dw 0 ; info flags
+    times 70 db 0
 
 times 512 - ($ - $$) db 0 ; PBFS CLI will take care of the rest!

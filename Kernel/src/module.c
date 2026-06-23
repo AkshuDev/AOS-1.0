@@ -1,4 +1,4 @@
-#include <inttypes.h>
+#include <aos_inttypes.h>
 
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
@@ -27,12 +27,12 @@ static struct AOS_Module** registered_modules = NULL;
 static size_t registered_module_count = 0;
 static size_t registered_module_cap = 0;
 
-uint8_t modules_init(void) {
+aos_bool modules_init(void) {
     // Loads core modules and more
     modules = (struct AOS_Module*)avmf_alloc(sizeof(struct AOS_Module)*16, MALLOC_TYPE_KERNEL, PAGE_RW | PAGE_PRESENT, NULL);
     if (!modules) {
         serial_print("[Module-System] Allocation failed!\n");
-        return 0;
+        return AOS_FALSE;
     }
     module_cap = 16;
 
@@ -44,7 +44,7 @@ uint8_t modules_init(void) {
         .signature = AOS_MODULE_SIGN(id),
         .version = AOS_MODULE_PACK_VERSION(1, 0, 0),
         .type = MODULE_TYPE_DRIVER,
-        .registered = 0
+        .registered = AOS_FALSE
     };
     modules[id].Modules.driver_module = (struct AOS_ModuleDriver){
         .type = MODULE_DRIVER_TYPE_SATA,
@@ -59,7 +59,7 @@ uint8_t modules_init(void) {
         .target_use_vendor = 0,
 
         .DriverConnections.drive_connector = (struct drive_device){
-            .active = 0,
+            .active = AOS_FALSE,
             .init = sata_init,
             .read_blk = sata_read_blk,
             .write_blk = sata_write_blk,
@@ -81,7 +81,7 @@ uint8_t modules_init(void) {
         .signature = AOS_MODULE_SIGN(id),
         .version = AOS_MODULE_PACK_VERSION(1, 0, 0),
         .type = MODULE_TYPE_DRIVER,
-        .registered = 0
+        .registered = AOS_FALSE
     };
     modules[id].Modules.driver_module = (struct AOS_ModuleDriver){
         .type = MODULE_DRIVER_TYPE_GPU,
@@ -121,7 +121,7 @@ uint8_t modules_init(void) {
                 .draw_char = pyrion_draw_char_virtio
             },
 
-            .active = 0,
+            .active = AOS_FALSE,
         }
     };
 	#endif
@@ -134,7 +134,7 @@ uint8_t modules_init(void) {
         .signature = AOS_MODULE_SIGN(id),
         .version = AOS_MODULE_PACK_VERSION(1, 0, 0),
         .type = MODULE_TYPE_DRIVER,
-        .registered = 0
+        .registered = AOS_FALSE
     };
     modules[id].Modules.driver_module = (struct AOS_ModuleDriver){
         .type = MODULE_DRIVER_TYPE_xHCI,
@@ -152,15 +152,15 @@ uint8_t modules_init(void) {
 
     serial_print("[Module-System] Core Modules Loaded!\n");
 
-    return 1;
+    return AOS_TRUE;
 }
 
-uint8_t module_register(struct AOS_Module* module) {
+aos_bool module_register(struct AOS_Module* module) {
     if (!registered_modules || registered_module_count >= registered_module_cap) {
         struct AOS_Module** nptr = (struct AOS_Module**)avmf_alloc(sizeof(struct AOS_Module*)*(registered_module_cap + 16), MALLOC_TYPE_KERNEL, PAGE_RW | PAGE_PRESENT, NULL);
         if (!nptr) {
             serial_print("[Module-System] Reallocation of registered modules failed!\n");
-            return 0;
+            return AOS_FALSE;
         }
         registered_module_cap += 16;
         if (registered_modules) {
@@ -170,8 +170,8 @@ uint8_t module_register(struct AOS_Module* module) {
         registered_modules = nptr;
     }
     registered_modules[registered_module_count++] = module;
-    module->hdr.registered = 1;
-    return 1;
+    module->hdr.registered = AOS_TRUE;
+    return AOS_TRUE;
 }
 
 struct AOS_Module* module_get_first_applicable_driver(uint8_t class, uint8_t subclass, uint8_t use_subclass, uint8_t progif, uint8_t use_progif, uint8_t revision, uint8_t use_revision, uint16_t vendor, uint8_t use_vendor) {
@@ -219,10 +219,10 @@ struct AOS_Module* module_get_first_applicable_registered_driver(uint8_t class, 
     return NULL;
 }
 
-uint8_t module_already_initialized(struct AOS_Module* module) {
+aos_bool module_already_initialized(struct AOS_Module* module) {
     for (size_t i = 0; i < registered_module_count; i++) {
         struct AOS_Module* mod = registered_modules[i];
-        if (mod == module) return 1;
+        if (mod == module) return AOS_TRUE;
     }
-    return 0;
+    return AOS_FALSE;
 }

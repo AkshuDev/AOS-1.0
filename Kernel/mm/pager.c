@@ -1,4 +1,4 @@
-#include <inttypes.h>
+#include <aos_inttypes.h>
 #include <system.h>
 #include <e820.h>
 
@@ -11,7 +11,7 @@
 
 static struct page_table* kernel_pml4 = NULL;
 static struct page_table* mapped_pml4 = NULL;
-static uint8_t pager_ready = 0;
+static aos_bool pager_ready = AOS_FALSE;
 static uint64_t cpu_phys_bits = 0;
 static uint64_t cpu_virt_bits = 0;
 
@@ -94,7 +94,7 @@ void pager_map_range(uint64_t virt, uint64_t phys, uint64_t size, uint64_t flags
 }
 
 void pager_init(void) {
-    pager_ready = 0; // Ensure
+    pager_ready = AOS_FALSE; // Ensure
 
     struct bs1_e820* e820 = (struct bs1_e820*)AOS_E820_INFO_ADDR;
     uint64_t max_phys_addr = 0;
@@ -166,7 +166,7 @@ void pager_init(void) {
 
     pager_load(kernel_pml4);
 
-    pager_ready = 1;
+    pager_ready = AOS_TRUE;
     serial_print("[PAGER] Everything is Set!\n");
 }
 

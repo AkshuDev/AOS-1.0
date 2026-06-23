@@ -1,6 +1,6 @@
 #pragma once
 
-#include <inttypes.h>
+#include <aos_inttypes.h>
 #include <inc/drivers/io/io.h>
 #include <inc/drivers/io/drive.h>
 
@@ -24,7 +24,7 @@ struct ambrc_display {
 
     enum VMemColors error_fg_color;
 
-    uint8_t show_settings_at_top;
+    aos_bool show_settings_at_top;
     uint32_t splash_duration;
 } __attribute__((packed));
 
@@ -41,7 +41,7 @@ struct ambrc_kernel_info {
     uint64_t load_addr;
     uint64_t entry_point;
 
-    uint8_t safe_mode_flags;
+    aos_bool safe_mode_flags;
 } __attribute__((packed));
 
 struct ambrc {

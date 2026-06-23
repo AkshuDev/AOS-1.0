@@ -1,4 +1,4 @@
-#include <inttypes.h>
+#include <aos_inttypes.h>
 #include <system.h>
 
 #include <inc/core/kfuncs.h>
@@ -42,7 +42,7 @@ static void bitmap_clear(uint64_t page_idx) {
     avmf_bitmap[page_idx / 8] &= ~(1 << (page_idx % 8));
 }
 
-static uint8_t bitmap_test(uint64_t page_idx) {
+static aos_bool bitmap_test(uint64_t page_idx) {
     return avmf_bitmap[page_idx / 8] & (1 << (page_idx % 8));
 }
 
@@ -240,7 +240,7 @@ uint8_t avmf_alloc_region(uint64_t virt, uint64_t phys, uint64_t size, uint32_t 
     node->phys_addr = phys;
     node->size = size;
     node->flags = flags;
-    node->used = 1;
+    node->used = AOS_TRUE;
     node->next = (avmf_header_t*)NULL;
     node->attributes = 0;
     node->version = AVMF_VERSION;

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <inttypes.h>
+#include <aos_inttypes.h>
 #include <asm.h>
 #include <inc/core/pcie.h>
 #include <inc/drivers/gpu/gpu.h>

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <inttypes.h>
+#include <aos_inttypes.h>
 #include <inc/core/pcie.h>
 
 #ifdef PBFS_WDRIVERS
@@ -17,16 +17,16 @@ typedef struct drive_device {
     pcie_device_t* pcie_device;
 
     // Function pointers
-    int (*init)(struct AOS_Module* m);
-    int (*read_blk)(int port_id, uint64_t lba, uint32_t count, void* buffer);
-    int (*write_blk)(int port_id, uint64_t lba, uint32_t count, void* buffer);
-    int (*flush)(int port_id);
-    int (*get_block_device)(int port_id, struct block_device* out);
+    aos_bool (*init)(struct AOS_Module* m);
+    aos_bool (*read_blk)(int port_id, uint64_t lba, uint32_t count, void* buffer);
+    aos_bool (*write_blk)(int port_id, uint64_t lba, uint32_t count, void* buffer);
+    aos_bool (*flush)(int port_id);
+    aos_bool (*get_block_device)(int port_id, struct block_device* out);
 
     struct block_device block_dev;
     int cur_port;
 
-    uint8_t active;
+    aos_bool active;
 } drive_device_t;
 
-int get_available_drives(struct drive_device* out) __attribute__((used));
+aos_bool get_available_drives(struct drive_device* out) __attribute__((used));

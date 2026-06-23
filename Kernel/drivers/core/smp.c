@@ -1,4 +1,4 @@
-#include <inttypes.h>
+#include <aos_inttypes.h>
 #include <system.h>
 
 #include <inc/drivers/io/io.h>
@@ -73,7 +73,7 @@ extern void* smp_trampoline_start;
 extern void* smp_trampoline_end;
 
 static spinlock_t boot_lock = 0;
-static uint8_t ap_boot_flag = 0;
+static aos_bool ap_boot_flag = AOS_FALSE;
 static uint32_t bsp_core_idx = 0;
 
 static struct core_state* cores[256] = {0};
@@ -199,7 +199,7 @@ static void ap_kernel_entry(void) {
 
     lapic_timer_start(10);
 
-    ap_boot_flag = 1;
+    ap_boot_flag = AOS_TRUE;
     while (1) {
         asm volatile("" : : : "memory");
         asm volatile("cli");
@@ -365,7 +365,7 @@ void smp_init(void) {
         if (id == bsp_apic_id) {bsp_core_idx = i; continue;}
 
         spin_lock(&boot_lock);
-        ap_boot_flag = 0;
+        ap_boot_flag = AOS_FALSE;
 
         void* ap_stack = (void*)avmf_alloc(16384, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL);
         if (!ap_stack) {
@@ -411,17 +411,17 @@ void smp_init(void) {
 
         serial_printf("[SMP] Sending SIPI to APIC ID %lld\n", id);
         send_ipi(id, 0x08);
-		if (ap_boot_flag == 0) {
+		if (!ap_boot_flag) {
 			kdelay(200);
-			if (ap_boot_flag == 0) {
+			if (!ap_boot_flag) {
 				send_wakeup_ipi(id, 0x08);
 
 				uint64_t timeout = kget_ms_passed();
-				while(ap_boot_flag == 0 && kget_ms_passed() - timeout < 1000) { asm volatile("pause");}
+				while(!ap_boot_flag && kget_ms_passed() - timeout < 1000) { asm volatile("pause");}
 			}
         }
 
-        if (ap_boot_flag == 0) {
+        if (!ap_boot_flag) {
             serial_printf("[SMP] Error: Core %lld failed to check in!\n", id);
         } else {
             serial_printf("[SMP] Core %lld checked in successfully.\n", id);

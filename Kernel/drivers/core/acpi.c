@@ -193,7 +193,7 @@ static void acpi_parse_madt(struct acpi_madt* madt) {
     serial_printf("[ACPI : SMP] Total APIC IDs: %d\n", apic_id_count);
 
     aos_sysinfo_t* sysinfo = kget_sysinfo();
-    if (sysinfo) sysinfo->apic_present = 1;
+    if (sysinfo) sysinfo->apic_present = AOS_TRUE;
 }
 
 static void acpi_timer_init(struct acpi_fadt* fadt) {

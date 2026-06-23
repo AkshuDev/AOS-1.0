@@ -1,6 +1,6 @@
 #pragma once
 
-#include <inttypes.h>
+#include <aos_inttypes.h>
 
 #include <inc/core/pcie.h>
 #include <inc/core/module.h>
@@ -238,14 +238,14 @@ struct sata_port_state {
     uint64_t fis_virt;
     struct sata_hba_cmd_hdr* cmd_hdrs;
 
-    uint8_t active;
+    aos_bool active;
     struct sata_hba_port* port;
 };
 
-int sata_init(struct AOS_Module* m) __attribute__((used));
+aos_bool sata_init(struct AOS_Module* m) __attribute__((used));
 void sata_get_pcie(pcie_device_t* out) __attribute__((used));
-int sata_read_blk(int port_id, uint64_t lba, uint32_t count, void* buffer) __attribute__((used));
-int sata_write_blk(int port_id, uint64_t lba, uint32_t count, void* buffer) __attribute__((used));
-int sata_flush(int port_id) __attribute__((used));
-int sata_get_block_device(int port_id, struct block_device* out) __attribute__((used));
+aos_bool sata_read_blk(int port_id, uint64_t lba, uint32_t count, void* buffer) __attribute__((used));
+aos_bool sata_write_blk(int port_id, uint64_t lba, uint32_t count, void* buffer) __attribute__((used));
+aos_bool sata_flush(int port_id) __attribute__((used));
+aos_bool sata_get_block_device(int port_id, struct block_device* out) __attribute__((used));
 void sata_get_available_ports(uint8_t* out, int out_size) __attribute__((used));

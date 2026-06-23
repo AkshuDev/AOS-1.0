@@ -1,6 +1,6 @@
 #pragma once
 
-#include <inttypes.h>
+#include <aos_inttypes.h>
 
 #include <inc/core/kfuncs.h>
 
@@ -23,9 +23,9 @@ struct aos_dmm_handler {
 struct aos_file {
 	struct aos_dmm_handler* handle; // All info
 
-	uint8_t (*read)(struct aos_file* self, uint64_t size, void* buf);
-	uint8_t (*write)(struct aos_file* self, uint64_t size, void* buf);
-	uint8_t (*flush)(struct aos_file* self);
+	aos_bool (*read)(struct aos_file* self, uint64_t size, void* buf);
+	aos_bool (*write)(struct aos_file* self, uint64_t size, void* buf);
+	aos_bool (*flush)(struct aos_file* self);
 };
 
 void aos_fs_init(struct pbfs_mount* mnt) __attribute__((used));

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <inttypes.h>
+#include <aos_inttypes.h>
 #include <inc/drivers/gpu/apis/pyrion_color.h>
 #include <inc/drivers/core/framebuffer.h>
 
@@ -42,7 +42,7 @@ struct pyrion_ctx {
     struct pyrion_display_info display_info;
     enum pyrion_color_format cformat;
 
-    uint8_t font_ready;
+    aos_bool font_ready;
     struct pyrion_font font;
     
     void* driver_data;
@@ -52,7 +52,7 @@ struct pyrion_ctx {
     uint64_t driver_var;
 
     struct pyrion_rect viewport;
-    uint8_t valid;
+    aos_bool valid;
 };
 
 struct pyrion_api {

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <inttypes.h>
+#include <aos_inttypes.h>
 
 struct acpi_rsdp_descriptor {
     char signature[8]; // 'RSD PTR'
