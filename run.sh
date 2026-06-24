@@ -293,39 +293,30 @@ get_device() {
             STORAGE_OPTS+=" -device nvme,serial=deadbeef$id,drive=drive$id"
             ;;
 
-        usb|xhci)
+        usb)
             ensure_controller xhci
             STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
             STORAGE_OPTS+=" -device usb-storage,bus=xhci.0,drive=drive$id"
             ;;
 
+		xhci)
+            ensure_controller xhci
+            ;;
+
         ehci)
             ensure_controller ehci
-            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
-            STORAGE_OPTS+=" -device usb-storage,bus=ehci.0,drive=drive$id"
             ;;
 
         uhci)
             ensure_controller uhci
-            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
-            STORAGE_OPTS+=" -device usb-storage,bus=uhci.0,drive=drive$id"
             ;;
 
         scsi)
             ensure_controller scsi
-            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
-            STORAGE_OPTS+=" -device scsi-hd,bus=scsi.0,drive=drive$id"
             ;;
 
         sas)
             ensure_controller sas
-            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
-            STORAGE_OPTS+=" -device scsi-hd,bus=sas.0,drive=drive$id"
-            ;;
-
-        virtio)
-            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
-            STORAGE_OPTS+=" -device virtio-blk-pci,drive=drive$id"
             ;;
 
         ide)
@@ -344,16 +335,57 @@ get_device() {
             STORAGE_OPTS+=" -drive file=$img,format=raw,if=sd"
             ;;
 
-        mtd)
-            STORAGE_OPTS+=" -drive file=$img,format=raw,if=mtd"
-            ;;
-
         pflash)
             STORAGE_OPTS+=" -drive file=$img,format=raw,if=pflash"
             ;;
 
-        iscsi)
-            STORAGE_OPTS+=" -drive file=iscsi:$img"
+        *)
+            echo "[Warning] Unsupported device type '$devtype'" >&2
+            ;;
+    esac
+}
+
+get_device_storage() {
+    local devtype="$1"
+    local id="$2"
+    local img="$3"
+
+    case "$devtype" in
+        sata)
+            ensure_controller ahci
+            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
+            STORAGE_OPTS+=" -device ide-hd,bus=ahci.0,drive=drive$id"
+            ;;
+
+        nvme)
+            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
+            STORAGE_OPTS+=" -device nvme,serial=deadbeef$id,drive=drive$id"
+            ;;
+
+        usb)
+            ensure_controller xhci
+            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
+            STORAGE_OPTS+=" -device usb-storage,bus=xhci.0,drive=drive$id"
+            ;;
+
+        ide)
+            STORAGE_OPTS+=" -drive file=$img,format=raw,index=$id,media=disk"
+            ;;
+
+        floppy)
+            STORAGE_OPTS+=" -drive file=$img,format=raw,if=floppy,index=$id"
+            ;;
+
+        cdrom)
+            STORAGE_OPTS+=" -drive file=$img,media=cdrom,index=$id"
+            ;;
+
+        sd)
+            STORAGE_OPTS+=" -drive file=$img,format=raw,if=sd"
+            ;;
+
+        pflash)
+            STORAGE_OPTS+=" -drive file=$img,format=raw,if=pflash"
             ;;
 
         *)
@@ -385,11 +417,22 @@ for dev in "${extra_devices[@]}"; do
     ((devnum++))
 done
 
-devnum=1
-for dev in "${extra_devices[@]}"; do
-    STORAGE_OPTS+=" $(get_device "$dev" "$devnum" "Bin/disk${devnum}.pbfs")"
-    ((devnum++))
-done
+echo "$QEMU \
+    -m $ram \
+    -M q35 \
+    $CPU_OPTS \
+    $SMP_OPTS \
+    $CONTROLLER_OPTS \
+    $STORAGE_OPTS \
+    $GPU_OPTS \
+    $KBD_OPTS \
+    $MOUSE_OPTS \
+    $NET_OPTS \
+    $DISPLAY_OPTS \
+    $SERIAL_OPTS \
+    $LOG_OPTS \
+    $EXTRA_OPTS \
+    $UEFI_OPTS"
 
 case "$mode" in
     2) # KVM

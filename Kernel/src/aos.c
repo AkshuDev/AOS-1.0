@@ -109,60 +109,76 @@ void kernel_main(void) {
     cr |= (1 << 10); // Set OSXMMEXCPT (Unmasked Exception support)
     asm volatile("mov %0, %%cr4" :: "r"(cr));
 
+	// Now safe to use local variables
+    struct VMemDesign vmem_design = {
+        .x = 0,
+        .y = 0,
+        .fg = VMEM_COLOR_WHITE,
+        .bg = VMEM_COLOR_BLACK,
+        .serial_out = 1
+    };
+	vmem_init(kget_sysinfo());
+    vmem_clear_screen(&vmem_design);
+
+	vmem_print(&vmem_design, "Initializing ACPI...\n");
     acpi_init();
+
+	vmem_print(&vmem_design, "Initializing Timers...\n");
+    ktimer_calibrate();
+
+	vmem_print(&vmem_design, "Initializing Modules...\n");
     if (modules_init() == 0) {
-        serial_print("[AOS] Driver/Module Initialization failed! Shutting down!\n");
+        vmem_print(&vmem_design, "[AOS] Driver/Module Initialization failed! Shutting down!\n");
         for (;;) asm("hlt");
     }
+	vmem_print(&vmem_design, "Initializing PCIe...\n");
     if (pcie_init() == 0) {
-        serial_print("[AOS] PCIe Initialization failed! Shutting Down!\n");
+        vmem_print(&vmem_design, "[AOS] PCIe Initialization failed! Shutting Down!\n");
         for (;;) asm("hlt");
     }
 
-    ktimer_calibrate();
+	vmem_print(&vmem_design, "Initializing SMP...\n");
     smp_init();
 
     // Search for drives
+	vmem_print(&vmem_design, "Searching for Drives...\n");
     current_drive_works = AOS_FALSE;
-    if (!get_available_drives(&current_drive)) {
-        serial_print("[AOS] Failed to find any I/O Drives!\n");
-    } else {
-		aos_sysinfo_t* sinfo = kget_sysinfo();
-		if (!sinfo) {
-			current_drive_works = AOS_FALSE;
+	aos_sysinfo_t* sinfo = kget_sysinfo();
+	if (!sinfo) {
+		vmem_print(&vmem_design, "No System Info Found, Not Mounting any drive!\n");
+	} else {
+		if (!get_available_drives_pcie(&current_drive, sinfo->boot_drive)) {
+			vmem_print(&vmem_design, "Failed to find any I/O Drives!\n");
 		} else {
-			if ((uint16_t)current_drive.pcie_device->bus == sinfo->boot_drive.bus && (uint16_t)current_drive.pcie_device->slot == sinfo->boot_drive.slot && (uint16_t)current_drive.pcie_device->func == sinfo->boot_drive.func) {
-				// Print info
-				serial_printf("[AOS] Found I/O Drive ->\n\tName: %s\n\tBlock Size: %u\n\tTotal Blocks: %u\n", current_drive.name, current_drive.block_dev.block_size, current_drive.block_dev.block_count);
-				// do test read for now
-				char tmp[512];
-				aos_bool read = AOS_FALSE;
-				if (current_drive.read_blk != NULL) {
-					if (current_drive.read_blk(current_drive.cur_port, 0, 1, tmp) == 1)
-						read = 1;
-				}
-				if (read == 0) {
-					serial_print("[AOS] Test read from drive failed! Scrapping drive!\n");
-				} else {
-					serial_print("[AOS] Drive passed the tests, using drive!\n");
-					current_drive_works = AOS_TRUE;
-					current_drive.block_dev.read_block = bd_read_blk;
-					current_drive.block_dev.read = bd_read;
-					current_drive.block_dev.write_block = bd_write_blk;
-					current_drive.block_dev.write = bd_write;
-					current_drive.block_dev.flush = bd_flush;
-				}
+			// Print info
+			vmem_printf(&vmem_design, "Found I/O Drive ->\n\tName: %s\n\tBlock Size: %u\n\tTotal Blocks: %u\n", current_drive.name, current_drive.block_dev.block_size, current_drive.block_dev.block_count);
+			// do test read for now
+			char tmp[512];
+			aos_bool read = AOS_FALSE;
+			if (current_drive.read_blk != NULL) {
+				if (current_drive.read_blk(current_drive.cur_port, 0, 1, tmp) == 1)
+					read = 1;
+			}
+			if (read == 0) {
+				vmem_print(&vmem_design, "Test read from drive failed! Scrapping drive!\n");
 			} else {
-				current_drive_works = AOS_FALSE;
+				vmem_print(&vmem_design, "Drive passed the tests, using drive!\n");
+				current_drive_works = AOS_TRUE;
+				current_drive.block_dev.read_block = bd_read_blk;
+				current_drive.block_dev.read = bd_read;
+				current_drive.block_dev.write_block = bd_write_blk;
+				current_drive.block_dev.write = bd_write;
+				current_drive.block_dev.flush = bd_flush;
 			}
 		}
 	}
 
+	vmem_print(&vmem_design, "Initializing PBFS...\n");
     pbfs_init(&pbfs_init_funcs);
     if (current_drive_works) {
         int out = pbfs_mount(&current_drive.block_dev, &g_pbfs_mnt);
         if (out != PBFS_RES_SUCCESS) {
-            serial_printf("Error: Failed to mount\n\tPBFS Error: %s\n", pbfs_get_err_str(out));
+            vmem_printf(&vmem_design, "Error: Failed to mount\n\tPBFS Error: %s\n", pbfs_get_err_str(out));
             g_pbfs_cwd[0] = '\0';
             current_drive_mounted = AOS_FALSE;
         } else {
@@ -172,21 +188,9 @@ void kernel_main(void) {
 			serial_init_klog("/aos/klog.log", &g_pbfs_mnt);
         }
     } else {
-        serial_print("Error: Current drive doesn't work!\n");
+        vmem_print(&vmem_design, "Error: Current drive doesn't work!\n");
     }
 
-    // Now safe to use local variables
-    struct VMemDesign vmem_design = {
-        .x = 0,
-        .y = 0,
-        .fg = VMEM_COLOR_WHITE,
-        .bg = VMEM_COLOR_BLACK,
-        .serial_out = 1
-    };
-
-	vmem_init(kget_sysinfo());
-
-    vmem_set_cursor(0, 0);
     vmem_clear_screen(&vmem_design);
     vmem_print(&vmem_design, "Welcome To AOS!\n\n");
     aos_shell_pm();
@@ -237,7 +241,14 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
         acpi_reboot();
     } else if (strncmp(cmd, "color ", 6) == 0) {
 		char* s = cmd + 6;
+		int base = 10;
 
+		if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) base = 16;
+		else if (s[0] == '0' && (s[1] == 'b' || s[1] == 'B')) base = 2;
+		else if (s[0] == '0' && (s[1] == 'o' || s[1] == 'O')) base = 8;
+		uint16_t attr = (uint16_t)kstr_to_u64(s, base);
+		vmem_design->bg = attr >> 4;
+		vmem_design->fg = attr & 0xF;
 	} else if (strcmp(cmd, "clear") == 0) {
         vmem_clear_screen(vmem_design);
         *lines = 0;

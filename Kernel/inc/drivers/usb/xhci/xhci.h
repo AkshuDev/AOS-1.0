@@ -62,4 +62,4 @@ struct xhci_erst_entry {
     uint32_t reserved;
 } __attribute__((packed));
 
-uint8_t xhci_init(struct AOS_Module* module) __attribute__((used));
+aos_bool xhci_init(struct AOS_Module* module) __attribute__((used));

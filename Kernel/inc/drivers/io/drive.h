@@ -1,6 +1,8 @@
 #pragma once
 
 #include <aos_inttypes.h>
+#include <system.h>
+
 #include <inc/core/pcie.h>
 
 #ifdef PBFS_WDRIVERS
@@ -30,3 +32,4 @@ typedef struct drive_device {
 } drive_device_t;
 
 aos_bool get_available_drives(struct drive_device* out) __attribute__((used));
+aos_bool get_available_drives_pcie(struct drive_device* out, struct aos_sysinfo_pcie pcie) __attribute__((used));

@@ -325,10 +325,8 @@ static aos_bool sata_issue_cmd(struct sata_port_state* state, int write, uint64_
 }
 
 aos_bool sata_init(struct AOS_Module* m) {
-	return AOS_FALSE;
     if (m->hdr.type != MODULE_TYPE_DRIVER) return AOS_FALSE;
     if (m->Modules.driver_module.type != MODULE_DRIVER_TYPE_SATA) return AOS_FALSE;
-    if (m->hdr.registered != 1) return AOS_FALSE;
 
     sata_device = m->Modules.driver_module.pcie_device;
 
@@ -390,6 +388,7 @@ aos_bool sata_init(struct AOS_Module* m) {
                 kdelay(10); 
                 if (port->sig != 0xFFFFFFFF) break;
                 kdelay(1);
+				asm volatile("pause");
             }
 
             serial_printf("[AHCI] Port with signature [%x] found\n", port->sig);
@@ -520,7 +519,8 @@ static aos_bool sata_get_info(int port_id, struct sata_identify* id) {
 
 aos_bool sata_get_block_device(int port_id, struct block_device* out) {
     serial_print("[AHCI] Getting drive info...\n");
-    struct sata_identify* idenvirt = (struct sata_identify*)avmf_alloc(sizeof(struct sata_identify), MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL);
+	char buf[sizeof(struct sata_identify)];
+    struct sata_identify* idenvirt = (struct sata_identify*)buf;
     if (sata_get_info(port_id, idenvirt) != 1) {
         serial_print("[AHCI] Failed to get drive info!\n");
         return AOS_FALSE;

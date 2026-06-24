@@ -517,6 +517,7 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 	int out = pbfs_mount(&cur_drive.block_dev, &mnt);
 	if (out != PBFS_RES_SUCCESS) {
 		vmem_printf(&cursor, "Failed to mount, Error:\n\t%s\n", pbfs_get_err_str(out));
+		vmem_printf(&cursor, "Used Drive %s\n\tBlock Count: %llu\n\tBlock Size: %llu\n", cur_drive.block_dev.name, cur_drive.block_dev.block_count, cur_drive.block_dev.block_size);
 		return EFI_LOAD_ERROR;
 	}
 

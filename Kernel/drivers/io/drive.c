@@ -139,10 +139,12 @@ aos_bool get_available_drives(struct drive_device* out) {
 
     switch (reg_driver->Modules.driver_module.type) {
         case MODULE_DRIVER_TYPE_SATA: {
-            if (sata_init(reg_driver) != 1) {
-                serial_print("[Drive Controller] SATA Initialization failed!\n");
-                return AOS_FALSE;
-            }
+			if (!reg_driver->initialize_on_register) {
+				if (sata_init(reg_driver) != 1) {
+					serial_print("[Drive Controller] SATA Initialization failed!\n");
+					return AOS_FALSE;
+				}
+			}
             set_sata(&reg_driver->Modules.driver_module.DriverConnections.drive_connector);
             break;
         }
@@ -156,4 +158,45 @@ aos_bool get_available_drives(struct drive_device* out) {
 
     serial_printf("[Drive Controller] Using '%s' driver\n", reg_driver->hdr.name);
     return AOS_TRUE;
+}
+
+aos_bool get_available_drives_pcie(struct drive_device* out, struct aos_sysinfo_pcie pcie) {
+    serial_printf("[Drive Controller] Trying to find registered drives that match %02x:%02x.%x ...\n", pcie.bus, pcie.slot, pcie.func);
+    
+	uint64_t regcount = (uint64_t)module_get_registered_module_count();
+	for (uint64_t i = 0; i < regcount; i++) {
+		struct AOS_Module* reg_driver = module_get_applicable_registered_driver(i, PCI_CLASS_MASS_STORAGE, 0, 0, 0, 0, 0, 0, 0, 0);
+		if (!reg_driver || reg_driver->hdr.type != MODULE_TYPE_DRIVER) {
+			continue;
+		}
+
+		if (
+			reg_driver->Modules.driver_module.pcie_device.bus != pcie.bus ||
+			reg_driver->Modules.driver_module.pcie_device.slot != pcie.slot ||
+			reg_driver->Modules.driver_module.pcie_device.func != pcie.func
+		) continue;
+
+		switch (reg_driver->Modules.driver_module.type) {
+			case MODULE_DRIVER_TYPE_SATA: {
+				if (!reg_driver->initialize_on_register) {
+					if (sata_init(reg_driver) != 1) {
+						serial_print("[Drive Controller] SATA Initialization failed!\n");
+						continue;
+					}
+				}
+				set_sata(&reg_driver->Modules.driver_module.DriverConnections.drive_connector);
+				break;
+			}
+			default: {
+				continue;
+			}
+		}
+
+		memcpy(out, &reg_driver->Modules.driver_module.DriverConnections.drive_connector, sizeof(drive_device_t));
+
+		serial_printf("[Drive Controller] Using '%s' driver\n", reg_driver->hdr.name);
+		return AOS_TRUE;
+	}
+	serial_print("[Drive Controller] No supported drives found!\n");
+	return AOS_FALSE;
 }

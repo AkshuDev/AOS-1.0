@@ -115,6 +115,12 @@ static aos_bool map_xhci_mmio(void) {
     if (is_64bit) mask |= ((uint64_t)mask1 << 32);
 
     mapping_size = ~(mask) + 1;
+	if (mapping_size < sizeof(struct xhci_cap_regs)) return AOS_FALSE;
+
+	if (((struct xhci_cap_regs*)(AOS_DIRECT_MAP_BASE + bar_phys))->hc_version <= 0) {
+		serial_print("[xHCI] HCVersion Invalid!\n");
+		return AOS_FALSE;
+	}
 
     pager_map_range(AOS_xHCI_VIRT_BASE, bar_phys, mapping_size, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
 	pcie_enable_busmaster(bus, slot, func);
@@ -175,7 +181,7 @@ static void xhci_send_cmd(uint32_t type, uint64_t param) {
 }
 
 aos_bool xhci_init(struct AOS_Module* module) {
-    if (!module) return AOS_FALSE;
+	if (!module) return AOS_FALSE;
     if (module->hdr.type != MODULE_TYPE_DRIVER) return AOS_FALSE;
     if (module->Modules.driver_module.type != MODULE_DRIVER_TYPE_xHCI) return AOS_FALSE;
     
@@ -183,6 +189,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
     if (!map_xhci_mmio()) return AOS_FALSE;
 
 	// Reset
+	serial_print("[xHCI] Resetting Controller...\n");
 	op_regs->usbcmd &= ~1;
 	uint64_t timeout = kget_ms_passed();
 	while (!(op_regs->usbsts & (1 << 0))) {
@@ -191,7 +198,10 @@ aos_bool xhci_init(struct AOS_Module* module) {
 			for (uint64_t i = 0; i < mapping_size / PAGE_SIZE; i++) pager_unmap(AOS_xHCI_VIRT_BASE + (i * PAGE_SIZE));
 			return AOS_FALSE;
 		}
+		asm volatile("pause");
 	}
+
+	serial_print("[xHCI] Setting HCRST...\n");
 	op_regs->usbcmd |= (1 << 1); // Set HCRST
 	timeout = kget_ms_passed();
 	while (op_regs->usbcmd & (1 << 1)) {
@@ -200,6 +210,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 			for (uint64_t i = 0; i < mapping_size / PAGE_SIZE; i++) pager_unmap(AOS_xHCI_VIRT_BASE + (i * PAGE_SIZE));
 			return AOS_FALSE;
 		}
+		asm volatile("pause");
 	}
 	timeout = kget_ms_passed();
 	while (op_regs->usbsts & (1 << 11)) {
@@ -208,8 +219,10 @@ aos_bool xhci_init(struct AOS_Module* module) {
 			for (uint64_t i = 0; i < mapping_size / PAGE_SIZE; i++) pager_unmap(AOS_xHCI_VIRT_BASE + (i * PAGE_SIZE));
 			return AOS_FALSE;
 		}
+		asm volatile("pause");
 	}
 
+	serial_print("[xHCI] Allocating DCBAA...\n");
 	dcbaa = avmf_alloc(ALIGN_UP((max_slots + 1) * sizeof(uint64_t), 64), MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &op_regs->dcbaap);
 	if (!dcbaa) {
 		serial_print("[xHCI] Failed to allocate DCBAA\n");
@@ -218,6 +231,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	}
 	memset((void*)dcbaa, 0, (max_slots + 1) * sizeof(uint64_t));
 
+	serial_print("[xHCI] Allocating CMD Ring...\n");
 	cmd_ring = (struct xhci_trb*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &cmd_ring_phys);
 	if (!cmd_ring) {
 		serial_print("[xHCI] Failed to allocate CMD Ring\n");
@@ -229,6 +243,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	cmd_ring[trbs_per_page-1].param = cmd_ring_phys;
 	cmd_ring[trbs_per_page-1].control = 1 | (6 << 10) | (1 << 1); // Link TRB Type | Toggle Cycle
 
+	serial_print("[xHCI] Allocating EVENT Ring...\n");
 	event_ring = (struct xhci_trb*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &event_ring_phys);
 	if (!event_ring) {
 		serial_print("[xHCI] Failed to allocate EVENT Ring\n");
@@ -237,6 +252,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	}
 	memset(event_ring, 0, PAGE_SIZE);
 
+	serial_print("[xHCI] Allocating ERST...\n");
 	erst = (struct xhci_erst_entry*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &erst_phys);
 	if (!erst) {
 		serial_print("[xHCI] Failed to allocate ERST\n");
@@ -269,6 +285,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 			destroy_n_unmap_xhci();
 			return AOS_FALSE;
 		}
+		asm volatile("pause");
 	}
 
 	runtime_regs->intr_reg_set[0].iman |= (1 << 1); // Enable interrupts
@@ -305,6 +322,8 @@ aos_bool xhci_init(struct AOS_Module* module) {
 		return AOS_FALSE;
 	}
 
+	serial_printf("[xHCI] Resetting Port %llu...\n", port);
+
 	uint32_t portsc = op_regs->ports[port].portsc;
 	portsc &= ~(0x7F << 17);
 	portsc |= (1 << 4); // PR
@@ -317,6 +336,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 			destroy_n_unmap_xhci();
 			return AOS_FALSE;
 		}
+		asm volatile("pause");
 	}
 	timeout = kget_ms_passed();
 	while (!(op_regs->ports[port].portsc & (1 << 1))) {
@@ -325,6 +345,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 			destroy_n_unmap_xhci();
 			return AOS_FALSE;
 		}
+		asm volatile("pause");
 	}
 
 	speed = (op_regs->ports[port].portsc >> 10) & 0xF;

@@ -8,6 +8,7 @@
 
 #include <inc/core/module.h>
 
+#include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
 
 static struct acpi_mcfg* mcfg_table = NULL;
@@ -36,13 +37,25 @@ aos_bool pcie_init() {
             for (uint8_t f = 0; f < PCI_MAX_FUNC; f++) {
                 uint32_t data = pcie_read(b, s, f, 0);
                 uint16_t vendor = data & 0xFFFF;
+				if (vendor == 0xFFFF)
+    				continue;
                 uint32_t class_data = pcie_read(b, s, f, 0x08);
                 uint8_t class = (class_data >> 24) & 0xFF;
                 uint8_t class_sub = (class_data >> 16) & 0xFF;
                 uint8_t class_progif = (class_data >> 8) & 0xFF;
                 uint8_t revision = (class_data & 0xFF);
 
-                struct AOS_Module* m = module_get_first_applicable_driver(class, class_sub, 1, class_progif, 1, revision, 1, vendor, 1);
+				serial_printf(
+					"[PCIe] %02x:%02x.%x Vendor=%04x Class=%02x Sub=%02x IF=%02x DATA=%02x\n",
+					b, s, f,
+					vendor,
+					class,
+					class_sub,
+					class_progif,
+					data
+				);
+
+                struct AOS_Module* m = module_get_first_applicable_driver_alloced(class, class_sub, 1, class_progif, 1, revision, 1, vendor, 1);
                 if (!m || m->hdr.type != MODULE_TYPE_DRIVER) continue;
                 if (module_already_initialized(m)) continue;
                 serial_printf("[PCIe] Registering Module %s, Got for Class:%d SClass:%d Progif:%d\n", m->hdr.name, class, class_sub, class_progif);
@@ -55,7 +68,7 @@ aos_bool pcie_init() {
                 m->Modules.driver_module.pcie_device.subclass = class_sub;
                 m->Modules.driver_module.pcie_device.vendor_id = vendor;
                 m->Modules.driver_module.pcie_device.prog_if = class_progif;
-                m->Modules.driver_module.pcie_device.device_id = (class_data >> 16) & 0xFFFF;
+                m->Modules.driver_module.pcie_device.device_id = (data >> 16) & 0xFFFF;
 
                 switch (m->Modules.driver_module.type) {
                     case MODULE_DRIVER_TYPE_SATA: {
@@ -69,6 +82,13 @@ aos_bool pcie_init() {
                     default: break;
                 }
 
+				if (m->initialize_on_register) {
+					if (!m->init_module(m)) {
+						serial_printf("[PCIe] Module %s failed to initialize!\n", m->hdr.name);
+						avmf_free((uint64_t)m);
+						continue;
+					}
+				}
                 module_register(m);
             }
         }
