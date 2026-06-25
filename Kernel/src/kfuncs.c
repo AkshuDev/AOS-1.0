@@ -357,6 +357,9 @@ void* kcalloc(size_t nmemb, size_t size) {
 }
 
 void* krealloc(void* ptr, size_t new_size) {
+	if (!ptr) {
+		return kmalloc(new_size);
+	}
     struct alloc_hdr* hdr = (struct alloc_hdr*)(ptr - sizeof(struct alloc_hdr));
     if (memcmp(hdr, ALLOC_HDR_SIG, ALLOC_HDR_SIG_LEN) != 0) return NULL;
     

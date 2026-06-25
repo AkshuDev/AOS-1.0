@@ -42,7 +42,7 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, aos_bool
 
     design->y++;
     design->x = 0;
-    aos_bool value = AOS_FALSE;
+    aos_bool valid = AOS_FALSE;
     switch (c[0]) {
         case 'a':
             if (!strcmp(c, "about")) {
@@ -61,7 +61,7 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, aos_bool
                 vmem_clear_screen(design);
                 design->x = 0;
                 design->y = 0;
-                value = AOS_TRUE;
+                valid = AOS_TRUE;
             } else if (!strcmp(c, "cpu")) {
                 uint32_t eax, ebx, ecx, edx;
                 asm volatile (
@@ -94,7 +94,7 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, aos_bool
                 brand[48] = '\0';
 
                 vmem_printf(design, "CPU Brand: %s\n", brand);
-                value = AOS_TRUE;
+                valid = AOS_TRUE;
             }
             break;
 
@@ -140,7 +140,7 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, aos_bool
                     vmem_printf(design, "\tFunc: %u\n", cdrive->pcie_device->func);
                 }
 
-                value = AOS_TRUE;
+                valid = AOS_TRUE;
             }
             break;
 
@@ -150,10 +150,10 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, aos_bool
                 vmem_print(design, "\n");
                 vmem_print(design, msg);
                 vmem_print(design, "\n");
-                value = AOS_TRUE;
+                valid = AOS_TRUE;
             } else if (!strcmp(c, "exit")) {
                 *running = AOS_FALSE;
-                value = AOS_TRUE;
+                valid = AOS_TRUE;
             }
             break;
 
@@ -181,7 +181,7 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, aos_bool
                 vmem_print(design, "\twhoami   - Show current user\n");
                 
                 vmem_print(design, "----------------------------\n");
-                value = AOS_TRUE;
+                valid = AOS_TRUE;
             }
             break;
 
@@ -222,7 +222,7 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, aos_bool
 
                 vmem_printf(design, "--------------------------------\n");
 
-                value = AOS_TRUE;
+                valid = AOS_TRUE;
             }
             break;
 
@@ -257,14 +257,14 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, aos_bool
                 }
 
                 if (passed) vmem_print(design, "Memory Test 2: Passed\n");
-                value = AOS_TRUE;
+                valid = AOS_TRUE;
             }
             break;
 
         case 'r':
             if (!strcmp(c, "reboot")) {
                 vmem_print(design, "\nRebooting...\n");
-                value = AOS_TRUE;
+                valid = AOS_TRUE;
                 acpi_reboot();
             }
             break;
@@ -272,7 +272,7 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, aos_bool
         case 's':
             if (!strcmp(c, "shutdown")) {
                 vmem_print(design, "\nShutdown (hlt)\n");
-                value = AOS_TRUE;
+                valid = AOS_TRUE;
                 for (;;) asm("hlt");
             }
             break;
@@ -280,14 +280,14 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, aos_bool
         case 'v':
             if (!strcmp(c, "version")) {
                 vmem_print(design, "\nAOS Panic Shell v1.0\n");
-                value = AOS_TRUE;
+                valid = AOS_TRUE;
             }
             break;
 
         case 'w':
             if (!strcmp(c, "whoami")) {
                 vmem_print(design, "\naos-panic-shell-user\n");
-                value = AOS_TRUE;
+                valid = AOS_TRUE;
             }
             break;
 

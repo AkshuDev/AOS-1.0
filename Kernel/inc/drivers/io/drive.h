@@ -20,13 +20,14 @@ typedef struct drive_device {
 
     // Function pointers
     aos_bool (*init)(struct AOS_Module* m);
-    aos_bool (*read_blk)(int port_id, uint64_t lba, uint32_t count, void* buffer);
-    aos_bool (*write_blk)(int port_id, uint64_t lba, uint32_t count, void* buffer);
-    aos_bool (*flush)(int port_id);
-    aos_bool (*get_block_device)(int port_id, struct block_device* out);
+    aos_bool (*read_blk)(uint64_t cidx, int port_id, uint64_t lba, uint32_t count, void* buffer);
+    aos_bool (*write_blk)(uint64_t cidx, int port_id, uint64_t lba, uint32_t count, void* buffer);
+    aos_bool (*flush)(uint64_t cidx, int port_id);
+    aos_bool (*get_block_device)(uint64_t cidx, int port_id, struct block_device* out);
 
     struct block_device block_dev;
     int cur_port;
+	uint64_t controller_idx;
 
     aos_bool active;
 } drive_device_t;

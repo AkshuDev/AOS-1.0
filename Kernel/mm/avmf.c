@@ -175,6 +175,8 @@ uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, int flags, uint64_t* ph
 }
 
 void avmf_free(uint64_t virt) {
+	if (!virt) return; // AVMF cannot allocate < 1MB
+
     avmf_header_t* hdr = avmf_find(virt);
     if (!hdr) return;
     uint64_t rflags = spin_lock_irqsave(&avmf_lock);

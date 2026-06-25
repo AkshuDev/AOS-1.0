@@ -7,6 +7,7 @@
 #include <inc/mm/pager.h>
 #include <inc/core/acpi.h>
 #include <inc/core/idt.h>
+#include <inc/core/tss_gdt.h>
 #include <inc/core/smp.h>
 
 #define LAPIC_REG_ID 0x0020
@@ -124,7 +125,7 @@ static struct thread_state* create_thread(void (*entry)(void), uint64_t tid) {
     return thread;
 }
 
-static uint8_t ap_init_core_state(struct core_state* state) {
+static void ap_init_core_state(struct core_state* state) {
     uint32_t low = (uint32_t)((uintptr_t)state);
     uint32_t high = (uintptr_t)state >> 32;
     asm volatile("wrmsr" : : "c"(0xC0000101), "a"(low), "d"(high) : "memory");
@@ -132,6 +133,7 @@ static uint8_t ap_init_core_state(struct core_state* state) {
 
 static void ap_kernel_entry(void) {
 	// Enable SSE
+	asm volatile("cld");
     uint64_t cr;
     asm volatile("mov %%cr0, %0" : "=r"(cr));
     cr &= ~(1 << 2); // Clear EM (Emulation) bit
@@ -143,48 +145,20 @@ static void ap_kernel_entry(void) {
     cr |= (1 << 10); // Set OSXMMEXCPT (Unmasked Exception support)
     asm volatile("mov %0, %%cr4" :: "r"(cr));
 
-
     uint32_t lapic_id = get_lapic_id();
     uint64_t kernel_stack = *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x510);
     struct core_state* core = *(struct core_state**)(AOS_DIRECT_MAP_BASE + 0x520);
 
-    core->gdt[0] = 0x0000000000000000;
-    core->gdt[1] = 0x00AF9A000000FFFF;
-    core->gdt[2] = 0x00AF92000000FFFF;
-
-    memset(&core->tss, 0, sizeof(struct tss_entry));
-
-    uint64_t emergency_stack = avmf_alloc(0x1000, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL);
-    uint64_t emergency_memory_stack = avmf_alloc(0x1000, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL);
-    if (emergency_stack) {
-        core->tss.ist1 = emergency_stack + 0x1000;
-    } else {
-        serial_printf("[CORE %d] Failed to allocate Emergency Stack!\n", lapic_id);
-    }
-    if (emergency_memory_stack) {
-        core->tss.ist2 = emergency_memory_stack + 0x1000;
-    } else {
-        serial_printf("[CORE %d] Failed to allocate Emergency Memory Stack!\n", lapic_id);
-    }
-
-    core->tss.rsp0 = (uint64_t)kernel_stack;
-    core->tss.io_map_base = sizeof(struct tss_entry);
-
-    struct gdt_tss_descriptor* private_desc = (struct gdt_tss_descriptor*)&core->gdt[3];
-    private_desc->limit_low = sizeof(struct tss_entry) - 1;
-    private_desc->base_low = ((uintptr_t)&core->tss) & 0xFFFF;
-    private_desc->base_mid = (((uintptr_t)&core->tss) >> 16) & 0xFF;
-    private_desc->access = 0x89; // Present, TSS, Not busy
-    private_desc->limit_high_flags = 0;
-    private_desc->base_high_mid = (((uintptr_t)&core->tss) >> 24) & 0xFF;
-    private_desc->base_high = (((uintptr_t)&core->tss) >> 32) & 0xFFFFFFFF;
-    private_desc->reserved = 0;
-
-    core->gdt_desc.limit = (sizeof(uint64_t) * 5) - 1;
-    core->gdt_desc.base = (uint64_t)&core->gdt;
-
-    asm volatile("lgdt %0" : : "m"(core->gdt_desc));
-    asm volatile("ltr %%ax" : : "a"(0x18));
+	if (!gdt_init_ex(&core->gdt, &core->gdt_desc, &core->tss)) {
+		asm volatile("cli");
+		asm volatile("wbinvd");
+		for (;;) { asm volatile("hlt"); }
+	}
+	if (!tss_init_ex(&core->tss, MALLOC_TYPE_KERNEL, PAGE_RW | PAGE_PRESENT)) {
+		asm volatile("cli");
+		asm volatile("wbinvd");
+		for (;;) { asm volatile("hlt"); }
+	}
 
     lapic_write(0xF0, 0x1FF); 
     lapic_write(0x80, 0);
@@ -204,7 +178,6 @@ static void ap_kernel_entry(void) {
         asm volatile("" : : : "memory");
         asm volatile("cli");
         if (core->shutdown_core == 1) {
-            avmf_free(emergency_stack);
             break;
         } else if (*(struct thread_state* volatile*)&core->ready_list != NULL) {
             asm volatile("sti");

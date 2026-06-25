@@ -42,6 +42,8 @@
 #define CMD_ATA_FLUSH_CACHE_EXT 0xEA
 #define CMD_ATA_IDENTIFY 0xEC
 
+#define SATA_MAX_PRDT_STATIC_ENTRIES 256
+
 struct sata_hba_port {
     uint32_t clb; // Command List Base (low)
     uint32_t clbu; // Command List Base (high)
@@ -119,7 +121,7 @@ struct sata_hba_cmd_table {
     uint8_t acmd[16]; // ATAPI command
     uint8_t rsv[48];
 
-    struct sata_hba_prdt_entry prdt_entry[1];
+    struct sata_hba_prdt_entry prdt_entry[SATA_MAX_PRDT_STATIC_ENTRIES];
 } __attribute__((packed));
 
 struct sata_fis_reg_h2d {
@@ -243,9 +245,9 @@ struct sata_port_state {
 };
 
 aos_bool sata_init(struct AOS_Module* m) __attribute__((used));
-void sata_get_pcie(pcie_device_t* out) __attribute__((used));
-aos_bool sata_read_blk(int port_id, uint64_t lba, uint32_t count, void* buffer) __attribute__((used));
-aos_bool sata_write_blk(int port_id, uint64_t lba, uint32_t count, void* buffer) __attribute__((used));
-aos_bool sata_flush(int port_id) __attribute__((used));
-aos_bool sata_get_block_device(int port_id, struct block_device* out) __attribute__((used));
-void sata_get_available_ports(uint8_t* out, int out_size) __attribute__((used));
+void sata_get_pcie(uint64_t cidx, pcie_device_t* out) __attribute__((used));
+aos_bool sata_read_blk(uint64_t cidx, int port_id, uint64_t lba, uint32_t count, void* buffer) __attribute__((used));
+aos_bool sata_write_blk(uint64_t cidx, int port_id, uint64_t lba, uint32_t count, void* buffer) __attribute__((used));
+aos_bool sata_flush(uint64_t cidx, int port_id) __attribute__((used));
+aos_bool sata_get_block_device(uint64_t cidx, int port_id, struct block_device* out) __attribute__((used));
+void sata_get_available_ports(uint64_t cidx, uint8_t* out, int out_size) __attribute__((used));

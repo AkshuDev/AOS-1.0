@@ -123,29 +123,19 @@ final_chunk:
     
     jmp 0x1000:0x0000 ; Jump to stage 2
 
+disk_info_error:
 disk_error:
     mov si, disk_err_msg
     call print_string
 
-    hlt
-
-disk_info_error:
-    mov si, disk_info_err_msg
-    call print_string
-
-    hlt
-
-video_mode_setup_error:
-    mov si, video_mode_setup_errormsg
-    call print_string
-    
-    hlt
+    jmp hang
 
 video_set_cursor_error:
-    mov si, video_set_cursor_errormsg
+video_mode_setup_error:
+    mov si, video_setup_errormsg
     call print_string
-
-    hlt
+    
+    jmp hang
 
 print_string:
     lodsb
@@ -165,13 +155,15 @@ read_dap_s3:
     jc disk_error
 	ret
 
+hang:
+	hlt
+	jmp hang
+
 disk db 0x80 ; Default 0x80
 
 disk_read_msg db "Reading and Loading Stage2...", 0xa, 0xd, 0
-disk_err_msg db "Error Reading Disk!", 0xa, 0xd, 0
-disk_info_err_msg db "Error Getting Disk Information!", 0xa, 0xd, 0
-video_mode_setup_errormsg db "Failed to Setup VGA 80x25 TEXT Mode!", 0xa, 0xd, 0
-video_set_cursor_errormsg db "Failed to set cursor position to (0, 0)!", 0xa, 0xd, 0
+disk_err_msg db "Disk Error!", 0xa, 0xd, 0
+video_setup_errormsg db "Failed to Setup VGA!", 0xa, 0xd, 0
 
 boot_info equ 0x7FF0
 ebx_info equ 0x8000

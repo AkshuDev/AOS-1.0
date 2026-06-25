@@ -106,6 +106,8 @@ static aos_bool rdtscp_supported = AOS_FALSE;
 
 // Fake funcs
 void smp_shutdown(void) {return;}
+void fb_clear(FB_Info_t* info, uint32_t color) {return;}
+void fb_printc(FB_Info_t* fb, FB_Cursor_t* cur, char c) {return;}
 
 // Real funcs again
 void* btl_malloc(size_t size) {
@@ -156,31 +158,31 @@ void draw_menu_frame(struct VMemDesign* cursor) {
 
 int read_blk(struct block_device* dev, uint64_t lba, void* buf) {
     if (found_drive == 1) {
-        cur_drive.read_blk(cur_drive.cur_port, lba, 1, buf);
+        cur_drive.read_blk(cur_drive.controller_idx, cur_drive.cur_port, lba, 1, buf);
     }
     return 1;
 }
 int write_blk(struct block_device* dev, uint64_t lba, const void* buf) {
     if (found_drive == 1) {
-        cur_drive.write_blk(cur_drive.cur_port, lba, 1, buf);
+        cur_drive.write_blk(cur_drive.controller_idx, cur_drive.cur_port, lba, 1, buf);
     }
     return 1;
 }
 int read_f(struct block_device* dev, uint64_t lba, uint64_t count, void* buf) {
     if (found_drive == 1) {
-        cur_drive.read_blk(cur_drive.cur_port, lba, count, buf);
+        cur_drive.read_blk(cur_drive.controller_idx, cur_drive.cur_port, lba, count, buf);
     }
     return 1;
 }
 int write_f(struct block_device* dev, uint64_t lba, uint64_t count, const void* buf) {
     if (found_drive == 1) {
-        cur_drive.write_blk(cur_drive.cur_port, lba, count, buf);
+        cur_drive.write_blk(cur_drive.controller_idx, cur_drive.cur_port, lba, count, buf);
     }
     return 1;
 }
 int flush_f(struct block_device* dev) {
     if (found_drive == 1) {
-        cur_drive.flush(cur_drive.cur_port);
+        cur_drive.flush(cur_drive.controller_idx, cur_drive.cur_port);
     }
     return 1;
 }
@@ -305,7 +307,7 @@ uint64_t read_tsc(void) {
     return ((uint64_t)high << 32) | low;
 }
 
-int ata_read(int port, uint64_t lba, uint32_t count, void *buffer) {
+aos_bool ata_read(int port, uint64_t lba, uint32_t count, void *buffer) {
 	if (count > 0xFFFF) {
 		return 0;
 	}
@@ -316,7 +318,7 @@ int ata_read(int port, uint64_t lba, uint32_t count, void *buffer) {
 	return ata_read_sectors(&dp, buffer, (uint8_t)port);
 }
 
-int ata_write(int port, uint64_t lba, uint32_t count, void *buffer) {
+aos_bool ata_write(int port, uint64_t lba, uint32_t count, void *buffer) {
 	if (count > 0xFFFF) {
 		return 0;
 	}
@@ -327,7 +329,7 @@ int ata_write(int port, uint64_t lba, uint32_t count, void *buffer) {
 	return ata_write_sectors(&dp, buffer, (uint8_t)port);
 }
 
-int ata_flush(int port_id) {
+aos_bool ata_flush(int port_id) {
 	return 1; // ata write already ensures flush
 }
 
@@ -381,7 +383,15 @@ void stage3(void) {
     uint64_t tsc_end = read_tsc();
     uint64_t cycles_per_ms = tsc_end - tsc_start2;
 
-	vmem_init(NULL);
+	aos_sysinfo_t fake_info = {
+		.fb_mode = AOS_SYSINFO_FB_MODE_VGA,
+		.fb_info = (FB_Info_t){
+			.addr = IO_VMEM,
+			.height = IO_VMEM_MAX_ROWS,
+			.width = IO_VMEM_MAX_COLS
+		}
+	};
+	vmem_init(&fake_info);
     vmem_disable_cursor();
 
     vmem_clear_screen(&cursor);
@@ -404,7 +414,7 @@ void stage3(void) {
 
 	vmem_clear_screen(&cursor);
 
-	uint64_t bdrive = *(AOS_DIRECT_MAP_BASE + AOS_BOOT_INFO_ADDR); // Get Boot drive
+	uint64_t bdrive = *(uint64_t*)(AOS_DIRECT_MAP_BASE + AOS_BOOT_INFO_ADDR); // Get Boot drive
 	struct aos_sysinfo_pcie boot_drive = {
 		.bus = bdrive & 0xFFFF,
 		.slot = (bdrive >> 16) & 0xFFFF,

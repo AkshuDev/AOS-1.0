@@ -20,13 +20,31 @@
 #include <PBFS/headers/pbfs-fs.h>
 #undef PBFS_NDRIVERS
 
-static pcie_device_t sata_device = {0};
-static aos_bool found_sata = AOS_FALSE;
+#define KSATA_MAX_PORTS 32
+#define KSATA_MAGIC 0x0019A20A
+#define KSATA_ALLOC_STEP 16
+#define KSATA_MAX_CONTROLLERS 256
 
-static volatile struct sata_hba_mem* hba_mem = NULL;
+#define AHCI_MAX_PRD_LENGTH (4 * 1024 * 1024)
 
-static struct sata_port_state port_states[32] = {0};
-static uint8_t ports_available[32] = {0};
+typedef struct {
+	uint64_t idx;
+
+	pcie_device_t sata_device;
+	aos_bool found_sata;
+
+	volatile struct sata_hba_mem* hba_mem;
+
+	struct sata_port_state port_states[KSATA_MAX_PORTS];
+	uint8_t ports_available[32];
+
+	spinlock_t drive_lock;
+} sata_controller;
+
+uint32_t bss_zeroed_magic; // Should be KSATA_MAGIC to ensure bss is zeroed or initialized
+sata_controller* controllers;
+uint64_t controller_count;
+uint64_t controller_cap;
 
 static aos_bool sata_busy_wait(struct sata_hba_port* port) {
     uint64_t timeout = kget_ms_passed();
@@ -81,7 +99,9 @@ static int sata_find_cmdslot(struct sata_hba_port* port) {
     return -1;
 }
 
-static aos_bool sata_port_init(struct sata_hba_port* port, struct sata_port_state* state) {
+static aos_bool sata_port_init(sata_controller* ksc, struct sata_hba_port* port, struct sata_port_state* state) {
+	if (!ksc) return AOS_FALSE;
+
     uint32_t ssts = port->ssts;
     uint8_t det = ssts & 0x0F;
     uint8_t ipm = (ssts >> 8) & 0x0F;
@@ -111,7 +131,7 @@ static aos_bool sata_port_init(struct sata_hba_port* port, struct sata_port_stat
 
     state->cmd_hdrs = (struct sata_hba_cmd_hdr*)state->clb_virt;
 
-    int slots = ((hba_mem->cap >> 8) & 0x1F) + 1;
+    int slots = ((ksc->hba_mem->cap >> 8) & 0x1F) + 1;
     serial_printf("[AHCI] Command slots: %d\n", slots);
     for (int i = 0; i < slots; i++) {
         uint64_t ct_phys = 0;
@@ -147,20 +167,31 @@ static aos_bool sata_port_init(struct sata_hba_port* port, struct sata_port_stat
     return AOS_TRUE;
 }
 
-static void sata_map_bar(void) {
-    uint64_t bar5 = pcie_read_bar(sata_device.bus, sata_device.slot, sata_device.func, 5);
+static void sata_map_bar(sata_controller* ksc) {
+	if (!ksc) return;
+    uint64_t bar5 = pcie_read_bar(ksc->sata_device.bus, ksc->sata_device.slot, ksc->sata_device.func, 5);
     if (bar5 & 1) {
         serial_print("[AHCI] BAR5 is not MMIO!\n");
         return;
     }
     uint64_t phys = bar5 & ~0xF;
-    pager_map_range(AOS_AHCI_VIRT_BASE, phys, 0x2000, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
 
-    hba_mem = (struct sata_hba_mem*)AOS_AHCI_VIRT_BASE;
+    ksc->hba_mem = (struct sata_hba_mem*)(AOS_DIRECT_MAP_BASE + phys);
 }
 
-static aos_bool sata_send_cmd(struct sata_port_state* state, uint8_t write, uint64_t lba, uint32_t count, void* buffer, uint8_t command, uint8_t fis_type) {
-    serial_print("[AHCI] Sending command...\n");
+static aos_bool sata_exec_cmd_internal(struct sata_port_state* state, uint8_t command, uint8_t fis_type, aos_bool write, uint64_t lba, uint32_t count, void* buffer, aos_bool has_data, aos_bool has_lba, aos_bool has_count) {
+	if (!state)
+		return AOS_FALSE;
+
+	if (!state->active)
+		return AOS_FALSE;
+
+	uint64_t bytes = ((uint64_t)count) * 512;
+	uint64_t prdt_count = (bytes + (AHCI_MAX_PRD_LENGTH - 1)) / AHCI_MAX_PRD_LENGTH;
+
+	if (prdt_count > 0xFFFF || prdt_count > SATA_MAX_PRDT_STATIC_ENTRIES) return AOS_FALSE;
+
+	serial_print("[AHCI] Executing command...\n");
     struct sata_hba_port* port = state->port;
     if (!sata_busy_wait(port))
         return AOS_FALSE;
@@ -172,6 +203,7 @@ static aos_bool sata_send_cmd(struct sata_port_state* state, uint8_t write, uint
     }
 
     struct sata_hba_cmd_hdr* cmd = &state->cmd_hdrs[slot];
+
     uint32_t ctba = cmd->ctba;
     uint32_t ctbau = cmd->ctbau;
     memset(cmd, 0, sizeof(struct sata_hba_cmd_hdr));
@@ -180,22 +212,42 @@ static aos_bool sata_send_cmd(struct sata_port_state* state, uint8_t write, uint
 
     cmd->cfl = sizeof(struct sata_fis_reg_h2d) / sizeof(uint32_t);
     cmd->w = write ? 1 : 0;
-    cmd->prdtl = 1;
+    cmd->prdtl = has_data ? (uint16_t)prdt_count : 0;
 
 	uint64_t table_phys = ((uint64_t)cmd->ctbau << 32) | cmd->ctba;
     struct sata_hba_cmd_table* table = (struct sata_hba_cmd_table*)(AOS_DIRECT_MAP_BASE + table_phys);
+    
     memset(table, 0, sizeof(struct sata_hba_cmd_table));
 
-    uint64_t phys;
-    void* virt = (void*)avmf_alloc(512, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, &phys);
-    if (!virt || !phys) return AOS_FALSE;
+    uint64_t phys = 0;
+    void* virt = NULL;
+	if (has_data) {
+		virt = (void*)avmf_alloc(bytes, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, &phys);
+    	if (!virt) return AOS_FALSE;
+		if (!phys) {
+			avmf_free((uint64_t)virt);
+			return AOS_FALSE;
+		}
 
-    if (write) memcpy(virt, buffer, 512);
+		if (write) memcpy(virt, buffer, bytes);
 
-    table->prdt_entry[0].dba = (uint32_t)((uint64_t)phys & 0xFFFFFFFF);
-    table->prdt_entry[0].dbau = (uint32_t)((uint64_t)phys >> 32);
-    table->prdt_entry[0].dbc = (count * 512) - 1;
-    table->prdt_entry[0].ioc = 1;
+		uint64_t bytes_remaining = bytes;
+    	uintptr_t current_address = (uintptr_t)phys;
+		uint64_t prdt_idx = 0;
+		while (bytes_remaining > 0) {
+			uint64_t chunk_size = bytes_remaining;
+			if (chunk_size > AHCI_MAX_PRD_LENGTH) chunk_size = AHCI_MAX_PRD_LENGTH;
+
+			table->prdt_entry[prdt_idx].dba = (uint32_t)((uint64_t)current_address & 0xFFFFFFFF);
+			table->prdt_entry[prdt_idx].dbau = (uint32_t)((uint64_t)current_address >> 32);
+			table->prdt_entry[prdt_idx].dbc = (uint32_t)(chunk_size - 1);
+			table->prdt_entry[prdt_idx].ioc = prdt_idx == (prdt_count - 1) ? 1 : 0;
+
+			current_address += chunk_size;
+			bytes_remaining -= chunk_size;
+			prdt_idx++;
+		}
+	}
 
     struct sata_fis_reg_h2d* fis = (struct sata_fis_reg_h2d*)&table->cfis;
 
@@ -203,164 +255,176 @@ static aos_bool sata_send_cmd(struct sata_port_state* state, uint8_t write, uint
     fis->c = 1;
     fis->command = command;
 
-    fis->lba0 = (uint8_t)lba;
-    fis->lba1 = (uint8_t)(lba >> 8);
-    fis->lba2 = (uint8_t)(lba >> 16);
-    fis->lba3 = (uint8_t)(lba >> 24);
-    fis->lba4 = (uint8_t)(lba >> 32);
-    fis->lba5 = (uint8_t)(lba >> 40);
+	if (has_lba) {
+		fis->lba0 = (uint8_t)lba;
+		fis->lba1 = (uint8_t)(lba >> 8);
+		fis->lba2 = (uint8_t)(lba >> 16);
+		fis->lba3 = (uint8_t)(lba >> 24);
+		fis->lba4 = (uint8_t)(lba >> 32);
+		fis->lba5 = (uint8_t)(lba >> 40);
 
-    fis->device = 1 << 6; // LBA mode
+		fis->device = 1 << 6; // LBA mode
+	}
 
-    fis->countl = count & 0xFF;
-    fis->counth = (count >> 8) & 0xFF;
+	if (has_count) {
+		fis->countl = count & 0xFF;
+		fis->counth = (count >> 8) & 0xFF;
+	}
 
-    port->ci = 1 << slot;
-    uint64_t timeout = kget_ms_passed();;
+	asm volatile("mfence" ::: "memory");
+	port->is = 0xFFFFFFFF;
+    port->ci |= (1 << slot);
+    uint64_t timeout = kget_ms_passed();
+	aos_bool timed_out = AOS_FALSE;
     while (1) {
-        if (kget_ms_passed() - timeout > 1000) break;
+        if (kget_ms_passed() - timeout > 1000) {timed_out = AOS_TRUE; break;}
         if (!(port->ci & (1 << slot)))
             break;
 
         if (port->is & (1 << 30)) {
             serial_print("[AHCI] Disk error\n");
-            avmf_free((uint64_t)virt);
+            if (virt) avmf_free((uint64_t)virt);
+			port->is = 0xFFFFFFFF;
             return AOS_FALSE;
         }
     }
 
-    if (!write) memcpy(buffer, virt, 512);
-    avmf_free((uint64_t)virt);
-
-    if (kget_ms_passed() - timeout > 1000) {
+    if (timed_out) {
+		if (virt) avmf_free((uint64_t)virt);
         serial_print("[AHCI] Disk/Device Error (timeout)\n");
         return AOS_FALSE;
     }
+
+	if (has_data && !write) memcpy(buffer, virt, bytes);
+    if (virt) avmf_free((uint64_t)virt);
 
     serial_print("[AHCI] Command sent successfully!\n");
     return AOS_TRUE;
 }
 
-static aos_bool sata_issue_cmd(struct sata_port_state* state, int write, uint64_t lba, uint32_t count, void* buffer) {
-    serial_print("[AHCI] Issueing command...\n");
-    struct sata_hba_port* port = state->port;
-    if (!sata_busy_wait(port))
-        return AOS_FALSE;
+static aos_bool sata_exec_cmd(struct sata_port_state* state, uint8_t command, uint8_t fis_type, aos_bool write, uint64_t lba, uint32_t count, void* buffer, aos_bool has_data, aos_bool has_lba, aos_bool has_count) {
+	if (!state)
+		return AOS_FALSE;
 
-    int slot = sata_find_cmdslot(port);
-    if (slot < 0) {
-        serial_print("[AHCI] No free command slot\n");
-        return AOS_FALSE;
-    }
+	if (!state->active)
+		return AOS_FALSE;
 
-    struct sata_hba_cmd_hdr* cmd = &state->cmd_hdrs[slot];
-    uint32_t ctba = cmd->ctba;
-    uint32_t ctbau = cmd->ctbau;
-    memset(cmd, 0, sizeof(struct sata_hba_cmd_hdr));
-    cmd->ctba = ctba;
-    cmd->ctbau = ctbau;
+	uint64_t bytes = ((uint64_t)count) * 512;
+	uint64_t prdt_count = (bytes + (AHCI_MAX_PRD_LENGTH - 1)) / AHCI_MAX_PRD_LENGTH;
 
-    cmd->cfl = sizeof(struct sata_fis_reg_h2d) / sizeof(uint32_t);
-    cmd->w = write ? 1 : 0;
-    cmd->prdtl = 1;
+	if (prdt_count > 0xFFFF || prdt_count > SATA_MAX_PRDT_STATIC_ENTRIES) {
+		uint64_t max_bytes_per_cmd = SATA_MAX_PRDT_STATIC_ENTRIES * AHCI_MAX_PRD_LENGTH;
+		uint64_t max_sectors_per_cmd = max_bytes_per_cmd / 512;
 
-	uint64_t table_phys = ((uint64_t)cmd->ctbau << 32) | cmd->ctba;
-    struct sata_hba_cmd_table* table = (struct sata_hba_cmd_table*)(AOS_DIRECT_MAP_BASE + table_phys);
-    
-    memset(table, 0, sizeof(struct sata_hba_cmd_table));
+		// Do multiple executions
+		uint64_t remaining_sectors = count;
+		uint64_t current_lba = lba;
+		uint8_t* current_buffer = (uint8_t*)buffer;
+		while (remaining_sectors) {
+			uint64_t sectors_this_cmd = (remaining_sectors > max_sectors_per_cmd) ? max_sectors_per_cmd : remaining_sectors;
 
-    uint64_t phys;
-    void* virt = (void*)avmf_alloc(512, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, &phys);
-    if (!virt || !phys) return AOS_FALSE;
+			if (
+				!sata_exec_cmd_internal(
+					state,
+					command,
+					fis_type,
+					write,
+					current_lba,
+					sectors_this_cmd,
+					current_buffer,
+					has_data,
+					has_lba,
+					has_count
+				)
+			) return AOS_FALSE;
 
-    if (write) memcpy(virt, buffer, 512);
+			current_lba += sectors_this_cmd;
+			if (has_data) current_buffer += sectors_this_cmd * 512;
+			remaining_sectors -= sectors_this_cmd;
+		}
 
-    table->prdt_entry[0].dba = (uint32_t)((uint64_t)phys & 0xFFFFFFFF);
-    table->prdt_entry[0].dbau = (uint32_t)((uint64_t)phys >> 32);
-    table->prdt_entry[0].dbc = (count * 512) - 1;
-    table->prdt_entry[0].ioc = 1;
+		return AOS_TRUE;
+	}
 
-    struct sata_fis_reg_h2d* fis = (struct sata_fis_reg_h2d*)&table->cfis;
-
-    fis->fis_type = FIS_TYPE_REG_H2D;
-    fis->c = 1;
-    fis->command = write ? CMD_ATA_WRITE_DMA_EXT : CMD_ATA_READ_DMA_EXT;
-
-    fis->lba0 = (uint8_t)lba;
-    fis->lba1 = (uint8_t)(lba >> 8);
-    fis->lba2 = (uint8_t)(lba >> 16);
-    fis->lba3 = (uint8_t)(lba >> 24);
-    fis->lba4 = (uint8_t)(lba >> 32);
-    fis->lba5 = (uint8_t)(lba >> 40);
-
-    fis->device = 1 << 6; // LBA mode
-
-    fis->countl = count & 0xFF;
-    fis->counth = (count >> 8) & 0xFF;
-
-    port->ci = 1 << slot;
-    uint64_t timeout = kget_ms_passed();
-    while (1) {
-        if (kget_ms_passed() - timeout > 1000) break;
-        if (!(port->ci & (1 << slot)))
-            break;
-
-        if (port->is & (1 << 30)) {
-            serial_print("[AHCI] Disk error\n");
-            avmf_free((uint64_t)virt);
-            return AOS_FALSE;
-        }
-    }
-
-    if (!write) memcpy(buffer, virt, 512);
-    avmf_free((uint64_t)virt);
-
-    if (kget_ms_passed() - timeout > 1000) {
-        serial_print("[AHCI] Disk/Device Error (timeout)\n");
-        return AOS_FALSE;
-    }
-
-    serial_print("[AHCI] Command sent successfully!\n");
-    return AOS_TRUE;
+	return sata_exec_cmd_internal(
+		state,
+		command,
+		fis_type,
+		write,
+		lba,
+		count,
+		buffer,
+		has_data,
+		has_lba,
+		has_count
+	);
 }
 
 aos_bool sata_init(struct AOS_Module* m) {
     if (m->hdr.type != MODULE_TYPE_DRIVER) return AOS_FALSE;
     if (m->Modules.driver_module.type != MODULE_DRIVER_TYPE_SATA) return AOS_FALSE;
 
-    sata_device = m->Modules.driver_module.pcie_device;
+	if (bss_zeroed_magic != KSATA_MAGIC) {
+		controllers = NULL;
+		controller_count = 0;
+		controller_cap = 0;
+		bss_zeroed_magic = KSATA_MAGIC;
+	}
+	if (!controllers) {
+		controllers = (sata_controller*)avmf_alloc(sizeof(sata_controller) * KSATA_ALLOC_STEP, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, NULL);
+		if (!controllers) return AOS_FALSE;
+		controller_cap = KSATA_ALLOC_STEP;
+		controller_count = 0;
+	} else if (controller_count >= controller_cap) {
+		if (controller_count >= KSATA_MAX_CONTROLLERS) return AOS_FALSE;
+		sata_controller* nptr = (sata_controller*)avmf_alloc(sizeof(sata_controller) * (controller_cap + KSATA_ALLOC_STEP), MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, NULL);
+		if (!nptr) return AOS_FALSE;
+		memcpy(nptr, controllers, sizeof(sata_controller)*controller_count);
+		avmf_free((uint64_t)controllers);
+		controllers = nptr;
+		controller_cap += KSATA_ALLOC_STEP;
+	}
 
-    sata_map_bar();
-    if (hba_mem == NULL) return AOS_FALSE;
-    pcie_enable_busmaster(sata_device.bus, sata_device.slot, sata_device.func);
+	sata_controller* ksc = &controllers[controller_count];
+	memset(ksc, 0, sizeof(sata_controller));
+	ksc->idx = controller_count;
+	controller_count++;
+	m->Modules.driver_module.DriverConnections.drive_connector.controller_idx = ksc->idx;
+
+    ksc->sata_device = m->Modules.driver_module.pcie_device;
+
+    sata_map_bar(ksc);
+    if (ksc->hba_mem == NULL) return AOS_FALSE;
+    pcie_enable_busmaster(ksc->sata_device.bus, ksc->sata_device.slot, ksc->sata_device.func);
 
     // Reset
-    hba_mem->ghc |= (1 << 31); // AHCI
+    ksc->hba_mem->ghc |= (1 << 31); // AHCI
 
-    hba_mem->ghc |= (1 << 0);
-    while (hba_mem->ghc & (1 << 0));
+    ksc->hba_mem->ghc |= (1 << 0);
+    while (ksc->hba_mem->ghc & (1 << 0));
 
-    hba_mem->ghc |= (1 << 31); // AHCI
-    hba_mem->ghc |= (1 << 1); // Interrupt Enable (IE)
+    ksc->hba_mem->ghc |= (1 << 31); // AHCI
+    ksc->hba_mem->ghc |= (1 << 1); // Interrupt Enable (IE)
 
-    hba_mem->is = 0xFFFFFFFF;
-    uint32_t pi = hba_mem->pi;
+    ksc->hba_mem->is = 0xFFFFFFFF;
+    uint32_t pi = ksc->hba_mem->pi;
 
-    serial_printf("[AHCI] CAP: %08x\n", hba_mem->cap);
-    serial_printf("[AHCI] PI: %08x\n", hba_mem->pi);
-    serial_printf("[AHCI] VS: %08x\n", hba_mem->vs);
+    serial_printf("[AHCI] CAP: %08x\n", ksc->hba_mem->cap);
+    serial_printf("[AHCI] PI: %08x\n", ksc->hba_mem->pi);
+    serial_printf("[AHCI] VS: %08x\n", ksc->hba_mem->vs);
 
-    if (!(hba_mem->cap & (1 << 31))) {
+    if (!(ksc->hba_mem->cap & (1 << 31))) {
         serial_print("[AHCI] Controller does not support 64-bit DMA\n");
         return AOS_FALSE;
     }
 
-    int ports = (hba_mem->cap & 0x1F) + 1;
+    int ports = (ksc->hba_mem->cap & 0x1F) + 1;
     int ports_found = 0;
+	if (ports > KSATA_MAX_PORTS) return AOS_FALSE;
 
     for (int i = 0; i < ports; i++) {
         if (pi & (1 << i)) {
-            struct sata_hba_port* port = &hba_mem->ports[i];
+            struct sata_hba_port* port = &ksc->hba_mem->ports[i];
 
             uint32_t ssts = port->ssts;
             uint8_t det = ssts & 0x0F;
@@ -412,122 +476,166 @@ aos_bool sata_init(struct AOS_Module* m) {
             }
             
             if (det == 3 && ipm == 1) {
-                sata_port_init(port, &port_states[i]);
+                sata_port_init(ksc, port, &ksc->port_states[i]);
                 ports_found++;
-                ports_available[i] = 1;
+                ksc->ports_available[i] = 1;
             }
         }
     }
 
     if (ports_found > 0) {
-        found_sata = AOS_TRUE;
+        ksc->found_sata = AOS_TRUE;
         serial_print("[AHCI] Controller Found and online\n");
         return AOS_TRUE;
     } else {
-        found_sata = AOS_FALSE;
+        ksc->found_sata = AOS_FALSE;
         serial_print("[AHCI] No Controller was found!\n");
         return AOS_FALSE;
     }
 }
 
-aos_bool sata_read_blk(int port_id, uint64_t lba, uint32_t count, void* buffer) {
-    if (!found_sata)
+aos_bool sata_read_blk(uint64_t cidx, int port_id, uint64_t lba, uint32_t count, void* buffer) {
+	if (cidx >= controller_count || port_id >= KSATA_MAX_PORTS) return AOS_FALSE; 
+	sata_controller* ksc = &controllers[cidx];
+    if (!ksc->found_sata)
         return AOS_FALSE;
 
-    struct sata_port_state* state = &port_states[port_id];
+    struct sata_port_state* state = &ksc->port_states[port_id];
 
     if (!state->active)
         return AOS_FALSE;
 
-    return sata_issue_cmd(state, 0, lba, count, buffer);
+	uint64_t rflags = spin_lock_irqsave(&ksc->drive_lock);
+
+    aos_bool out = sata_exec_cmd(
+        state,
+        CMD_ATA_READ_DMA_EXT,
+        FIS_TYPE_REG_H2D,
+        AOS_FALSE,
+        lba,
+        count,
+        buffer,
+        AOS_TRUE,
+        AOS_TRUE,
+        AOS_TRUE
+    );
+
+	spin_unlock_irqrestore(&ksc->drive_lock, rflags);
+	return out;
 }
 
-aos_bool sata_write_blk(int port_id, uint64_t lba, uint32_t count, void* buffer) {
-    if (!found_sata)
+aos_bool sata_write_blk(uint64_t cidx, int port_id, uint64_t lba, uint32_t count, void* buffer) {
+	if (cidx >= controller_count || port_id >= KSATA_MAX_PORTS) return AOS_FALSE; 
+	sata_controller* ksc = &controllers[cidx];
+    if (!ksc->found_sata)
         return AOS_FALSE;
 
-    struct sata_port_state* state = &port_states[port_id];
+    struct sata_port_state* state = &ksc->port_states[port_id];
 
     if (!state->active)
         return AOS_FALSE;
 
-    return sata_issue_cmd(state, 1, lba, count, buffer);
+	uint64_t rflags = spin_lock_irqsave(&ksc->drive_lock);
+
+    aos_bool out = sata_exec_cmd(
+        state,
+        CMD_ATA_WRITE_DMA_EXT,
+        FIS_TYPE_REG_H2D,
+        AOS_TRUE,
+        lba,
+        count,
+        buffer,
+        AOS_TRUE,
+        AOS_TRUE,
+        AOS_TRUE
+    );
+
+	spin_unlock_irqrestore(&ksc->drive_lock, rflags);
+	return out;
 }
 
-aos_bool sata_flush(int port_id) {
-    if (!found_sata) return AOS_FALSE;
+aos_bool sata_flush(uint64_t cidx, int port_id) {
+	if (cidx >= controller_count || port_id >= KSATA_MAX_PORTS) return AOS_FALSE; 
+	sata_controller* ksc = &controllers[cidx];
+    if (!ksc->found_sata) return AOS_FALSE;
 
-    struct sata_port_state* state = &port_states[port_id];
+    struct sata_port_state* state = &ksc->port_states[port_id];
     if (!state->active) return AOS_FALSE;
 
-    struct sata_hba_port* port = state->port;
-    if (!sata_busy_wait(port)) return AOS_FALSE;
+	uint64_t rflags = spin_lock_irqsave(&ksc->drive_lock);
 
-    int slot = sata_find_cmdslot(port);
-    if (slot < 0) {
-        serial_print("[AHCI] No free command slot for flush\n");
-        return AOS_FALSE;
-    }
+    aos_bool out = sata_exec_cmd(
+        state,
+        CMD_ATA_FLUSH_CACHE_EXT,
+        FIS_TYPE_REG_H2D,
+        AOS_FALSE,
+        0,
+        0,
+        NULL,
+        AOS_FALSE,
+        AOS_FALSE,
+        AOS_FALSE
+    );
 
-    struct sata_hba_cmd_hdr* cmd = &state->cmd_hdrs[slot];
-    memset(cmd, 0, sizeof(struct sata_hba_cmd_hdr));
-
-    cmd->cfl = sizeof(struct sata_fis_reg_h2d) / sizeof(uint32_t);
-    cmd->w = 1; // write
-    cmd->prdtl = 0; // no data
-
-    struct sata_hba_cmd_table* table = (struct sata_hba_cmd_table*)((uint64_t)cmd->ctba | ((uint64_t)cmd->ctbau << 32));
-    memset(table, 0, sizeof(struct sata_hba_cmd_table));
-
-    struct sata_fis_reg_h2d* fis = (struct sata_fis_reg_h2d*)&table->cfis;
-    fis->fis_type = FIS_TYPE_REG_H2D;
-    fis->c = 1;
-    fis->command = CMD_ATA_FLUSH_CACHE;
-
-    port->ci = 1 << slot;
-    while (port->ci & (1 << slot)) {
-        if (port->is & (1 << 30)) {
-            serial_print("[AHCI] Flush failed, disk error\n");
-            return AOS_FALSE;
-        }
-    }
-
-    return AOS_TRUE;
+	spin_unlock_irqrestore(&ksc->drive_lock, rflags);
+	return out;
 }
 
-static aos_bool sata_get_info(int port_id, struct sata_identify* id) {
-    if (!found_sata) {
+static aos_bool sata_get_info(uint64_t cidx, int port_id, struct sata_identify* id) {
+	if (cidx >= controller_count || port_id >= KSATA_MAX_PORTS) return AOS_FALSE; 
+	sata_controller* ksc = &controllers[cidx];
+    if (!ksc->found_sata) {
         serial_print("[AHCI] State is not found!\n");
         return AOS_FALSE;
     }
 
-    struct sata_port_state* state = &port_states[port_id];
+    struct sata_port_state* state = &ksc->port_states[port_id];
     if (!state->active) {
         serial_print("[AHCI] State is not active!\n");
         return AOS_FALSE;
     }
-    uint8_t buffer[512];
+    
+	uint64_t rflags = spin_lock_irqsave(&ksc->drive_lock);
 
-    if (!sata_send_cmd(state, 0, 0, 1, (void*)buffer, CMD_ATA_IDENTIFY, FIS_TYPE_REG_H2D)) {
+	uint8_t buffer[512];
+
+    if (
+		!sata_exec_cmd(
+			state,
+			CMD_ATA_IDENTIFY,
+			FIS_TYPE_REG_H2D,
+			AOS_FALSE,
+			0,
+			1,
+			buffer,
+			AOS_TRUE,
+			AOS_FALSE,
+			AOS_FALSE
+		)
+	) {
+		spin_unlock_irqrestore(&ksc->drive_lock, rflags);
         serial_print("[AHCI] Failed to issue command!\n");
         return AOS_FALSE;
     }
-
+	spin_unlock_irqrestore(&ksc->drive_lock, rflags);
     memcpy(id, buffer, sizeof(struct sata_identify));
     return AOS_TRUE;
 }
 
-aos_bool sata_get_block_device(int port_id, struct block_device* out) {
+aos_bool sata_get_block_device(uint64_t cidx, int port_id, struct block_device* out) {
     serial_print("[AHCI] Getting drive info...\n");
 	char buf[sizeof(struct sata_identify)];
     struct sata_identify* idenvirt = (struct sata_identify*)buf;
-    if (sata_get_info(port_id, idenvirt) != 1) {
+    if (!sata_get_info(cidx, port_id, idenvirt)) {
         serial_print("[AHCI] Failed to get drive info!\n");
         return AOS_FALSE;
     }
     serial_print("[AHCI] Got drive info!\n");
     struct sata_identify iden = *idenvirt;
-    uint32_t block_count = ((uint32_t)iden.lba_cap_48[1] << 16) | iden.lba_cap_48[0];
+	uint64_t block_count = ((uint64_t)iden.lba_cap_48[3] << 48) |
+    ((uint64_t)iden.lba_cap_48[2] << 32) |
+    ((uint64_t)iden.lba_cap_48[1] << 16) |
+    ((uint64_t)iden.lba_cap_48[0]);
     out->block_count = block_count;
     out->block_size = 512;
     char* model = (char*)avmf_alloc(41, MALLOC_TYPE_DRIVER, PAGE_RW | PAGE_PRESENT, NULL);
@@ -545,13 +653,18 @@ aos_bool sata_get_block_device(int port_id, struct block_device* out) {
     return AOS_TRUE;
 }
 
-void sata_get_pcie(pcie_device_t *out) {
-    memcpy(out, &sata_device, sizeof(pcie_device_t));
+void sata_get_pcie(uint64_t cidx, pcie_device_t *out) {
+	if (cidx >= controller_count) return;
+	sata_controller* ksc = &controllers[cidx];
+    memcpy(out, &ksc->sata_device, sizeof(pcie_device_t));
 }
 
-void sata_get_available_ports(uint8_t* out, int out_size) {
-    for (int i = 0; i < 32; i++) {
+void sata_get_available_ports(uint64_t cidx, uint8_t* out, int out_size) {
+	if (cidx >= controller_count) return;
+	sata_controller* ksc = &controllers[cidx];
+
+    for (int i = 0; i < KSATA_MAX_PORTS; i++) {
         if (i + 1 > out_size) break;
-        out[i] = ports_available[i];
+        out[i] = ksc->ports_available[i];
     }
 }

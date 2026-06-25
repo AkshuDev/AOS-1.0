@@ -2,6 +2,10 @@
 #include <system.h>
 
 #include <inc/core/kfuncs.h>
+
+#include <inc/mm/pager.h>
+#include <inc/mm/avmf.h>
+
 #include <inc/core/tss_gdt.h>
 
 #define RPL0 0
@@ -133,7 +137,7 @@ void gdt_init(void) {
 		:
 		"m"(kgdtr), "i"(KERNEL_DS), "i"(KERNEL_CS)
 		:
-		"memory", "rax"
+		"memory", "rax", "rsp"
 	);
 }
 
@@ -158,5 +162,116 @@ void tss_init(void) {
 		"ltr %%ax"
 		::
 		"a"(GDT_TSS_SELECTOR)
+		:
+		"memory"
 	);
+}
+
+aos_bool gdt_init_ex(gdt_t* gdt, gdtr_t* gdtr, tss_t* tss) {
+	memset(gdtr, 0, sizeof(gdtr_t));
+	memset(gdt, 0, sizeof(gdt_t));
+
+	gdt->kernel_code = (gdt_entry_t){
+		.access = GDT_ACCESS_KERNEL_CODE,
+		.limit_low = 0,
+		.base_low = 0,
+		.base_mid = 0,
+		.base_high = 0,
+		.granularity = GDT_FLAG_LONG_MODE
+	};
+
+	gdt->kernel_data = (gdt_entry_t){
+		.access = GDT_ACCESS_KERNEL_DATA,
+		.limit_low = 0,
+		.base_low = 0,
+		.base_mid = 0,
+		.base_high = 0,
+		.granularity = 0
+	};
+
+	gdt->user_code = (gdt_entry_t){
+		.access = GDT_ACCESS_USER_CODE,
+		.limit_low = 0,
+		.base_low = 0,
+		.base_mid = 0,
+		.base_high = 0,
+		.granularity = GDT_FLAG_LONG_MODE
+	};
+
+	gdt->user_data = (gdt_entry_t){
+		.access = GDT_ACCESS_USER_DATA,
+		.limit_low = 0,
+		.base_low = 0,
+		.base_mid = 0,
+		.base_high = 0,
+		.granularity = 0
+	};
+
+	gdt->tss = (gdt_tss_entry_t){
+		.access = GDT_ACCESS_TSS,
+		.limit_low = sizeof(tss_t)-1,
+		.base_low = ((uint64_t)tss) & 0xFFFF,
+		.base_mid1 = (((uint64_t)tss) >> 16) & 0xFF,
+		.base_mid2 = (((uint64_t)tss) >> 24) & 0xFF,
+		.base_high = ((uint64_t)tss) >> 32,
+		.granularity = (((sizeof(tss_t)-1)>>16) & 0x0F),
+	};
+
+	gdtr->limit = sizeof(gdt_t)-1;
+	gdtr->base = (uint64_t)gdt;
+
+	asm volatile(
+		"lgdt %0\n\t"
+		"mov %1, %%ax\n\t"
+		"mov %%ax, %%ds\n\t"
+		"mov %%ax, %%es\n\t"
+		"mov %%ax, %%ss\n\t"
+		"mov %2, %%rax\n\t"
+		"pushq %%rax\n\t"
+		"lea 1f(%%rip), %%rax\n\t"
+		"pushq %%rax\n\t"
+		"lretq\n\t"
+		"1:\n\t"
+		:
+		:
+		"m"(*gdtr), "i"(KERNEL_DS), "i"(KERNEL_CS)
+		:
+		"memory", "rax", "rsp"
+	);
+
+	return AOS_TRUE;
+}
+
+aos_bool tss_init_ex(tss_t* tss, MemoryAllocType mtype, int flags) {
+	memset(tss, 0, sizeof(tss_t));
+
+	#define STACK_SIZE 0x4000
+	#define TOTAL_STACK_SIZE STACK_SIZE * 10
+
+	uint8_t* stack = (uint8_t*)avmf_alloc(TOTAL_STACK_SIZE, mtype, flags, NULL);
+	if (!stack) return AOS_FALSE;
+	
+	tss->rsp0 = (uint64_t)(stack + STACK_SIZE);
+	tss->rsp1 = (uint64_t)((stack + STACK_SIZE) + STACK_SIZE);
+	tss->rsp2 = (uint64_t)((stack + (STACK_SIZE * 2)) + STACK_SIZE);
+
+	tss->ist1 = (uint64_t)((stack + (STACK_SIZE * 3)) + STACK_SIZE);
+	tss->ist2 = (uint64_t)((stack + (STACK_SIZE * 4)) + STACK_SIZE);
+	tss->ist3 = (uint64_t)((stack + (STACK_SIZE * 5)) + STACK_SIZE);
+	tss->ist4 = (uint64_t)((stack + (STACK_SIZE * 6)) + STACK_SIZE);
+	tss->ist5 = (uint64_t)((stack + (STACK_SIZE * 7)) + STACK_SIZE);
+	tss->ist6 = (uint64_t)((stack + (STACK_SIZE * 8)) + STACK_SIZE);
+	tss->ist7 = (uint64_t)((stack + (STACK_SIZE * 9)) + STACK_SIZE);
+
+	tss->iomap_base = TSS_IO_BITMAP_DISABLED;
+
+	asm volatile(
+		"ltr %%ax"
+		::
+		"a"(GDT_TSS_SELECTOR)
+		:
+		"memory"
+	);
+
+	return AOS_TRUE;
 }

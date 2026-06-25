@@ -68,6 +68,7 @@ aos_bool modules_init(void) {
             .flush = sata_flush,
             .get_block_device = sata_get_block_device,
             .cur_port = 0,
+			.controller_idx = 0,
             .pcie_device = NULL,
             .name = NULL,
             .block_dev = (struct block_device){0}

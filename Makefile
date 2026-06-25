@@ -72,6 +72,7 @@ uefi: $(BUILD_DIR) $(BIN_DIR) $(UEFI_BOOTLOADER_EFI) $(AOS_KERNEL)
 		--gpt -btl $(UEFI_BOOTLOADER_EFI) \
 		--permissions rw -ad /root \
 		-k $(AOS_KERNEL) AOS++
+	$(PBFS_CLI) $(DISK) -bs 512 -tb 16384 -dn AOS_DISK --permissions rw -ad /aos
 	@echo "DONE!"
 
 clean:

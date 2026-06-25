@@ -50,7 +50,8 @@ static aos_bool current_drive_mounted = AOS_FALSE;
 
 static struct pbfs_funcs pbfs_init_funcs = {
     .malloc = kmalloc,
-    .free = kfree
+    .free = kfree,
+	.realloc = krealloc
 };
 static char g_pbfs_cwd[PBFS_MAX_PATH_LEN] = {'/', 0};
 static struct pbfs_mount g_pbfs_mnt = {0};
@@ -76,9 +77,14 @@ static uintptr_t stack_top = (uintptr_t)&stack_top__;
 void kernel_main(void) {
     asm volatile("cld");
     serial_init();
-    // Reserve MMIO region at 0xF0000000, kernel starts at 0x100000
     serial_print("AOS++ LOADED!\n");
+
     pager_init(); // Inits AVMF Too
+	gdt_init();
+	tss_init();
+
+	aos_system_exception_handler_init(pre_halt_system);
+    idt_init();
 
 	asm volatile (
 		"cld\n\t"
@@ -90,12 +96,6 @@ void kernel_main(void) {
         :
         "memory"
     );
-
-	gdt_init();
-	tss_init();
-
-	aos_system_exception_handler_init(pre_halt_system);
-    idt_init();
 
     // Enable SSE
     uint64_t cr;
@@ -156,7 +156,7 @@ void kernel_main(void) {
 			char tmp[512];
 			aos_bool read = AOS_FALSE;
 			if (current_drive.read_blk != NULL) {
-				if (current_drive.read_blk(current_drive.cur_port, 0, 1, tmp) == 1)
+				if (current_drive.read_blk(current_drive.controller_idx, current_drive.cur_port, 0, 1, tmp) == 1)
 					read = 1;
 			}
 			if (read == 0) {
@@ -450,7 +450,7 @@ void pre_halt_system(void) {
 
 static int bd_read_blk(struct block_device* dev, uint64_t lba, void* buf) {
     if (current_drive_works) {
-        current_drive.read_blk(current_drive.cur_port, lba, 1, buf);
+        current_drive.read_blk(current_drive.controller_idx, current_drive.cur_port, lba, 1, buf);
         return 1;
     }
     return 0;
@@ -458,7 +458,7 @@ static int bd_read_blk(struct block_device* dev, uint64_t lba, void* buf) {
 
 static int bd_write_blk(struct block_device* dev, uint64_t lba, const void* buf) {
     if (current_drive_works) {
-        current_drive.write_blk(current_drive.cur_port, lba, 1, buf);
+        current_drive.write_blk(current_drive.controller_idx, current_drive.cur_port, lba, 1, buf);
         return 1;
     }
     return 0;
@@ -466,7 +466,7 @@ static int bd_write_blk(struct block_device* dev, uint64_t lba, const void* buf)
 
 static int bd_read(struct block_device* dev, uint64_t lba, uint64_t count, void* buf) {
     if (current_drive_works) {
-        current_drive.read_blk(current_drive.cur_port, lba, count, buf);
+        current_drive.read_blk(current_drive.controller_idx, current_drive.cur_port, lba, count, buf);
         return 1;
     }
     return 0;
@@ -474,7 +474,7 @@ static int bd_read(struct block_device* dev, uint64_t lba, uint64_t count, void*
 
 static int bd_write(struct block_device* dev, uint64_t lba, uint64_t count, const void* buf) {
     if (current_drive_works) {
-        current_drive.write_blk(current_drive.cur_port, lba, count, buf);
+        current_drive.write_blk(current_drive.controller_idx, current_drive.cur_port, lba, count, buf);
         return 1;
     }
     return 0;
@@ -482,7 +482,7 @@ static int bd_write(struct block_device* dev, uint64_t lba, uint64_t count, cons
 
 static int bd_flush(struct block_device* dev) {
     if (current_drive_works) {
-        current_drive.flush(current_drive.cur_port);
+        current_drive.flush(current_drive.controller_idx, current_drive.cur_port);
         return 1;
     }
     return 0;

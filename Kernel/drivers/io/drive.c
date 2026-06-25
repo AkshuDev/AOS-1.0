@@ -15,7 +15,7 @@
 #include <inc/mm/pager.h>
 
 // Legacy-ATA
-aos_bool legacy_ata_read(int port_id, uint64_t lba, uint32_t count, void* buffer) {
+aos_bool legacy_ata_read(uint64_t cidx, int port_id, uint64_t lba, uint32_t count, void* buffer) {
 	struct ATA_DP dp = {
 		.lba = lba,
 		.count = count
@@ -23,7 +23,7 @@ aos_bool legacy_ata_read(int port_id, uint64_t lba, uint32_t count, void* buffer
 	return (ata_read_sectors(&dp, buffer, (uint8_t)port_id) == 0);
 }
 
-aos_bool legacy_ata_write(int port_id, uint64_t lba, uint32_t count, void* buffer) {
+aos_bool legacy_ata_write(uint64_t cidx, int port_id, uint64_t lba, uint32_t count, void* buffer) {
 	struct ATA_DP dp = {
 		.lba = lba,
 		.count = count
@@ -31,7 +31,7 @@ aos_bool legacy_ata_write(int port_id, uint64_t lba, uint32_t count, void* buffe
 	return (ata_write_sectors(&dp, buffer, (uint8_t)port_id) == 0);
 }
 
-aos_bool legacy_ata_get_block_device(int port_id, struct block_device* out) {
+aos_bool legacy_ata_get_block_device(uint64_t cidx, int port_id, struct block_device* out) {
 	aos_sysinfo_t* sinfo = kget_sysinfo();
 	if (!sinfo) return AOS_FALSE;
 
@@ -54,9 +54,9 @@ aos_bool legacy_ata_get_block_device(int port_id, struct block_device* out) {
 }
 
 // Setters
-static void set_sata(struct drive_device* out) {
+static aos_bool set_sata(uint64_t cidx, struct drive_device* out) {
     uint8_t avail_ports[32] = {0};
-    sata_get_available_ports((uint8_t*)avail_ports, sizeof(avail_ports));
+    sata_get_available_ports(cidx, (uint8_t*)avail_ports, sizeof(avail_ports));
     int port_id = -1;
     for (int i = 0; i < sizeof(avail_ports); i++) {
         if (avail_ports[i] == 1) {
@@ -64,32 +64,26 @@ static void set_sata(struct drive_device* out) {
             break;
         }
     }
-    if (port_id < 0) return;
+    if (port_id < 0) return AOS_FALSE;
 
     out->cur_port = port_id;
 
-    sata_get_pcie(out->pcie_device);
-    sata_get_block_device(port_id, &out->block_dev);
+    sata_get_pcie(cidx, out->pcie_device);
+    if (!sata_get_block_device(cidx, port_id, &out->block_dev)) return AOS_FALSE;
     out->name = out->block_dev.name;
-
     out->active = 1;
+	
+	return AOS_TRUE;
 }
 
-static void set_legacy_ata(struct drive_device* out) {
+static aos_bool set_legacy_ata(struct drive_device* out) {
 	aos_sysinfo_t* sinfo = kget_sysinfo();
-	if (!sinfo) {
-		out->cur_port = -1;
-		return;
-	}
+	if (!sinfo) return AOS_FALSE;
 	uint8_t drive = sinfo->boot_drive_raw;
 
     ata_identity_t iden = {0};
-	ata_identify_device(drive, &iden);
-
-	if (!legacy_ata_get_block_device((int)drive, &out->block_dev)) {
-		out->cur_port = -1;
-		return;
-	}
+	if (ata_identify_device(drive, &iden) != 1) return AOS_FALSE;
+	if (!legacy_ata_get_block_device(0, (int)drive, &out->block_dev)) return AOS_FALSE;
 
 	out->name = out->block_dev.name;
 	out->pcie_device = NULL;
@@ -101,6 +95,8 @@ static void set_legacy_ata(struct drive_device* out) {
 
 	out->cur_port = drive;
     out->active = 1;
+
+	return AOS_TRUE;
 }
 
 aos_bool get_available_drives(struct drive_device* out) {
@@ -109,8 +105,7 @@ aos_bool get_available_drives(struct drive_device* out) {
     struct AOS_Module* reg_driver = module_get_first_applicable_registered_driver(PCI_CLASS_MASS_STORAGE, 0, 0, 0, 0, 0, 0, 0, 0);
     if (!reg_driver) {
 		if (ata_exists()) {
-			set_legacy_ata(&reg_driver->Modules.driver_module.DriverConnections.drive_connector);
-			if (reg_driver->Modules.driver_module.DriverConnections.drive_connector.cur_port < 0) {
+			if (!set_legacy_ata(&reg_driver->Modules.driver_module.DriverConnections.drive_connector)) {
 				serial_print("[Drive Controller] No registered drives!\n");
 				return AOS_FALSE;
 			}
@@ -123,8 +118,7 @@ aos_bool get_available_drives(struct drive_device* out) {
 		}
     } else if (reg_driver->hdr.type != MODULE_TYPE_DRIVER) {
 		if (ata_exists()) {
-			set_legacy_ata(&reg_driver->Modules.driver_module.DriverConnections.drive_connector);
-			if (reg_driver->Modules.driver_module.DriverConnections.drive_connector.cur_port < 0) {
+			if (set_legacy_ata(&reg_driver->Modules.driver_module.DriverConnections.drive_connector)) {
 				serial_print("[Drive Controller] No registered drives!\n");
 				return AOS_FALSE;
 			}
@@ -145,7 +139,10 @@ aos_bool get_available_drives(struct drive_device* out) {
 					return AOS_FALSE;
 				}
 			}
-            set_sata(&reg_driver->Modules.driver_module.DriverConnections.drive_connector);
+            if (!set_sata(reg_driver->Modules.driver_module.DriverConnections.drive_connector.controller_idx, &reg_driver->Modules.driver_module.DriverConnections.drive_connector)) {
+				serial_print("[Drive Controller] No registered drives!\n");
+        		return AOS_FALSE;
+			}
             break;
         }
         default: {
@@ -184,7 +181,10 @@ aos_bool get_available_drives_pcie(struct drive_device* out, struct aos_sysinfo_
 						continue;
 					}
 				}
-				set_sata(&reg_driver->Modules.driver_module.DriverConnections.drive_connector);
+				if (!set_sata(reg_driver->Modules.driver_module.DriverConnections.drive_connector.controller_idx, &reg_driver->Modules.driver_module.DriverConnections.drive_connector)) {
+					serial_print("[Drive Controller] No registered drives!\n");
+        			return AOS_FALSE;
+				}
 				break;
 			}
 			default: {

@@ -76,8 +76,6 @@ static void destroy_n_unmap_xhci() {
 	if (event_ring) { avmf_free((uint64_t)event_ring); event_ring = NULL; }
 	if (erst) { avmf_free((uint64_t)erst); erst = NULL; }
 	if (dcbaa > 0) { avmf_free(dcbaa); dcbaa = 0; }
-
-	for (uint64_t i = 0; i < mapping_size / PAGE_SIZE; i++) pager_unmap(AOS_xHCI_VIRT_BASE + (i * PAGE_SIZE));
 }
 
 static aos_bool map_xhci_mmio(void) {
@@ -122,10 +120,9 @@ static aos_bool map_xhci_mmio(void) {
 		return AOS_FALSE;
 	}
 
-    pager_map_range(AOS_xHCI_VIRT_BASE, bar_phys, mapping_size, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
-	pcie_enable_busmaster(bus, slot, func);
+    pcie_enable_busmaster(bus, slot, func);
 
-    xhci_mmio = (volatile uint32_t*)AOS_xHCI_VIRT_BASE;
+    xhci_mmio = (volatile uint32_t*)(AOS_DIRECT_MAP_BASE + bar_phys);
     cap = (struct xhci_cap_regs*)xhci_mmio;
     op_regs = (struct xhci_op_regs*)((uint8_t*)xhci_mmio + cap->cap_length);
 	runtime_regs = (struct xhci_runtime_regs*)((uint8_t*)xhci_mmio + cap->rtsoff);
@@ -195,7 +192,6 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	while (!(op_regs->usbsts & (1 << 0))) {
 		if (kget_ms_passed() - timeout >= 10000) {
 			serial_print("[xHCI] Controller Timeout!\n");
-			for (uint64_t i = 0; i < mapping_size / PAGE_SIZE; i++) pager_unmap(AOS_xHCI_VIRT_BASE + (i * PAGE_SIZE));
 			return AOS_FALSE;
 		}
 		asm volatile("pause");
@@ -207,7 +203,6 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	while (op_regs->usbcmd & (1 << 1)) {
 		if (kget_ms_passed() - timeout >= 10000) {
 			serial_print("[xHCI] Controller Timeout!\n");
-			for (uint64_t i = 0; i < mapping_size / PAGE_SIZE; i++) pager_unmap(AOS_xHCI_VIRT_BASE + (i * PAGE_SIZE));
 			return AOS_FALSE;
 		}
 		asm volatile("pause");
@@ -216,7 +211,6 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	while (op_regs->usbsts & (1 << 11)) {
 		if (kget_ms_passed() - timeout >= 10000) {
 			serial_print("[xHCI] Controller Timeout!\n");
-			for (uint64_t i = 0; i < mapping_size / PAGE_SIZE; i++) pager_unmap(AOS_xHCI_VIRT_BASE + (i * PAGE_SIZE));
 			return AOS_FALSE;
 		}
 		asm volatile("pause");
@@ -226,7 +220,6 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	dcbaa = avmf_alloc(ALIGN_UP((max_slots + 1) * sizeof(uint64_t), 64), MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &op_regs->dcbaap);
 	if (!dcbaa) {
 		serial_print("[xHCI] Failed to allocate DCBAA\n");
-		for (uint64_t i = 0; i < mapping_size / PAGE_SIZE; i++) pager_unmap(AOS_xHCI_VIRT_BASE + (i * PAGE_SIZE));
 		return AOS_FALSE;
 	}
 	memset((void*)dcbaa, 0, (max_slots + 1) * sizeof(uint64_t));

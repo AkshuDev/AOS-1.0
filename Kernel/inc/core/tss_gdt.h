@@ -1,7 +1,7 @@
 #pragma once
 
 #include <aos_inttypes.h>
-
+#include <inc/mm/avmf.h>
 typedef struct {
     uint32_t reserved0;
 
@@ -65,3 +65,5 @@ typedef struct {
 
 void gdt_init(void) __attribute__((used));
 void tss_init(void) __attribute__((used));
+aos_bool gdt_init_ex(gdt_t* gdt, gdtr_t* gdtr, tss_t* tss) __attribute__((used));
+aos_bool tss_init_ex(tss_t* tss, MemoryAllocType mtype, int flags) __attribute__((used));
