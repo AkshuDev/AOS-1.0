@@ -46,6 +46,8 @@ static FB_Cursor_t vmem_fbc;
 // Log Format->
 // Format Per msg = [%OS - %Timestamp] %msg
 
+static char preklog[0x1000]; // 4KB - Pre load KLOG
+
 static char* klog; // 4KB Log
 static uint64_t klog_cap;
 static uint64_t klog_end;
@@ -79,17 +81,19 @@ static uint64_t umod64(uint64_t n, uint64_t d) {
 }
 
 static aos_bool klog_realloc(void) {
-	if (klog_cap - klog_pos >= 32) return 1;
+	if ((uint64_t)klog == (uint64_t)preklog) return AOS_FALSE;
+
+	if (klog_cap - klog_pos >= 32) return AOS_TRUE;
 	size_t size = klog_cap;
 	char* nptr = (char*)avmf_alloc(size + 1024, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL); // +1KB
-	if (!nptr) return 0;
+	if (!nptr) return AOS_FALSE;
 
 	memcpy(nptr, klog, klog_end);
 	avmf_free((uint64_t)klog);
 	
 	klog = nptr;
 	klog_cap = size + 1024;
-	return 1;
+	return AOS_TRUE;
 }
 
 static void klog_printc(char c) {
@@ -154,12 +158,11 @@ void serial_init(void) {
     else
         serial_present = AOS_FALSE;
 
-	klog = NULL;
-	klog_end = 0;
+	klog = preklog;
 	klog_pos = 0;
-	klog_present = AOS_FALSE;
+	klog_cap = sizeof(preklog);
+	klog_end = 0;
 	klog_msg_started = AOS_FALSE;
-	klog_cap = 0;
 
     spin_unlock_irqrestore(&serial_lock, rflags);
 }
@@ -170,21 +173,23 @@ void serial_init_klog(const char* path, struct pbfs_mount* mnt) {
 	PBFS_DMM_Entry out;
 	uint64_t out_lba = 0;
 
-	size_t size = 0;
 	uint8_t* data = NULL;
+	aos_bool preklog_present = klog_end > 0;
 
+	size_t size = 0;
 	klog_present = AOS_FALSE;
 	if (pbfs_find_entry(path, &out, &out_lba, mnt) == PBFS_RES_SUCCESS && out.type & METADATA_FLAG_SYS) {
 		pbfs_read_file(mnt, path, &data, &size);
 		klog_present = AOS_TRUE;
 	}
 
-	klog = (char*)avmf_alloc(size + 4096, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL); // +4KB
+	klog = (char*)avmf_alloc(size + klog_end + 4096, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL); // +4KB
 	if (!klog) return;
-	if (data && size > 0) memcpy(klog, data, size);
-	klog_pos = size;
-	klog_cap = size + 4096;
-	klog_end = size;
+	if (preklog_present) memcpy(klog, preklog, klog_end);
+	if (data && size > 0) memcpy(klog + klog_end, data, size);
+	klog_pos = size + klog_end;
+	klog_cap = size + 4096 + klog_end;
+	klog_end = size + klog_end;
 }
 
 void serial_flush_klog(const char* path, struct pbfs_mount* mnt) {
@@ -200,7 +205,7 @@ void serial_flush_klog(const char* path, struct pbfs_mount* mnt) {
 void serial_deinit_klog(const char* path, struct pbfs_mount* mnt) {
 	if (!klog) return;
 	if (klog_end <= 0) {
-		avmf_free((uint64_t)klog);
+		if ((uint64_t)klog != (uint64_t)preklog) avmf_free((uint64_t)klog);
 		klog = NULL;
 		klog_end = 0;
 		klog_pos = 0;
@@ -210,7 +215,7 @@ void serial_deinit_klog(const char* path, struct pbfs_mount* mnt) {
 	
 	if (klog_present) pbfs_update_file(mnt, path, klog, klog_end);
 	else pbfs_add(mnt, path, 0, 0, METADATA_FLAG_SYS, PERM_READ | PERM_WRITE, klog, klog_end);
-	avmf_free((uint64_t)klog);
+	if ((uint64_t)klog != (uint64_t)preklog) avmf_free((uint64_t)klog);
 	klog = NULL;
 	klog_end = 0;
 	klog_pos = 0;

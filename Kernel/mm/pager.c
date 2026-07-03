@@ -108,8 +108,11 @@ void pager_init(void) {
         uint64_t end_addr = e->base + e->len;
         
         if (e->len == 0) continue;
+		if (end_addr > max_phys_addr)
+            max_phys_addr = end_addr;
+
+		serial_printf("E820: %p - %p (%llu MB) (Type %s [%d])\n", e->base, end_addr, (uint64_t)((float)e->len / 1024.0f / 1024.0f), e820_get_type_str(e->type), e->type);
         if (e->type == E820_TYPE_RAM) {
-            serial_printf("E820: %p - %p (%llu MB) (Type RAM)\n", e->base, end_addr, e->len / 1024 / 1024);
             uint64_t start = e->base;
             // Don't use the first <Kernel End>MB!
             if (start < bss_end) {
@@ -118,11 +121,7 @@ void pager_init(void) {
             }
             base_phys[phys_idx] = start;
             limit_phys[phys_idx] = end_addr;
-            if (end_addr > max_phys_addr)
-                max_phys_addr = end_addr;
             phys_idx++;
-        } else {
-            serial_printf("E820: %p - %p (Type %d)\n", e->base, end_addr, e->type);
         }
     }
 
@@ -157,8 +156,8 @@ void pager_init(void) {
     }
     serial_print("[PAGER] Allocated Virtual Memory for Page Tables\n");
 
-    serial_printf("[PAGER] Mapping Direct Map (0x%lx-0x%lx) to 0x%lx\n", 0x0, max_addr, AOS_DIRECT_MAP_BASE);
-    pager_map_range(AOS_DIRECT_MAP_BASE, 0x0, max_addr, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
+    serial_printf("[PAGER] Mapping Direct Map (0x%lx-0x%lx) to 0x%lx\n", 0x0, max_phys_addr, AOS_DIRECT_MAP_BASE);
+    pager_map_range(AOS_DIRECT_MAP_BASE, 0x0, max_phys_addr, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
     
 	serial_print("[PAGER] Mapped Direct Map\n");
     pager_map_range(0x0, 0x0, bss_end, PAGE_PRESENT | PAGE_RW); // Identity Map the Kernel (<Kernel End> MB)

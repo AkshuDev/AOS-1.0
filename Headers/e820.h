@@ -19,3 +19,14 @@ struct bs1_e820 {
     uint32_t entry_count;
     struct bs1_e820_entry entries[];
 } __attribute__((packed));
+
+static inline const char* e820_get_type_str(uint32_t type) {
+	switch (type) {
+		case E820_TYPE_RAM: return "System RAM";
+		case E820_TYPE_RESERVED: return "Reserved";
+		case E820_TYPE_ACPI_RECLAIM: return "ACPI Reclaim";
+		case E820_TYPE_ACPI_NVS: return "ACPI NVS";
+		case E820_TYPE_BAD: return "Bad RAM";
+		default: return "Unknown";
+	}
+}

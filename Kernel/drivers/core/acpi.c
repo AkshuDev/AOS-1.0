@@ -175,6 +175,8 @@ static struct acpi_rsdp_descriptor* acpi_find_rsdp(void) {
 }
 
 static void acpi_parse_madt(struct acpi_madt* madt) {
+	pager_map(AOS_DIRECT_MAP_BASE + madt->lapic_addr, madt->lapic_addr, PAGE_PRESENT | PAGE_RW | PAGE_PCD | PAGE_PWT);
+
     uint8_t* ptr = (uint8_t*)madt + sizeof(struct acpi_madt);
     uint8_t* end = (uint8_t*)madt + madt->header.length;
 
@@ -202,6 +204,28 @@ static void acpi_timer_init(struct acpi_fadt* fadt) {
         pm_timer_24bit = 0;
     }
     serial_printf("[ACPI] PM Timer initialized on port 0x%x\n", pm_timer_port);
+}
+
+static void acpi_parse_mcfg(struct acpi_mcfg* mcfg) {
+	uint64_t count = (mcfg->header.length - sizeof(struct acpi_mcfg)) / sizeof(struct acpi_mcfg_entry);
+	for (uint64_t i = 0; i < count; i++) {
+		struct acpi_mcfg_entry* e = &mcfg->entries[i];
+
+		serial_printf(
+			"[MCFG] ECAM %d\n"
+			"\tBase : %p\n"
+			"\tSeg : %u\n"
+			"\tBuses : %u-%u\n",
+			i,
+			e->base_addr,
+			e->pcie_segment,
+			e->start_bus,
+			e->end_bus
+		);
+
+		uint64_t size = ((e->end_bus - e->start_bus + 1) * 1024 * 1024);
+		pager_map_range(AOS_DIRECT_MAP_BASE + e->base_addr, e->base_addr, size, PAGE_PRESENT | PAGE_RW | PAGE_PCD | PAGE_PWT);
+	}
 }
 
 static void acpi_parse_fadt(struct acpi_fadt* fadt) {
@@ -242,6 +266,7 @@ static void acpi_parse_rsdt(struct acpi_rsdp_descriptor* rsdp) {
             if (memcmp(sdt_hdr->signature, "MCFG", 4) == 0) {
                 mcfg_table = (struct acpi_mcfg*)sdt_hdr;
                 serial_printf("[ACPI] Found MCFG at %p\n", mcfg_table);
+				acpi_parse_mcfg(mcfg_table);
             } else if (memcmp(sdt_hdr->signature, "APIC", 4) == 0) {
                 madt_table = (struct acpi_madt*)sdt_hdr;
                 serial_printf("[ACPI] Found MADT at %p\n\tParsing...\n", madt_table);
@@ -272,6 +297,7 @@ static void acpi_parse_rsdt(struct acpi_rsdp_descriptor* rsdp) {
         if (memcmp(sdt_hdr->signature, "MCFG", 4) == 0) {
             mcfg_table = (struct acpi_mcfg*)sdt_hdr;
             serial_printf("[ACPI] Found MCFG at %p\n", mcfg_table);
+			acpi_parse_mcfg(mcfg_table);
         } else if (memcmp(sdt_hdr->signature, "APIC", 4) == 0) {
             madt_table = (struct acpi_madt*)sdt_hdr;
             serial_printf("[ACPI] Found MADT at %p\n\tParsing...\n", madt_table);
