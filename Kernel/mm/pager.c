@@ -169,6 +169,10 @@ void pager_init(void) {
     serial_print("[PAGER] Everything is Set!\n");
 }
 
+static void invlpg(uint64_t addr) {
+    asm volatile("invlpg (%0)" : : "r"(addr) : "memory");
+}
+
 struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags) {
     if (phys & ~((1ULL << cpu_phys_bits) - 1)) {
         serial_printf("[PAGER] ERROR: Physical address %p exceeds CPU limit of %lu bits!\n", phys, cpu_phys_bits);
@@ -213,6 +217,7 @@ struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags)
         // Map the physical range
         pt->entries[idx_pt] = (phys & ~0xFFFULL) | (flags & 0xFFFULL) | PAGE_PRESENT;
     }
+	invlpg(virt);
     return pml4;
 }
 
@@ -233,10 +238,6 @@ void pager_destroy_table(int level) {
 
     uint64_t phys_addr = avmf_virt_to_phys((uint64_t)table);
     avmf_free_phys((uint64_t)table);
-}
-
-static void invlpg(uint64_t addr) {
-    asm volatile("invlpg (%0)" : : "r"(addr) : "memory");
 }
 
 void pager_unmap(uint64_t virt) {

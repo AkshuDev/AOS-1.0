@@ -5,6 +5,7 @@ global thread_context_switch
 ; void thread_context_switch(struct thread_state* old, struct thread_state* new)
 ; RDI = Old Thread, RSI = New Thread
 thread_context_switch:
+	push rdi
     push rbp
     push rbx
     push r12
@@ -21,6 +22,7 @@ thread_context_switch:
     pop r12
     pop rbx
     pop rbp
+	pop rdi
 
     ret
 

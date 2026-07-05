@@ -288,11 +288,11 @@ struct virtio_gpu_cmd_submit_3d {
 	uint32_t padding;
 } __attribute__((packed));
 
-void virtio_init(struct gpu_device* gpu) __attribute__((used));
-void virtio_init_resources(struct gpu_device* gpu, int resource_id) __attribute__((used));
-void virtio_flush(uint32_t x, uint32_t y, uint32_t w, uint32_t h, int resource_id) __attribute__((used));
-void virtio_set_mode(struct gpu_device* gpu, uint32_t w, uint32_t h, uint32_t bpp) __attribute__((used));
-void virtio_switch_off(struct gpu_device* gpu) __attribute__((used));
+aos_bool virtio_init(struct AOS_Module* m) __attribute__((used));
+aos_bool virtio_init_resources(struct gpu_device* gpu, int resource_id) __attribute__((used));
+aos_bool virtio_flush(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, uint32_t h, int resource_id) __attribute__((used));
+aos_bool virtio_set_mode(struct gpu_device* gpu, uint32_t w, uint32_t h, uint32_t bpp) __attribute__((used));
+aos_bool virtio_switch_off(struct gpu_device* gpu) __attribute__((used));
 
 // Virgl
 enum virtio_virgl_object_types {
@@ -379,6 +379,6 @@ void pyrion_flush_virtio(struct pyrion_ctx* ctx) __attribute__((used));
 void pyrion_clear_virtio(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));
 void pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));
 void pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, uint32_t w, uint32_t h, uint32_t font_res_id) __attribute__((used));
-void pyrion_destroy_font_virtio(uint32_t font_res_id, void* font_mem) __attribute__((used));
+void pyrion_destroy_font_virtio(struct pyrion_ctx* ctx, uint32_t font_res_id, void* font_mem) __attribute__((used));
 uint32_t pyrion_upload_font_virtio(struct pyrion_ctx* ctx, uint64_t atlas_phys, uint32_t* atlas, uint32_t atlas_w, uint32_t atlas_total_h) __attribute__((used));
 void pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));

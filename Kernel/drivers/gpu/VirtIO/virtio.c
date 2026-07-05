@@ -10,29 +10,43 @@
 #include <inc/drivers/gpu/gpu.h>
 #include <inc/core/pcie.h>
 #include <inc/core/smp.h>
+#include <inc/core/module.h>
 #include <inc/core/kfuncs.h>
+
+#define KVIRTIO_ALLOC_STEP 16
+#define KVIRTIO_MAGIC 0x00160912
 
 #define MAX_CMD_RESP_BUFS 16
 
-static uint8_t vq_buf[0x1000] __attribute__((aligned(4096)));
-static struct virtqueue virtq;
-static uint8_t acceleration_present;
+typedef struct {
+	struct virtqueue virtq;
+	uint8_t acceleration_present;
 
-static struct virtio_gpu_ctrl_hdr* cmd_buf[MAX_CMD_RESP_BUFS];
-static struct virtio_gpu_resp_display_info* resp_buf[MAX_CMD_RESP_BUFS];
-static uint64_t cmd_buf_phys[MAX_CMD_RESP_BUFS];
-static uint64_t resp_buf_phys[MAX_CMD_RESP_BUFS];
-static uint64_t main_buf_slot = 0;
-static uint64_t worker_buf_slot = 0;
+	struct virtio_gpu_ctrl_hdr* cmd_buf[MAX_CMD_RESP_BUFS];
+	struct virtio_gpu_resp_display_info* resp_buf[MAX_CMD_RESP_BUFS];
+	uint64_t cmd_buf_phys[MAX_CMD_RESP_BUFS];
+	uint64_t resp_buf_phys[MAX_CMD_RESP_BUFS];
+	uint64_t main_buf_slot;
+	uint64_t worker_buf_slot;
 
-static spinlock_t virtq_lock = 0;
+	spinlock_t virtq_lock;
 
-static uintptr_t notify_base;
-static uint32_t notify_multiplier;
+	uintptr_t notify_base;
+	uint32_t notify_multiplier;
 
-static uint32_t gpu_cmd_core = 0xFFFF;
+	uint32_t gpu_cmd_core;
 
-static volatile struct virtio_common_cfg* common_cfg;
+	volatile struct virtio_common_cfg* common_cfg;
+
+	uint64_t idx;
+	struct gpu_device* gpu;
+	aos_bool valid;
+} virtio_controller;
+
+static uint32_t bss_zeroed_magic; // Should be KVIRTIO_MAGIC to ensure bss is zeroed or initialized
+static virtio_controller* controllers;
+static uint64_t controller_count;
+static uint64_t controller_cap;
 
 static void mmio_write64(uint64_t addr, uint64_t val) {
     *(volatile uint64_t*)addr = val;
@@ -59,101 +73,102 @@ static uint8_t mmio_read8(uint64_t addr) {
     return *(volatile uint8_t*)addr;
 }
 
-static void virtio_sync_poll(void) {
-    while (virtq.used->idx != virtq.avail->idx) {
+static void virtio_sync_poll(void* kvc_raw) {
+	virtio_controller* kvc = (virtio_controller*)kvc_raw;
+    while (kvc->virtq.used->idx != kvc->virtq.avail->idx) {
         __asm__ volatile("pause");
     }
 
-    uint64_t flags = spin_lock_irqsave(&virtq_lock);
-    uint16_t head = virtq.free_head;
-    uint16_t next = (head + 1) % virtq.queue_size;
-    virtq.free_head = (next + 1) % virtq.queue_size;
-    spin_unlock_irqrestore(&virtq_lock, flags);
+    uint64_t flags = spin_lock_irqsave(&kvc->virtq_lock);
+    uint16_t head = kvc->virtq.free_head;
+    uint16_t next = (head + 1) % kvc->virtq.queue_size;
+    kvc->virtq.free_head = (next + 1) % kvc->virtq.queue_size;
+    spin_unlock_irqrestore(&kvc->virtq_lock, flags);
     
-    worker_buf_slot++;
+    kvc->worker_buf_slot++;
     serial_print("[VIRTIO] Submitted Sync\n");
 
     smp_yield();
 }
 
-static void virtio_submit_async(void* cmd, uint64_t cmd_phys, size_t cmd_size, void* resp, uint64_t resp_phys, size_t resp_size) {
+static void virtio_submit_async(virtio_controller* kvc, void* cmd, uint64_t cmd_phys, size_t cmd_size, void* resp, uint64_t resp_phys, size_t resp_size) {
     serial_printf("[VIRTIO] Submitting Sync [CMD: %lx, CMD PHYS: %lx, CMD SIZE: %lx]\n", (uint64_t)cmd, cmd_phys, cmd_size);
 
-    uint64_t flags = spin_lock_irqsave(&virtq_lock);
-    uint16_t head = virtq.free_head;
-    uint16_t next = (head + 1) % virtq.queue_size;
+    uint64_t flags = spin_lock_irqsave(&kvc->virtq_lock);
+    uint16_t head = kvc->virtq.free_head;
+    uint16_t next = (head + 1) % kvc->virtq.queue_size;
 
     // Descriptor 1: The Command (Read-only)
     serial_print("[VIRTIO] Setting Descriptor 1\n");
-    virtq.desc[head].addr = (uintptr_t)cmd_phys;
-    virtq.desc[head].len = cmd_size;
-    virtq.desc[head].flags = VIRTQ_DESC_F_NEXT;
-    virtq.desc[head].next = next;
+    kvc->virtq.desc[head].addr = (uintptr_t)cmd_phys;
+    kvc->virtq.desc[head].len = cmd_size;
+    kvc->virtq.desc[head].flags = VIRTQ_DESC_F_NEXT;
+    kvc->virtq.desc[head].next = next;
 
     // Descriptor 2: The Response (Write-only for GPU)
     serial_print("[VIRTIO] Setting Descriptor 2\n");
-    virtq.desc[next].addr = (uintptr_t)resp_phys;
-    virtq.desc[next].len = resp_size;
-    virtq.desc[next].flags = VIRTQ_DESC_F_WRITE;
-    virtq.desc[next].next = 0;
+    kvc->virtq.desc[next].addr = (uintptr_t)resp_phys;
+    kvc->virtq.desc[next].len = resp_size;
+    kvc->virtq.desc[next].flags = VIRTQ_DESC_F_WRITE;
+    kvc->virtq.desc[next].next = 0;
 
-    virtq.avail->ring[virtq.avail->idx % virtq.queue_size] = head;
+    kvc->virtq.avail->ring[kvc->virtq.avail->idx % kvc->virtq.queue_size] = head;
     __asm__ volatile("sfence" ::: "memory"); // Ensure GPU sees RAM update
-    virtq.avail->idx++;
-    spin_unlock_irqrestore(&virtq_lock, flags);
+    kvc->virtq.avail->idx++;
+    spin_unlock_irqrestore(&kvc->virtq_lock, flags);
 
     // Notify Doorbell
     serial_print("[VIRTIO] Notifying GPU\n");
-    uintptr_t db = notify_base + (common_cfg->queue_notify_off * notify_multiplier);
+    uintptr_t db = kvc->notify_base + (kvc->common_cfg->queue_notify_off * kvc->notify_multiplier);
     mmio_write32(db, 0);
 
     // Poll for completion
     serial_print("[VIRTIO] Polling on a new thread\n");
     enum core_status status = 0;
-    smp_get_core_status(gpu_cmd_core, &status);
+    smp_get_core_status(kvc->gpu_cmd_core, &status);
 
-    if (gpu_cmd_core != 0xFFFF && status == CORE_STATUS_RESERVED)
-        smp_push_task(gpu_cmd_core, virtio_sync_poll); // Push task here
+    if (kvc->gpu_cmd_core != 0xFFFF && status == CORE_STATUS_RESERVED)
+        smp_push_task(kvc->gpu_cmd_core, virtio_sync_poll, kvc); // Push task here
     else
-        virtio_sync_poll(); // either no extra core, or core busy
+        virtio_sync_poll(kvc); // either no extra core, or core busy
 
-    main_buf_slot++;
+    kvc->main_buf_slot++;
 }
 
-static void virtio_submit_sync(void* cmd, uint64_t cmd_phys, size_t cmd_size, void* resp, uint64_t resp_phys, size_t resp_size) {
+static void virtio_submit_sync(virtio_controller* kvc, void* cmd, uint64_t cmd_phys, size_t cmd_size, void* resp, uint64_t resp_phys, size_t resp_size) {
     serial_printf("[VIRTIO] Submitting Sync [CMD: %lx, CMD PHYS: %lx, CMD SIZE: %lx]\n", (uint64_t)cmd, cmd_phys, cmd_size);
-    uint16_t head = virtq.free_head;
-    uint16_t next = (head + 1) % virtq.queue_size;
+    uint16_t head = kvc->virtq.free_head;
+    uint16_t next = (head + 1) % kvc->virtq.queue_size;
 
-    uint64_t flags = spin_lock_irqsave(&virtq_lock);
+    uint64_t flags = spin_lock_irqsave(&kvc->virtq_lock);
     // Descriptor 1: The Command (Read-only)
     serial_print("[VIRTIO] Setting Descriptor 1\n");
-    virtq.desc[head].addr = (uintptr_t)cmd_phys;
-    virtq.desc[head].len = cmd_size;
-    virtq.desc[head].flags = VIRTQ_DESC_F_NEXT;
-    virtq.desc[head].next = next;
+    kvc->virtq.desc[head].addr = (uintptr_t)cmd_phys;
+    kvc->virtq.desc[head].len = cmd_size;
+    kvc->virtq.desc[head].flags = VIRTQ_DESC_F_NEXT;
+    kvc->virtq.desc[head].next = next;
 
     // Descriptor 2: The Response (Write-only for GPU)
     serial_print("[VIRTIO] Setting Descriptor 2\n");
-    virtq.desc[next].addr = (uintptr_t)resp_phys;
-    virtq.desc[next].len = resp_size;
-    virtq.desc[next].flags = VIRTQ_DESC_F_WRITE;
-    virtq.desc[next].next = 0;
+    kvc->virtq.desc[next].addr = (uintptr_t)resp_phys;
+    kvc->virtq.desc[next].len = resp_size;
+    kvc->virtq.desc[next].flags = VIRTQ_DESC_F_WRITE;
+    kvc->virtq.desc[next].next = 0;
 
-    virtq.avail->ring[virtq.avail->idx % virtq.queue_size] = head;
+    kvc->virtq.avail->ring[kvc->virtq.avail->idx % kvc->virtq.queue_size] = head;
     __asm__ volatile("sfence" ::: "memory"); // Ensure GPU sees RAM update
-    virtq.avail->idx++;
-    spin_unlock_irqrestore(&virtq_lock, flags);
+    kvc->virtq.avail->idx++;
+    spin_unlock_irqrestore(&kvc->virtq_lock, flags);
 
     // Notify Doorbell
     serial_print("[VIRTIO] Notifying GPU\n");
-    uintptr_t db = notify_base + (common_cfg->queue_notify_off * notify_multiplier);
+    uintptr_t db = kvc->notify_base + (kvc->common_cfg->queue_notify_off * kvc->notify_multiplier);
     mmio_write32(db, 0);
 
     // Poll for completion
     serial_print("[VIRTIO] Polling\n");
-    virtio_sync_poll();
-    main_buf_slot++;
+    virtio_sync_poll(kvc);
+    kvc->main_buf_slot++;
 }
 
 static struct virtio_cap get_cap(uint8_t b, uint8_t s, uint8_t f, uint8_t target_type) {
@@ -178,43 +193,53 @@ static struct virtio_cap get_cap(uint8_t b, uint8_t s, uint8_t f, uint8_t target
     return cap;
 }
 
-static void setup_queue(gpu_device_t* gpu, uint16_t q_idx) {
+static aos_bool setup_queue(virtio_controller* kvc, gpu_device_t* gpu, uint16_t q_idx) {
     serial_print("[VIRTIO] Setting Queues....\n");
 
-    common_cfg->queue_select = q_idx;
-    uint16_t size = common_cfg->queue_size;
+    kvc->common_cfg->queue_select = q_idx;
+    uint16_t size = kvc->common_cfg->queue_size;
+
+	if (size < 1) {
+		serial_print("[VIRTIO] CommonCFG Queue Size is less than 1, quiting...\n");
+		return AOS_FALSE;
+	}
+
     size_t desc_t_size = size * sizeof(struct virtq_desc);
     size_t avail_r_size = 6 + (2 * size);
     size_t used_r_size = 6 + (8 * size);
 
     uint64_t phys = 0;
     void* mem = (void*)avmf_alloc(desc_t_size + avail_r_size + used_r_size, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &phys);
-    if (!mem) {serial_print("[VIRTIO] Failed to Allocate Memory!\n"); return;}
-    if (!phys) {serial_print("[VIRTIO] Failed to retrieve physical address!\n"); return;}
+    if (!mem) {serial_print("[VIRTIO] Failed to Allocate Memory!\n"); return AOS_FALSE;}
+    if (!phys) {serial_print("[VIRTIO] Failed to retrieve physical address!\n"); return AOS_FALSE;}
 
-    uint64_t flags = spin_lock_irqsave(&virtq_lock);
-    virtq.desc = (struct virtq_desc*)mem;
-    virtq.avail = (struct virtq_avail*)((uintptr_t)mem + desc_t_size);
-    virtq.used = (struct virtq_used*)((uintptr_t)virtq.avail + avail_r_size);
-    virtq.queue_size = size;
-    virtq.free_head = 0;
-    spin_unlock_irqrestore(&virtq_lock, flags);
+    uint64_t flags = spin_lock_irqsave(&kvc->virtq_lock);
+    kvc->virtq.desc = (struct virtq_desc*)mem;
+    kvc->virtq.avail = (struct virtq_avail*)((uintptr_t)mem + desc_t_size);
+    kvc->virtq.used = (struct virtq_used*)((uintptr_t)kvc->virtq.avail + avail_r_size);
+    kvc->virtq.queue_size = size;
+    kvc->virtq.free_head = 0;
+    spin_unlock_irqrestore(&kvc->virtq_lock, flags);
 
-    common_cfg->queue_desc = phys;
-    common_cfg->queue_avail = phys + desc_t_size;
-    common_cfg->queue_used = (uintptr_t)phys + avail_r_size + desc_t_size;
-    common_cfg->queue_enable = 1;
+    kvc->common_cfg->queue_desc = phys;
+    kvc->common_cfg->queue_avail = phys + desc_t_size;
+    kvc->common_cfg->queue_used = (uintptr_t)phys + avail_r_size + desc_t_size;
+    kvc->common_cfg->queue_enable = 1;
 
     serial_print("[VIRTIO] Queues ready!\n");
+	return AOS_TRUE;
 }
 
-void virtio_flush(uint32_t x, uint32_t y, uint32_t w, uint32_t h, int resource_id) {
-    while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) {
+aos_bool virtio_flush(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, uint32_t h, int resource_id) {
+    if (gpu->controller_idx >= controller_count || !controllers) return AOS_FALSE;
+	virtio_controller* kvc = &controllers[gpu->controller_idx];
+	
+	while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) {
         __asm__ volatile("pause"); 
     }
-    uint64_t cur_buf_slot = main_buf_slot % MAX_CMD_RESP_BUFS;
+    uint64_t cur_buf_slot = kvc->main_buf_slot % MAX_CMD_RESP_BUFS;
 
-    struct virtio_gpu_resource_flush* f = (struct virtio_gpu_resource_flush*)cmd_buf[cur_buf_slot];
+    struct virtio_gpu_resource_flush* f = (struct virtio_gpu_resource_flush*)kvc->cmd_buf[cur_buf_slot];
     memset(f, 0, sizeof(*f));
     f->hdr.type = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
     f->r.x = x;
@@ -224,12 +249,45 @@ void virtio_flush(uint32_t x, uint32_t y, uint32_t w, uint32_t h, int resource_i
     f->resource_id = resource_id;
     f->padding = 0;
 
-    virtio_submit_async(f, cmd_buf_phys[cur_buf_slot], sizeof(*f), resp_buf[cur_buf_slot], resp_buf_phys[cur_buf_slot], sizeof(struct virtio_gpu_ctrl_hdr));
+    virtio_submit_async(kvc, f, kvc->cmd_buf_phys[cur_buf_slot], sizeof(*f), kvc->resp_buf[cur_buf_slot], kvc->resp_buf_phys[cur_buf_slot], sizeof(struct virtio_gpu_ctrl_hdr));
+	return AOS_TRUE;
 }
 
 // Total hours wasted on virtio: 18 (I DID COOK)
-void virtio_init(struct gpu_device* gpu) {
-    pcie_device_t* dev = gpu->pcie_device;
+aos_bool virtio_init(struct AOS_Module* m) {
+	if (m->hdr.type != MODULE_TYPE_DRIVER) return AOS_FALSE;
+    if (m->Modules.driver_module.type != MODULE_DRIVER_TYPE_GPU) return AOS_FALSE;
+
+	if (bss_zeroed_magic != KVIRTIO_MAGIC) {
+		controllers = NULL;
+		controller_count = 0;
+		controller_cap = 0;
+		bss_zeroed_magic = KVIRTIO_MAGIC;
+	}
+	if (!controllers) {
+		controllers = (virtio_controller*)avmf_alloc(sizeof(virtio_controller) * KVIRTIO_ALLOC_STEP, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, NULL);
+		if (!controllers) return AOS_FALSE;
+		controller_cap = KVIRTIO_ALLOC_STEP;
+		controller_count = 0;
+	} else if (controller_count >= controller_cap) {
+		virtio_controller* nptr = (virtio_controller*)avmf_alloc(sizeof(virtio_controller) * (controller_cap + KVIRTIO_ALLOC_STEP), MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, NULL);
+		if (!nptr) return AOS_FALSE;
+		memcpy(nptr, controllers, sizeof(virtio_controller)*controller_count);
+		avmf_free((uint64_t)controllers);
+		controllers = nptr;
+		controller_cap += KVIRTIO_ALLOC_STEP;
+	}
+
+	struct gpu_device* gpu = &m->Modules.driver_module.DriverConnections.gpu_connector;
+	virtio_controller* kvc = &controllers[controller_count];
+	memset(kvc, 0, sizeof(virtio_controller));
+	kvc->idx = controller_count;
+	kvc->gpu = gpu;
+	kvc->valid = AOS_TRUE;
+	gpu->controller_idx = controller_count;
+	controller_count++;
+
+    pcie_device_t* dev = &m->Modules.driver_module.pcie_device;
     PCIe_FB* fb = gpu->framebuffer;
     uintptr_t bar0 = dev->bar0 & ~0xF;
 
@@ -239,70 +297,75 @@ void virtio_init(struct gpu_device* gpu) {
     uint32_t bar_val = pcie_read_bar(dev->bus, dev->slot, dev->func, common_cap.bar);
     uintptr_t bar_phys = bar_val & ~0xF;
     uintptr_t common_cfg_phys = bar_phys + common_cap.offset;
-    common_cfg = (volatile struct virtio_common_cfg*)(common_cfg_phys + AOS_DIRECT_MAP_BASE);
+    kvc->common_cfg = (volatile struct virtio_common_cfg*)(common_cfg_phys + AOS_DIRECT_MAP_BASE);
 
     struct virtio_cap notify_cap = get_cap(dev->bus, dev->slot, dev->func, 2);
     uint32_t n_bar_val = pcie_read_bar(dev->bus, dev->slot, dev->func, notify_cap.bar);
-    notify_base = (n_bar_val & ~0xF) + notify_cap.offset + AOS_DIRECT_MAP_BASE;
-    notify_multiplier = pcie_read(dev->bus, dev->slot, dev->func, notify_cap.cap_ptr + 16);
+    kvc->notify_base = (n_bar_val & ~0xF) + notify_cap.offset + AOS_DIRECT_MAP_BASE;
+    kvc->notify_multiplier = pcie_read(dev->bus, dev->slot, dev->func, notify_cap.cap_ptr + 16);
 
     // RESET
-    common_cfg->device_status = 0;
-    while (common_cfg->device_status != 0) { __asm__ volatile("pause"); }
-    common_cfg->device_status |= VIRTIO_STATUS_ACKNOWLEDGE;
-    common_cfg->device_status |= VIRTIO_STATUS_DRIVER;
+    kvc->common_cfg->device_status = 0;
+    while (kvc->common_cfg->device_status != 0) { __asm__ volatile("pause"); }
+    kvc->common_cfg->device_status |= VIRTIO_STATUS_ACKNOWLEDGE;
+    kvc->common_cfg->device_status |= VIRTIO_STATUS_DRIVER;
 
     // Features
-    common_cfg->device_feature_select = 0;
-    uint32_t features = common_cfg->device_feature;
+    kvc->common_cfg->device_feature_select = 0;
+    uint32_t features = kvc->common_cfg->device_feature;
 
     if (!(features & (1 << 0))) { // VIRTIO_GPU_F_VIRGL is bit 0
         gpu->acceleration_present = 0;
-        acceleration_present = 0;
+        kvc->acceleration_present = 0;
     } else {
         gpu->acceleration_present = 1;
-        acceleration_present = 1;
+        kvc->acceleration_present = 1;
     }
-    common_cfg->driver_feature = features;
+    kvc->common_cfg->driver_feature = features;
 
-    common_cfg->device_status |= VIRTIO_STATUS_FEATURES_OK;
-    if (!(common_cfg->device_status & VIRTIO_STATUS_FEATURES_OK)) {
+    kvc->common_cfg->device_status |= VIRTIO_STATUS_FEATURES_OK;
+    if (!(kvc->common_cfg->device_status & VIRTIO_STATUS_FEATURES_OK)) {
         serial_print("[VIRTIO] Failed to negotiate features!\n");
-        return;
+		kvc->valid = AOS_FALSE; controller_count--;
+        return AOS_FALSE;
     }
     
     // setup buffers
     for (uint64_t i = 0; i < MAX_CMD_RESP_BUFS; i++) {
-        cmd_buf[i] = (struct virtio_gpu_ctrl_hdr*)avmf_alloc(0x1000, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &cmd_buf_phys[i]);
-        resp_buf[i] = (struct virtio_gpu_resp_display_info*)avmf_alloc(0x1000, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &resp_buf_phys[i]);
-        if (!cmd_buf || !resp_buf) {
+        kvc->cmd_buf[i] = (struct virtio_gpu_ctrl_hdr*)avmf_alloc(0x1000, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &kvc->cmd_buf_phys[i]);
+        kvc->resp_buf[i] = (struct virtio_gpu_resp_display_info*)avmf_alloc(0x1000, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &kvc->resp_buf_phys[i]);
+        if (!kvc->cmd_buf || !kvc->resp_buf) {
             serial_print("[VIRTIO] Failed to allocate command and response buffers!\n");
-            return;
+			kvc->valid = AOS_FALSE; controller_count--;
+            return AOS_FALSE;
         }
     }
-    main_buf_slot = 0;
+    kvc->main_buf_slot = 0;
 
     // setup Queue
-    setup_queue(gpu, 0);
+    if (!setup_queue(kvc, gpu, 0)) {
+		kvc->valid = AOS_FALSE; controller_count--;
+		return AOS_FALSE;
+	}
 
-    common_cfg->device_status |= VIRTIO_STATUS_DRIVER_OK;
+    kvc->common_cfg->device_status |= VIRTIO_STATUS_DRIVER_OK;
 
     // Setup gpu core
-    if (smp_get_first_free_core(&gpu_cmd_core) != 1) {
-        gpu_cmd_core = 0xFFFF;
+    if (smp_get_first_free_core(&kvc->gpu_cmd_core) != 1) {
+        kvc->gpu_cmd_core = 0xFFFF;
     }
 
     // Get fb info
-    while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) {
+    while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) {
         __asm__ volatile("pause"); 
     }
-    uint64_t cur_buf_slot = main_buf_slot % MAX_CMD_RESP_BUFS;
+    uint64_t cur_buf_slot = kvc->main_buf_slot % MAX_CMD_RESP_BUFS;
 
-    struct virtio_gpu_ctrl_hdr* get_info = (struct virtio_gpu_ctrl_hdr*)cmd_buf[cur_buf_slot];
+    struct virtio_gpu_ctrl_hdr* get_info = (struct virtio_gpu_ctrl_hdr*)kvc->cmd_buf[cur_buf_slot];
     memset(get_info, 0, sizeof(*get_info));
     get_info->type = VIRTIO_GPU_CMD_GET_DISPLAY_INFO;
-    virtio_submit_sync(get_info, cmd_buf_phys[cur_buf_slot], sizeof(*get_info), resp_buf[cur_buf_slot], resp_buf_phys[cur_buf_slot], sizeof(struct virtio_gpu_resp_display_info));
-    struct virtio_gpu_resp_display_info* display = (struct virtio_gpu_resp_display_info*)resp_buf[cur_buf_slot];
+    virtio_submit_sync(kvc, get_info, kvc->cmd_buf_phys[cur_buf_slot], sizeof(*get_info), kvc->resp_buf[cur_buf_slot], kvc->resp_buf_phys[cur_buf_slot], sizeof(struct virtio_gpu_resp_display_info));
+    struct virtio_gpu_resp_display_info* display = (struct virtio_gpu_resp_display_info*)kvc->resp_buf[cur_buf_slot];
 
     if (display->displays[0].enabled) {
         gpu->framebuffer->w = display->displays[0].r.width;
@@ -318,9 +381,13 @@ void virtio_init(struct gpu_device* gpu) {
 
     gpu->active = 1;
     serial_print("[VIRTIO] Initialization completed!\n");
+	return AOS_TRUE;
 }
 
-void virtio_init_resources(struct gpu_device* gpu, int id) {
+aos_bool virtio_init_resources(struct gpu_device* gpu, int id) {
+	if (gpu->controller_idx >= controller_count || !controllers) return AOS_FALSE;
+	virtio_controller* kvc = &controllers[gpu->controller_idx];
+
     pcie_device_t* dev = gpu->pcie_device;
     PCIe_FB* fb = gpu->framebuffer;
     uintptr_t bar0 = dev->bar0 & ~0xF;
@@ -328,26 +395,26 @@ void virtio_init_resources(struct gpu_device* gpu, int id) {
     serial_print("[VIRTIO DRIVER] Initializing Resources...\n");
 
     // make resources
-    while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) {
+    while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) {
         __asm__ volatile("pause"); 
     }
-    uint64_t cur_buf_slot = main_buf_slot % MAX_CMD_RESP_BUFS;
+    uint64_t cur_buf_slot = kvc->main_buf_slot % MAX_CMD_RESP_BUFS;
 
-    struct virtio_gpu_resource_create_2d* create = (struct virtio_gpu_resource_create_2d*)cmd_buf[cur_buf_slot];
+    struct virtio_gpu_resource_create_2d* create = (struct virtio_gpu_resource_create_2d*)kvc->cmd_buf[cur_buf_slot];
     memset(create, 0, sizeof(*create));
     create->hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_2D;
     create->resource_id = id;
     create->format = VIRTIO_GPU_FORMAT_A8B8G8R8_UNORM;
     create->width = fb->w;
     create->height = fb->h;
-    virtio_submit_async(create, cmd_buf_phys[cur_buf_slot], sizeof(*create), resp_buf[cur_buf_slot], resp_buf_phys[cur_buf_slot], sizeof(struct virtio_gpu_ctrl_hdr));
+    virtio_submit_async(kvc, create, kvc->cmd_buf_phys[cur_buf_slot], sizeof(*create), kvc->resp_buf[cur_buf_slot], kvc->resp_buf_phys[cur_buf_slot], sizeof(struct virtio_gpu_ctrl_hdr));
 
-    while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) {
+    while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) {
         __asm__ volatile("pause"); 
     }
-    cur_buf_slot = main_buf_slot % MAX_CMD_RESP_BUFS;
+    cur_buf_slot = kvc->main_buf_slot % MAX_CMD_RESP_BUFS;
 
-    struct virtio_gpu_resource_attach_backing* attach = (struct virtio_gpu_resource_attach_backing*)cmd_buf[cur_buf_slot];
+    struct virtio_gpu_resource_attach_backing* attach = (struct virtio_gpu_resource_attach_backing*)kvc->cmd_buf[cur_buf_slot];
     memset(attach, 0, sizeof(*attach));
     attach->hdr.type = VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING;
     attach->resource_id = id;
@@ -355,14 +422,14 @@ void virtio_init_resources(struct gpu_device* gpu, int id) {
     struct virtio_gpu_mem_entry* entry = (struct virtio_gpu_mem_entry*)((uintptr_t)attach + sizeof(*attach));
     entry->addr = fb->phys;
     entry->length = fb->size;
-    virtio_submit_async(attach, cmd_buf_phys[cur_buf_slot], sizeof(*attach) + sizeof(*entry), resp_buf[cur_buf_slot], resp_buf_phys[cur_buf_slot], sizeof(struct virtio_gpu_ctrl_hdr));
+    virtio_submit_async(kvc, attach, kvc->cmd_buf_phys[cur_buf_slot], sizeof(*attach) + sizeof(*entry), kvc->resp_buf[cur_buf_slot], kvc->resp_buf_phys[cur_buf_slot], sizeof(struct virtio_gpu_ctrl_hdr));
 
-    while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) {
+    while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) {
         __asm__ volatile("pause"); 
     }
-    cur_buf_slot = main_buf_slot % MAX_CMD_RESP_BUFS;
+    cur_buf_slot = kvc->main_buf_slot % MAX_CMD_RESP_BUFS;
 
-    struct virtio_gpu_set_scanout* scanout = (struct virtio_gpu_set_scanout*)cmd_buf[cur_buf_slot];
+    struct virtio_gpu_set_scanout* scanout = (struct virtio_gpu_set_scanout*)kvc->cmd_buf[cur_buf_slot];
     memset(scanout, 0, sizeof(*scanout));
     scanout->hdr.type = VIRTIO_GPU_CMD_SET_SCANOUT;
     scanout->scanout_id = 0;
@@ -371,42 +438,49 @@ void virtio_init_resources(struct gpu_device* gpu, int id) {
     scanout->r.y = 0;
     scanout->r.width = fb->w;
     scanout->r.height = fb->h;
-    virtio_submit_async(scanout, cmd_buf_phys[cur_buf_slot], sizeof(*scanout), resp_buf[cur_buf_slot], resp_buf_phys[cur_buf_slot], sizeof(struct virtio_gpu_ctrl_hdr));
+    virtio_submit_async(kvc, scanout, kvc->cmd_buf_phys[cur_buf_slot], sizeof(*scanout), kvc->resp_buf[cur_buf_slot], kvc->resp_buf_phys[cur_buf_slot], sizeof(struct virtio_gpu_ctrl_hdr));
 
     serial_print("[VIRTIO] Initialization of resources completed!\n");
+	return AOS_TRUE;
 }
 
-void virtio_set_mode(struct gpu_device* gpu, uint32_t w, uint32_t h, uint32_t bpp) {
+aos_bool virtio_set_mode(struct gpu_device* gpu, uint32_t w, uint32_t h, uint32_t bpp) {
     (void)gpu; (void)w; (void)h; (void)bpp;
+	return AOS_TRUE;
 }
 
-void virtio_switch_off(struct gpu_device* gpu) {
+aos_bool virtio_switch_off(struct gpu_device* gpu) {
+	if (gpu->controller_idx >= controller_count || !controllers) return AOS_FALSE;
+	virtio_controller* kvc = &controllers[gpu->controller_idx];
+
     serial_print("[VIRTIO] Switching Off...\n");
-    common_cfg->device_status = 0; // Reset
-    while (common_cfg->device_status != 0) { __asm__ volatile("pause"); }
+    kvc->common_cfg->device_status = 0; // Reset
+    while (kvc->common_cfg->device_status != 0) { __asm__ volatile("pause"); }
     serial_print("[VIRTIO] GPU Reset completed!\n[VIRTIO] Unmapping used memory!\n");
 
     // Unmap
-    uint64_t flags = spin_lock_irqsave(&virtq_lock);
-    avmf_free((uint64_t)virtq.desc);
+    uint64_t flags = spin_lock_irqsave(&kvc->virtq_lock);
+    avmf_free((uint64_t)kvc->virtq.desc);
     for (uint64_t i = 0; i < MAX_CMD_RESP_BUFS; i++) {
-        avmf_free((uint64_t)cmd_buf[i]);
-        avmf_free((uint64_t)resp_buf[i]);
+        avmf_free((uint64_t)kvc->cmd_buf[i]);
+        avmf_free((uint64_t)kvc->resp_buf[i]);
     }
-    spin_unlock_irqrestore(&virtq_lock, flags);
+    spin_unlock_irqrestore(&kvc->virtq_lock, flags);
 
     serial_print("[VIRTIO] Unmapping completed!\n");
 
     gpu->active = 0;
     serial_print("[VIRTIO] Switched off!\n");
+
+	return AOS_TRUE;
 }
 
-static void virtio_create_context(uint32_t ctx_id) {
-    while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) {
+static void virtio_create_context(virtio_controller* kvc, uint32_t ctx_id) {
+    while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) {
         __asm__ volatile("pause"); 
     }
-    uint64_t cur_buf_slot = main_buf_slot % MAX_CMD_RESP_BUFS;
-    struct virtio_gpu_ctx_create* cmd = (struct virtio_gpu_ctx_create*)cmd_buf[cur_buf_slot];
+    uint64_t cur_buf_slot = kvc->main_buf_slot % MAX_CMD_RESP_BUFS;
+    struct virtio_gpu_ctx_create* cmd = (struct virtio_gpu_ctx_create*)kvc->cmd_buf[cur_buf_slot];
     memset(cmd, 0, sizeof(*cmd));
     
     cmd->hdr.type = VIRTIO_GPU_CMD_CTX_CREATE;
@@ -414,21 +488,21 @@ static void virtio_create_context(uint32_t ctx_id) {
     cmd->nlen = 14;
     memcpy(cmd->debug_name, "Pyrion-Context", 14);
     
-    virtio_submit_sync(cmd, cmd_buf_phys[cur_buf_slot], sizeof(*cmd), resp_buf[cur_buf_slot], resp_buf_phys[cur_buf_slot], sizeof(struct virtio_gpu_ctrl_hdr));
+    virtio_submit_sync(kvc, cmd, kvc->cmd_buf_phys[cur_buf_slot], sizeof(*cmd), kvc->resp_buf[cur_buf_slot], kvc->resp_buf_phys[cur_buf_slot], sizeof(struct virtio_gpu_ctrl_hdr));
 }
 
-static void virtio_destroy_context(uint32_t ctx_id) {
-    while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) {
+static void virtio_destroy_context(virtio_controller* kvc, uint32_t ctx_id) {
+    while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) {
         __asm__ volatile("pause"); 
     }
-    uint64_t cur_buf_slot = main_buf_slot % MAX_CMD_RESP_BUFS;
-    struct virtio_gpu_ctx_destroy* cmd = (struct virtio_gpu_ctx_destroy*)cmd_buf[cur_buf_slot];
+    uint64_t cur_buf_slot = kvc->main_buf_slot % MAX_CMD_RESP_BUFS;
+    struct virtio_gpu_ctx_destroy* cmd = (struct virtio_gpu_ctx_destroy*)kvc->cmd_buf[cur_buf_slot];
     memset(cmd, 0, sizeof(*cmd));
     
     cmd->hdr.type = VIRTIO_GPU_CMD_CTX_DESTROY;
     cmd->hdr.ctx_id = ctx_id;
     
-    virtio_submit_sync(cmd, cmd_buf_phys[cur_buf_slot], sizeof(*cmd), resp_buf[cur_buf_slot], resp_buf_phys[cur_buf_slot], sizeof(struct virtio_gpu_ctrl_hdr));
+    virtio_submit_sync(kvc, cmd, kvc->cmd_buf_phys[cur_buf_slot], sizeof(*cmd), kvc->resp_buf[cur_buf_slot], kvc->resp_buf_phys[cur_buf_slot], sizeof(struct virtio_gpu_ctrl_hdr));
 }
 
 // Pyrion implementation
@@ -460,10 +534,13 @@ void pyrion_init_virtio(void) {
 void pyrion_finish_virtio(void) {
     for (uint64_t i = 0; i < MAX_PYRION_CONTEXTS; i++) {
         struct pyrion_ctx* ctx = (struct pyrion_ctx*)p_contexts[i];
+		if (ctx->controller_idx > controller_count || !controllers) continue;
+		virtio_controller* kvc = &controllers[ctx->controller_idx];
+
         if (!ctx || !ctx->ctx_phys) continue;
 
         if (ctx->valid == 1) {
-            virtio_destroy_context(i);
+            virtio_destroy_context(kvc, i);
             if (ctx->driver_data) avmf_free((uint64_t)ctx->driver_data);
         }
 
@@ -507,6 +584,9 @@ static uint32_t rgba_to_u32(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
 }
 
 struct pyrion_ctx* pyrion_create_ctx_virtio(void) {
+	if (0 >= controller_count || !controllers) return NULL;
+	virtio_controller* kvc = &controllers[0];
+
     serial_print("[Pyrion] Creating Context...\n");
 
     uint64_t slot = pyrion_get_free_ctx_slot();
@@ -520,7 +600,7 @@ struct pyrion_ctx* pyrion_create_ctx_virtio(void) {
     if (!ctx->driver_data) return NULL;
     memset(ctx->driver_data, 0, 0x1000);
 
-    virtio_create_context(ctx->ctx_id);
+    virtio_create_context(kvc, ctx->ctx_id);
     
     ctx->viewport.x = 0; ctx->viewport.y=0; ctx->viewport.width=0; ctx->viewport.height; ctx->viewport.color = 0;
     ctx->valid = 1;
@@ -531,8 +611,10 @@ struct pyrion_ctx* pyrion_create_ctx_virtio(void) {
 
 void pyrion_destroy_ctx_virtio(struct pyrion_ctx* ctx) {
     if (ctx == NULL || ctx->ctx_id > 0) return;
+	if (ctx->controller_idx >= controller_count || !controllers) return;
+	virtio_controller* kvc = &controllers[ctx->controller_idx];
 
-    virtio_destroy_context(ctx->ctx_id);
+    virtio_destroy_context(kvc, ctx->ctx_id);
 
     if (ctx->driver_data) avmf_free((uint64_t)ctx->driver_data);
 
@@ -542,13 +624,16 @@ void pyrion_destroy_ctx_virtio(struct pyrion_ctx* ctx) {
 
 void pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* viewport) {
     if (ctx == NULL || ctx->ctx_id > MAX_PYRION_CONTEXTS) return;
+	if (ctx->controller_idx >= controller_count || !controllers) return;
+	virtio_controller* kvc = &controllers[ctx->controller_idx];
+
     uint64_t res_id = ctx->ctx_id + MAX_PYRION_CONTEXTS; // Ensure not a single resource id causes trouble
 
     // Create a 3D Resource (Texture) on the Host GPU
-    while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
-    uint64_t slot = main_buf_slot % MAX_CMD_RESP_BUFS;
+    while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
+    uint64_t slot = kvc->main_buf_slot % MAX_CMD_RESP_BUFS;
     
-    struct virtio_gpu_resource_create_3d* c3d = (struct virtio_gpu_resource_create_3d*)cmd_buf[slot];
+    struct virtio_gpu_resource_create_3d* c3d = (struct virtio_gpu_resource_create_3d*)kvc->cmd_buf[slot];
     memset(c3d, 0, sizeof(*c3d));
     c3d->hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_3D;
     c3d->resource_id = res_id;
@@ -562,7 +647,7 @@ void pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* viewport
     c3d->nr_samples = 0;
     c3d->flags = VIRTIO_GPU_RESOURCE_FLAG_Y_0_TOP;
 
-    virtio_submit_sync(c3d, cmd_buf_phys[slot], sizeof(*c3d), resp_buf[slot], resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
+    virtio_submit_sync(kvc, c3d, kvc->cmd_buf_phys[slot], sizeof(*c3d), kvc->resp_buf[slot], kvc->resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
 
     // Attach backing
     ctx->driver_data2 = (void*)avmf_alloc(viewport->width * viewport->height * 4, MALLOC_TYPE_SENSITIVE, PAGE_PRESENT | PAGE_RW, &ctx->driver_data_phys2);
@@ -571,15 +656,15 @@ void pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* viewport
         return;
     }
 
-    while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
-    slot = main_buf_slot % MAX_CMD_RESP_BUFS;
+    while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
+    slot = kvc->main_buf_slot % MAX_CMD_RESP_BUFS;
 
     struct attb {
         struct virtio_gpu_resource_attach_backing att;
         struct virtio_gpu_mem_entry entry;
     } __attribute__((packed));
 
-    struct attb* attb = (struct attb*)cmd_buf[slot];
+    struct attb* attb = (struct attb*)kvc->cmd_buf[slot];
     memset(attb, 0, sizeof(*attb));
     attb->att.hdr.type = VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING;
     attb->att.resource_id = res_id;
@@ -587,25 +672,25 @@ void pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* viewport
     attb->entry.addr = (uint64_t)ctx->driver_data_phys2;
     attb->entry.length = viewport->width * viewport->height * 4;
 
-    virtio_submit_sync(attb, cmd_buf_phys[slot], sizeof(*attb), resp_buf[slot], resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
+    virtio_submit_sync(kvc, attb, kvc->cmd_buf_phys[slot], sizeof(*attb), kvc->resp_buf[slot], kvc->resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
 
     // Attach the resource to the 3D Context
-    while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
-    slot = main_buf_slot % MAX_CMD_RESP_BUFS;
+    while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
+    slot = kvc->main_buf_slot % MAX_CMD_RESP_BUFS;
 
-    struct virtio_gpu_ctx_resource* att = (struct virtio_gpu_ctx_resource*)cmd_buf[slot];
+    struct virtio_gpu_ctx_resource* att = (struct virtio_gpu_ctx_resource*)kvc->cmd_buf[slot];
     memset(att, 0, sizeof(*att));
     att->hdr.type = VIRTIO_GPU_CMD_CTX_ATTACH_RESOURCE;
     att->hdr.ctx_id = ctx->ctx_id;
     att->resource_id = res_id;
     
-    virtio_submit_sync(att, cmd_buf_phys[slot], sizeof(*att), resp_buf[slot], resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
+    virtio_submit_sync(kvc, att, kvc->cmd_buf_phys[slot], sizeof(*att), kvc->resp_buf[slot], kvc->resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
 
     // Set scanout
-    while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
-    slot = main_buf_slot % MAX_CMD_RESP_BUFS;
+    while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
+    slot = kvc->main_buf_slot % MAX_CMD_RESP_BUFS;
 
-    struct virtio_gpu_set_scanout* scanout = (struct virtio_gpu_set_scanout*)cmd_buf[slot];
+    struct virtio_gpu_set_scanout* scanout = (struct virtio_gpu_set_scanout*)kvc->cmd_buf[slot];
     memset(scanout, 0, sizeof(*scanout));
     scanout->hdr.type = VIRTIO_GPU_CMD_SET_SCANOUT;
     scanout->resource_id = res_id;
@@ -615,12 +700,12 @@ void pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* viewport
     scanout->r.x = 0;
     scanout->r.y = 0;
 
-    virtio_submit_sync(scanout, cmd_buf_phys[slot], sizeof(*scanout), resp_buf[slot], resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
+    virtio_submit_sync(kvc, scanout, kvc->cmd_buf_phys[slot], sizeof(*scanout), kvc->resp_buf[slot], kvc->resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
 
     ctx->res_id = res_id;
     ctx->viewport = *viewport;
 
-    if (acceleration_present != 1) {
+    if (kvc->acceleration_present != 1) {
         serial_print("[VIRTIO] No Acceleration in Viewport/Context!\n");
         FB_Info_t* fb = (FB_Info_t*)avmf_alloc(viewport->width * viewport->height * sizeof(uint32_t), MALLOC_TYPE_SENSITIVE, PAGE_RW | PAGE_PRESENT, &ctx->fb.phys_addr);
         if (!fb) {
@@ -678,21 +763,23 @@ void pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* viewport
 
 void pyrion_flush_virtio(struct pyrion_ctx* ctx) {
     if (ctx == NULL || ctx->valid != 1) return;
+	if (ctx->controller_idx >= controller_count || !controllers) return;
+	virtio_controller* kvc = &controllers[ctx->controller_idx];
 
-    if (acceleration_present != 1) {
-        virtio_flush(ctx->viewport.x, ctx->viewport.y, ctx->viewport.width, ctx->viewport.height, ctx->res_id);
+    if (kvc->acceleration_present != 1) {
+        virtio_flush(kvc->gpu, ctx->viewport.x, ctx->viewport.y, ctx->viewport.width, ctx->viewport.height, ctx->res_id);
         return;
     }
 
     uint32_t stream_size = ctx->driver_var;
     if (stream_size == 0) return;
     if (!ctx->driver_data || stream_size < 1) {
-        while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) {
+        while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) {
             __asm__ volatile("pause"); 
         }
-        uint64_t slot = main_buf_slot % MAX_CMD_RESP_BUFS;
+        uint64_t slot = kvc->main_buf_slot % MAX_CMD_RESP_BUFS;
 
-        struct virtio_gpu_resource_flush* f = (struct virtio_gpu_resource_flush*)cmd_buf[slot];
+        struct virtio_gpu_resource_flush* f = (struct virtio_gpu_resource_flush*)kvc->cmd_buf[slot];
         memset(f, 0, sizeof(*f));
         f->hdr.type = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
         f->hdr.ctx_id = ctx->ctx_id;
@@ -703,7 +790,7 @@ void pyrion_flush_virtio(struct pyrion_ctx* ctx) {
         f->resource_id = ctx->res_id;
         f->padding = 0;
 
-        virtio_submit_async(f, cmd_buf_phys[slot], sizeof(*f), resp_buf[slot], resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
+        virtio_submit_async(kvc, f, kvc->cmd_buf_phys[slot], sizeof(*f), kvc->resp_buf[slot], kvc->resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
         return;
     }
 
@@ -712,58 +799,58 @@ void pyrion_flush_virtio(struct pyrion_ctx* ctx) {
     }
     __asm__ volatile("mfence" ::: "memory");
 
-    while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
-    uint64_t slot = main_buf_slot % MAX_CMD_RESP_BUFS;
+    while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
+    uint64_t slot = kvc->main_buf_slot % MAX_CMD_RESP_BUFS;
 
-    struct virtio_gpu_cmd_submit_3d* virgl = (struct virtio_gpu_cmd_submit_3d*)cmd_buf[slot];
+    struct virtio_gpu_cmd_submit_3d* virgl = (struct virtio_gpu_cmd_submit_3d*)kvc->cmd_buf[slot];
     virgl->hdr.type = VIRTIO_GPU_CMD_SUBMIT_3D;
     virgl->hdr.ctx_id = ctx->ctx_id;
     virgl->size = stream_size;
 
-    uint16_t head = virtq.free_head;
-    uint16_t next1 = (head + 1) % virtq.queue_size;
-    uint16_t next2 = (next1 + 1) % virtq.queue_size;
+    uint16_t head = kvc->virtq.free_head;
+    uint16_t next1 = (head + 1) % kvc->virtq.queue_size;
+    uint16_t next2 = (next1 + 1) % kvc->virtq.queue_size;
 
-    uint64_t flags = spin_lock_irqsave(&virtq_lock);
+    uint64_t flags = spin_lock_irqsave(&kvc->virtq_lock);
     // Descriptor 1: The Command (Read-only)
-    virtq.desc[head].addr = (uintptr_t)cmd_buf_phys[slot];
-    virtq.desc[head].len = sizeof(*virgl);
-    virtq.desc[head].flags = VIRTQ_DESC_F_NEXT;
-    virtq.desc[head].next = next1;
+    kvc->virtq.desc[head].addr = (uintptr_t)kvc->cmd_buf_phys[slot];
+    kvc->virtq.desc[head].len = sizeof(*virgl);
+    kvc->virtq.desc[head].flags = VIRTQ_DESC_F_NEXT;
+    kvc->virtq.desc[head].next = next1;
 
     // Descriptor 2: The stream (Ready-Only)
-    virtq.desc[next1].addr = (uintptr_t)(ctx->driver_data_phys);
-    virtq.desc[next1].len = stream_size;
-    virtq.desc[next1].flags = VIRTQ_DESC_F_NEXT;
-    virtq.desc[next1].next = next2;
+    kvc->virtq.desc[next1].addr = (uintptr_t)(ctx->driver_data_phys);
+    kvc->virtq.desc[next1].len = stream_size;
+    kvc->virtq.desc[next1].flags = VIRTQ_DESC_F_NEXT;
+    kvc->virtq.desc[next1].next = next2;
 
     // Descriptor 3: The response (Write-Only)
-    virtq.desc[next2].addr = resp_buf_phys[slot];
-    virtq.desc[next2].len = sizeof(struct virtio_gpu_ctrl_hdr);
-    virtq.desc[next2].flags = VIRTQ_DESC_F_WRITE;
-    virtq.desc[next2].next = 0;
+    kvc->virtq.desc[next2].addr = kvc->resp_buf_phys[slot];
+    kvc->virtq.desc[next2].len = sizeof(struct virtio_gpu_ctrl_hdr);
+    kvc->virtq.desc[next2].flags = VIRTQ_DESC_F_WRITE;
+    kvc->virtq.desc[next2].next = 0;
 
-    virtq.avail->ring[virtq.avail->idx % virtq.queue_size] = head;
+    kvc->virtq.avail->ring[kvc->virtq.avail->idx % kvc->virtq.queue_size] = head;
     __asm__ volatile("sfence" ::: "memory");
-    virtq.avail->idx++;
+    kvc->virtq.avail->idx++;
 
-    virtq.free_head = (next2 + 1) % virtq.queue_size;
-    spin_unlock_irqrestore(&virtq_lock, flags);
+    kvc->virtq.free_head = (next2 + 1) % kvc->virtq.queue_size;
+    spin_unlock_irqrestore(&kvc->virtq_lock, flags);
 
     // Notify Doorbell
-    uintptr_t db = notify_base + (common_cfg->queue_notify_off * notify_multiplier);
+    uintptr_t db = kvc->notify_base + (kvc->common_cfg->queue_notify_off * kvc->notify_multiplier);
     mmio_write32(db, 0);
 
     // Poll for completion
-    while (virtq.used->idx != virtq.avail->idx) {
+    while (kvc->virtq.used->idx != kvc->virtq.avail->idx) {
         __asm__ volatile("pause");
     }
     
     ctx->driver_var = 0;
 
-    while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
-    slot = main_buf_slot % MAX_CMD_RESP_BUFS;
-    struct virtio_gpu_transfer_to_host_3d* t = (struct virtio_gpu_transfer_to_host_3d*)cmd_buf[slot];
+    while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
+    slot = kvc->main_buf_slot % MAX_CMD_RESP_BUFS;
+    struct virtio_gpu_transfer_to_host_3d* t = (struct virtio_gpu_transfer_to_host_3d*)kvc->cmd_buf[slot];
     memset(t, 0, sizeof(*t));
     t->hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D;
     t->hdr.ctx_id = ctx->ctx_id;
@@ -772,14 +859,14 @@ void pyrion_flush_virtio(struct pyrion_ctx* ctx) {
     t->h = ctx->viewport.height;
     t->d = 1;
 
-    virtio_submit_sync(t, cmd_buf_phys[slot], sizeof(*t), resp_buf[slot], resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
+    virtio_submit_sync(kvc, t, kvc->cmd_buf_phys[slot], sizeof(*t), kvc->resp_buf[slot], kvc->resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
     
-    while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) {
+    while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) {
         __asm__ volatile("pause"); 
     }
-    slot = main_buf_slot % MAX_CMD_RESP_BUFS;
+    slot = kvc->main_buf_slot % MAX_CMD_RESP_BUFS;
 
-    struct virtio_gpu_resource_flush* f = (struct virtio_gpu_resource_flush*)cmd_buf[slot];
+    struct virtio_gpu_resource_flush* f = (struct virtio_gpu_resource_flush*)kvc->cmd_buf[slot];
     memset(f, 0, sizeof(*f));
     f->hdr.type = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
     f->hdr.ctx_id = ctx->ctx_id;
@@ -790,11 +877,14 @@ void pyrion_flush_virtio(struct pyrion_ctx* ctx) {
     f->resource_id = ctx->res_id;
     f->padding = 0;
 
-    virtio_submit_async(f, cmd_buf_phys[slot], sizeof(*f), resp_buf[slot], resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
+    virtio_submit_async(kvc, f, kvc->cmd_buf_phys[slot], sizeof(*f), kvc->resp_buf[slot], kvc->resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
 }
 
 void pyrion_clear_virtio(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
-    if (acceleration_present != 1) {
+	if (ctx->controller_idx >= controller_count || !controllers) return;
+	virtio_controller* kvc = &controllers[ctx->controller_idx];
+
+    if (kvc->acceleration_present != 1) {
         if (!ctx->fb.addr) return;
         fb_clear(&ctx->fb, rgba_to_u32(r, g, b, a));
         return;
@@ -809,7 +899,10 @@ void pyrion_clear_virtio(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8_t b
 }
 
 void pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
-    if (acceleration_present != 1) {
+	if (ctx->controller_idx >= controller_count || !controllers) return;
+	virtio_controller* kvc = &controllers[ctx->controller_idx];
+
+    if (kvc->acceleration_present != 1) {
         if (!ctx->fb.addr) return;
         fb_put_pixel(&ctx->fb, x, y, rgba_to_u32(r, g, b, a));
         return;
@@ -834,7 +927,10 @@ void pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint8_t
 }
 
 void pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, uint32_t w, uint32_t h, uint32_t font_res_id) {
-    if (acceleration_present != 1) {
+	if (ctx->controller_idx >= controller_count || !controllers) return;
+	virtio_controller* kvc = &controllers[ctx->controller_idx];
+
+    if (kvc->acceleration_present != 1) {
         if (!ctx->fb.addr) return;
         fb_printc(&ctx->fb, &ctx->fb_info, '-');
         return;
@@ -857,16 +953,19 @@ void pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uin
     pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_RESOURCE_COPY_REGION, VIRTIO_VIRGL_OBJECT_NULL, args, 13);
 }
 
-void pyrion_destroy_font_virtio(uint32_t font_res_id, void* font_mem) {
-    while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
-    uint64_t slot = main_buf_slot % MAX_CMD_RESP_BUFS;
+void pyrion_destroy_font_virtio(struct pyrion_ctx* ctx, uint32_t font_res_id, void* font_mem) {
+	if (ctx->controller_idx >= controller_count || !controllers) return;
+	virtio_controller* kvc = &controllers[ctx->controller_idx];
 
-    struct virtio_gpu_resource_unref* unref = (struct virtio_gpu_resource_unref*)cmd_buf[slot];
+    while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
+    uint64_t slot = kvc->main_buf_slot % MAX_CMD_RESP_BUFS;
+
+    struct virtio_gpu_resource_unref* unref = (struct virtio_gpu_resource_unref*)kvc->cmd_buf[slot];
     memset(unref, 0, sizeof(*unref));
     unref->hdr.type = VIRTIO_GPU_CMD_RESOURCE_UNREF;
     unref->resource_id = font_res_id;
 
-    virtio_submit_sync(unref, cmd_buf_phys[slot], sizeof(*unref), resp_buf[slot], resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
+    virtio_submit_sync(kvc, unref, kvc->cmd_buf_phys[slot], sizeof(*unref), kvc->resp_buf[slot], kvc->resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
 
     if (font_mem) {
         avmf_free((uint64_t)font_mem);
@@ -874,13 +973,16 @@ void pyrion_destroy_font_virtio(uint32_t font_res_id, void* font_mem) {
 }
 
 uint32_t pyrion_upload_font_virtio(struct pyrion_ctx* ctx, uint64_t atlas_phys, uint32_t* atlas, uint32_t atlas_w, uint32_t atlas_total_h) {
+	if (ctx->controller_idx >= controller_count || !controllers) return 0;
+	virtio_controller* kvc = &controllers[ctx->controller_idx];
+
     uint32_t res_id = current_font_resource_id++;
 
     // Create 3D Resource
-    while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
-    uint64_t slot = main_buf_slot % MAX_CMD_RESP_BUFS;
+    while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
+    uint64_t slot = kvc->main_buf_slot % MAX_CMD_RESP_BUFS;
 
-    struct virtio_gpu_resource_create_3d* c3d = (struct virtio_gpu_resource_create_3d*)cmd_buf[slot];
+    struct virtio_gpu_resource_create_3d* c3d = (struct virtio_gpu_resource_create_3d*)kvc->cmd_buf[slot];
     memset(c3d, 0, sizeof(*c3d));
     c3d->hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_3D;
     c3d->hdr.ctx_id = 0;
@@ -892,9 +994,9 @@ uint32_t pyrion_upload_font_virtio(struct pyrion_ctx* ctx, uint64_t atlas_phys, 
     c3d->height = atlas_total_h;
     c3d->depth = 1;
     c3d->array_size = 1;
-    virtio_submit_sync(c3d, cmd_buf_phys[slot], sizeof(*c3d), resp_buf[slot], resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
+    virtio_submit_sync(kvc, c3d, kvc->cmd_buf_phys[slot], sizeof(*c3d), kvc->resp_buf[slot], kvc->resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
 
-    struct virtio_gpu_ctrl_hdr* resp = (struct virtio_gpu_ctrl_hdr*)resp_buf[slot];
+    struct virtio_gpu_ctrl_hdr* resp = (struct virtio_gpu_ctrl_hdr*)kvc->resp_buf[slot];
     if (resp->type != VIRTIO_GPU_RESP_OK_NODATA) {
         serial_printf("[VIRTIO:PYRION] Font upload failed (during create). resp type: %x\n", resp->type);
         return 0;
@@ -905,10 +1007,10 @@ uint32_t pyrion_upload_font_virtio(struct pyrion_ctx* ctx, uint64_t atlas_phys, 
         struct virtio_gpu_resource_attach_backing att;
         struct virtio_gpu_mem_entry entry;
     } __attribute__((packed));
-    while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
-    slot = main_buf_slot % MAX_CMD_RESP_BUFS;
+    while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
+    slot = kvc->main_buf_slot % MAX_CMD_RESP_BUFS;
 
-    struct cmd_struct* cmd = (struct cmd_struct*)cmd_buf[slot];
+    struct cmd_struct* cmd = (struct cmd_struct*)kvc->cmd_buf[slot];
     memset(cmd, 0, sizeof(*cmd));
     cmd->att.hdr.type = VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING;
     cmd->att.hdr.ctx_id = 0;
@@ -916,36 +1018,36 @@ uint32_t pyrion_upload_font_virtio(struct pyrion_ctx* ctx, uint64_t atlas_phys, 
     cmd->att.nr_entries = 1;
     cmd->entry.addr = atlas_phys;
     cmd->entry.length = atlas_w * atlas_total_h * sizeof(uint32_t);
-    virtio_submit_sync(cmd, cmd_buf_phys[slot], sizeof(*cmd), resp_buf[slot], resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
+    virtio_submit_sync(kvc, cmd, kvc->cmd_buf_phys[slot], sizeof(*cmd), kvc->resp_buf[slot], kvc->resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
 
-    resp = (struct virtio_gpu_ctrl_hdr*)resp_buf[slot];
+    resp = (struct virtio_gpu_ctrl_hdr*)kvc->resp_buf[slot];
     if (resp->type != VIRTIO_GPU_RESP_OK_NODATA) {
         serial_printf("[VIRTIO:PYRION] Font upload failed (during attach_backing). resp type: %x\n", resp->type);
         return 0;
     }
 
     // Attach to ctx
-    while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
-    slot = main_buf_slot % MAX_CMD_RESP_BUFS;
+    while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
+    slot = kvc->main_buf_slot % MAX_CMD_RESP_BUFS;
 
-    struct virtio_gpu_ctx_resource* link = (struct virtio_gpu_ctx_resource*)cmd_buf[slot];
+    struct virtio_gpu_ctx_resource* link = (struct virtio_gpu_ctx_resource*)kvc->cmd_buf[slot];
     memset(link, 0, sizeof(*link));
     link->hdr.type = VIRTIO_GPU_CMD_CTX_ATTACH_RESOURCE;
     link->hdr.ctx_id = ctx->ctx_id;
     link->resource_id = res_id;
-    virtio_submit_sync(link, cmd_buf_phys[slot], sizeof(*link), resp_buf[slot], resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
+    virtio_submit_sync(kvc, link, kvc->cmd_buf_phys[slot], sizeof(*link), kvc->resp_buf[slot], kvc->resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
 
-    resp = (struct virtio_gpu_ctrl_hdr*)resp_buf[slot];
+    resp = (struct virtio_gpu_ctrl_hdr*)kvc->resp_buf[slot];
     if (resp->type != VIRTIO_GPU_RESP_OK_NODATA) {
         serial_printf("[VIRTIO:PYRION] Font upload failed (during attach). resp type: %x\n", resp->type);
         return 0;
     }
 
     // Transfer to Host
-    while (main_buf_slot - worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
-    slot = main_buf_slot % MAX_CMD_RESP_BUFS;
+    while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) { __asm__ volatile("pause"); }
+    slot = kvc->main_buf_slot % MAX_CMD_RESP_BUFS;
 
-    struct virtio_gpu_transfer_to_host_3d* t = (struct virtio_gpu_transfer_to_host_3d*)cmd_buf[slot];
+    struct virtio_gpu_transfer_to_host_3d* t = (struct virtio_gpu_transfer_to_host_3d*)kvc->cmd_buf[slot];
     memset(t, 0, sizeof(*t));
     t->hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D;
     t->hdr.ctx_id = ctx->ctx_id;
@@ -953,9 +1055,9 @@ uint32_t pyrion_upload_font_virtio(struct pyrion_ctx* ctx, uint64_t atlas_phys, 
     t->w = atlas_w;
     t->h = atlas_total_h;
     t->d = 1;
-    virtio_submit_sync(t, cmd_buf_phys[slot], sizeof(*t), resp_buf[slot], resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
+    virtio_submit_sync(kvc, t, kvc->cmd_buf_phys[slot], sizeof(*t), kvc->resp_buf[slot], kvc->resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
 
-    resp = (struct virtio_gpu_ctrl_hdr*)resp_buf[slot];
+    resp = (struct virtio_gpu_ctrl_hdr*)kvc->resp_buf[slot];
     if (resp->type != VIRTIO_GPU_RESP_OK_NODATA) {
         serial_printf("[VIRTIO:PYRION] Font upload failed (during transfer). resp type: %x\n", resp->type);
         return 0;
@@ -965,7 +1067,10 @@ uint32_t pyrion_upload_font_virtio(struct pyrion_ctx* ctx, uint64_t atlas_phys, 
 }
 
 void pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
-    if (acceleration_present != 1) {
+    if (ctx->controller_idx >= controller_count || !controllers) return;
+	virtio_controller* kvc = &controllers[ctx->controller_idx];
+	
+	if (kvc->acceleration_present != 1) {
         if (!ctx->fb.addr) return;
         fb_draw_rect(&ctx->fb, x, y, w, h, rgba_to_u32(r, g, b, a));
         return;

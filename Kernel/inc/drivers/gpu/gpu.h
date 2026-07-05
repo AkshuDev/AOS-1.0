@@ -14,8 +14,11 @@
 // APIs
 #include <inc/drivers/gpu/apis/pyrion.h>
 
+struct AOS_Module;
+
 typedef struct gpu_device {
     const char* name;
+	uint64_t controller_idx;
 
     pcie_device_t* pcie_device;
     PCIe_FB* framebuffer;
@@ -23,12 +26,12 @@ typedef struct gpu_device {
     uint8_t acceleration_present;
 
     // Function pointers
-    void (*init)(struct gpu_device* gpu);
-    void (*init_resources)(struct gpu_device* gpu, int resource_id);
-    void (*set_mode)(struct gpu_device* gpu, uint32_t width, uint32_t height, uint32_t bpp);
-    void (*swap_buffers)(struct gpu_device* gpu);
-    void (*flush)(uint32_t x, uint32_t y, uint32_t w, uint32_t h, int resource_id);
-    void (*switch_off)(struct gpu_device* gpu);
+    aos_bool (*init)(struct AOS_Module* m);
+    aos_bool (*init_resources)(struct gpu_device* gpu, int resource_id);
+    aos_bool (*set_mode)(struct gpu_device* gpu, uint32_t width, uint32_t height, uint32_t bpp);
+    aos_bool (*swap_buffers)(struct gpu_device* gpu);
+    aos_bool (*flush)(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, uint32_t h, int resource_id);
+    aos_bool (*switch_off)(struct gpu_device* gpu);
 
     // API pointers
     struct pyrion_api pyrion;
@@ -39,5 +42,4 @@ typedef struct gpu_device {
 void svga_write(uintptr_t mmio_base, uint32_t index, uint32_t value, uint32_t svga_index_port, uint32_t svga_value_port) __attribute__((used));
 uint32_t svga_read(uintptr_t mmio_base, uint32_t index, uint32_t svga_index_port, uint32_t svga_value_port) __attribute__((used));
 
-uint64_t gpu_get_framebuffer_and_info(PCIe_FB* fb, pcie_device_t* dev, gpu_device_t* gpu) __attribute__((used));
-uint8_t gpu_find_gpu(PCIe_FB* fb, pcie_device_t* dev, gpu_device_t* gpu) __attribute__((used));
+aos_bool gpu_find_gpu(PCIe_FB* fb, struct AOS_Module** out) __attribute__((used));

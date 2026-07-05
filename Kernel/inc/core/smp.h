@@ -20,6 +20,7 @@ enum core_status {
 
 struct thread_state {
     void* rsp;
+	void* arg;
 
     uint64_t tid;
 
@@ -57,8 +58,8 @@ struct core_state {
 } __attribute__((packed));
 
 void smp_init(void) __attribute__((used));
-void smp_push_task(uint32_t core_idx, void (*entry)(void)) __attribute__((used));
-void smp_push_task_bsp(void (*entry)(void)) __attribute__((used));
+void smp_push_task(uint32_t core_idx, void (*entry)(void*), void* arg) __attribute__((used));
+void smp_push_task_bsp(void (*entry)(void*), void* arg) __attribute__((used));
 void smp_yield(void) __attribute__((used));
 
 uint8_t smp_get_first_free_core(uint32_t* out) __attribute__((used));

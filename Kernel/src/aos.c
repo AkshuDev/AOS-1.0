@@ -80,6 +80,8 @@ void kernel_main(void) {
     serial_print("AOS++ LOADED!\n");
 
     pager_init(); // Inits AVMF Too
+	serial_init();
+	
 	gdt_init();
 	tss_init();
 
@@ -115,7 +117,7 @@ void kernel_main(void) {
         .y = 0,
         .fg = VMEM_COLOR_WHITE,
         .bg = VMEM_COLOR_BLACK,
-        .serial_out = 1
+        .serial_out = AOS_TRUE
     };
 	vmem_init(kget_sysinfo());
     vmem_clear_screen(&vmem_design);

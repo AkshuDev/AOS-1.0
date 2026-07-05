@@ -66,11 +66,6 @@ void get_framebuffer_info_vmware(PCIe_FB* fb, pcie_device_t* device, gpu_device_
 
 void get_framebuffer_info_virtio(PCIe_FB* fb, pcie_device_t* device, gpu_device_t* gpu) {
     if (device->vendor_id != VirtIo_VENDORID) return;
-    //Class Code: ?
-    //Vendor ID: 0x1AF4
-    //Device ID: 0x1050
-    //BAR0: MMIO
-    //BAR1: Framebuffer
 
     uint32_t bar0 = pcie_read_bar(device->bus, device->slot, device->func, 0);
     uint32_t bar1 = pcie_read_bar(device->bus, device->slot, device->func, 1);
@@ -85,105 +80,31 @@ void get_framebuffer_info_virtio(PCIe_FB* fb, pcie_device_t* device, gpu_device_
     gpu->framebuffer = fb;
 }
 
-uint64_t gpu_get_framebuffer_and_info(PCIe_FB* fb, pcie_device_t* dev, gpu_device_t* gpu) {
-    uint8_t bus, slot, func;
-    uint64_t bar_value = 0;
-
-    for (bus = 0; bus < PCI_MAX_BUS; bus++) {
-        for (slot = 0; slot < PCI_MAX_SLOT; slot++) {
-            for (func = 0; func < PCI_MAX_FUNC; func++) {
-                uint32_t data = pcie_read(bus, slot, func, 0);
-                if (data == 0xFFFFFFFF) continue;
-
-                uint16_t vendor = data & 0xFFFF;
-                uint16_t device = (data >> 16) & 0xFFFF;
-                if (vendor == 0xFFFF) continue;
-
-                uint32_t class_data = pcie_read(bus, slot, func, 0x08);
-                uint8_t class_code = (class_data >> 24) & 0xFF;
-                uint8_t subclass   = (class_data >> 16) & 0xFF;
-
-                if (class_code == PCI_CLASS_DISPLAY || class_code == PCI_VGA_DISPLAY) {
-                    // Found a Display controller
-                    for (int bar = 0; bar < PCI_BAR_COUNT; bar++) {
-                        // uint32_t cmd_reg = pcie_read(bus, slot, func, 0x04); // Enable the device
-                        // pcie_write(bus, slot, func, 0x04, cmd_reg | 0x07);
-
-                        uint32_t bar_low = pcie_read_bar(bus, slot, func, bar);
-                        if ((bar_low & 0x06) == 0x04) {
-                            uint32_t bar_high = pcie_read_bar(bus, slot, func, bar + 1);
-                            bar_value = ((uint64_t)bar_high << 32) | ((uint64_t)bar_low);
-                            bar++;
-                        } else {
-                            bar_value = (uint64_t)bar_low;
-                        }
-
-                        if (bar_value == 0xFFFFFFFF || bar_value == 0 || bar_value == 0xFFFFFFFFFFFFFFFF)
-                            continue; // skip invalid
-
-                        if (bar_value & 1)
-                            continue; // I/O space, not memory
-
-                        uint64_t fb_phys = bar_value & ~0x0FULL; // mask flags
-                        if (fb_phys) {
-                            // check if this is a framebuffer-like address
-                            if (fb_phys >= 0xE0000000) {
-                                dev->vendor_id = vendor;
-                                dev->device_id = device;
-                                dev->class_code = class_code;
-                                dev->subclass = subclass;
-                                dev->prog_if = 0;
-                                dev->bus = bus;
-                                dev->slot = slot;
-                                dev->func = func;
-                                dev->bar0 = pcie_read_bar(bus, slot, func, 0);
-
-                                if (vendor == VMware_VENDORID) {
-                                    get_framebuffer_info_vmware(fb, dev, gpu);
-                                } else if (vendor == VirtIo_VENDORID) {
-                                    get_framebuffer_info_virtio(fb, dev, gpu);
-                                }
-                                fb->phys = fb_phys;
-
-                                return fb_phys; // plausible framebuffer
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    return 0;
-}
-
-uint8_t gpu_find_gpu(PCIe_FB* fb, pcie_device_t* dev, gpu_device_t* gpu) {
+aos_bool gpu_find_gpu(PCIe_FB* fb, struct AOS_Module** out) {
     struct AOS_Module* m = module_get_first_applicable_registered_driver(PCI_VGA_DISPLAY, PCI_SUBCLASS_VGA, 1, 0, 0, 0, 0, 0, 0);
 
     if (!m) {
         serial_print("[GPU Controller] Did not find any registered GPUs!\n");
-        return 0;
+        return AOS_FALSE;
     }
     if (m->hdr.type != MODULE_TYPE_DRIVER || m->Modules.driver_module.type != MODULE_DRIVER_TYPE_GPU) {
         serial_print("[GPU Controller] Did not find any registered GPU drivers!\n");
-        return 0;
+        return AOS_FALSE;
     }
 
-    pcie_device_t* d = &m->Modules.driver_module.pcie_device;
-    memcpy(dev, d, sizeof(pcie_device_t));
-    memcpy(gpu, &m->Modules.driver_module.DriverConnections.gpu_connector, sizeof(gpu_device_t));
-    
     switch (m->Modules.driver_module.pcie_device.vendor_id) {
         case VirtIo_VENDORID: {
-            get_framebuffer_info_virtio(fb, d, &m->Modules.driver_module.DriverConnections.gpu_connector);
+            get_framebuffer_info_virtio(fb, &m->Modules.driver_module.pcie_device, &m->Modules.driver_module.DriverConnections.gpu_connector);
             break;
         }
         default: {
-            serial_printf("[GPU Controller] Warning: Unknown VendorID (%d) Based Driver!\n", m->Modules.driver_module.pcie_device.vendor_id);
-            break;
+            serial_printf("[GPU Controller] Error: Unknown VendorID (%d) Based Driver!\n", m->Modules.driver_module.pcie_device.vendor_id);
+            return AOS_FALSE;
         }
     }
 
+	*out = m;
+
     serial_printf("[GPU Controller] Using '%s' driver\n", m->hdr.name);
-    return 1;
+    return AOS_TRUE;
 }

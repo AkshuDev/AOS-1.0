@@ -41,10 +41,10 @@ typedef struct {
 	spinlock_t drive_lock;
 } sata_controller;
 
-uint32_t bss_zeroed_magic; // Should be KSATA_MAGIC to ensure bss is zeroed or initialized
-sata_controller* controllers;
-uint64_t controller_count;
-uint64_t controller_cap;
+static uint32_t bss_zeroed_magic; // Should be KSATA_MAGIC to ensure bss is zeroed or initialized
+static sata_controller* controllers;
+static uint64_t controller_count;
+static uint64_t controller_cap;
 
 static aos_bool sata_busy_wait(struct sata_hba_port* port) {
     uint64_t timeout = kget_ms_passed();

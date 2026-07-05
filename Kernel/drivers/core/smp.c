@@ -97,7 +97,7 @@ static void send_wakeup_ipi(uint8_t target_apic_id, uint8_t vector) {
     lapic_write(0x300, 0x00004000 | vector); // ICR Low: Fixed, Delivery Mode 000
 }
 
-static struct thread_state* create_thread(void (*entry)(void), uint64_t tid) {
+static struct thread_state* create_thread(void (*entry)(void*), void* arg, uint64_t tid) {
     uint64_t thread_virt = (uint64_t)avmf_alloc(sizeof(struct thread_state), MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL);
     if (thread_virt == NULL) 
         return NULL;
@@ -110,6 +110,7 @@ static struct thread_state* create_thread(void (*entry)(void), uint64_t tid) {
     uint64_t* stack = (uint64_t*)((uint8_t*)stack_raw + 16384);
 
     *(--stack) = (uintptr_t)entry; // RIP
+	*(--stack) = (uintptr_t)arg;   // RDI
     *(--stack) = 0; // RBP
     *(--stack) = 0; // RBX
     *(--stack) = 0; // R12
@@ -121,6 +122,7 @@ static struct thread_state* create_thread(void (*entry)(void), uint64_t tid) {
     thread->tid = tid;
     thread->stack_bottom = stack_raw;
     thread->status = THREAD_STATUS_READY;
+	thread->arg = arg;
 
     return thread;
 }
@@ -232,11 +234,11 @@ void smp_yield(void) {
     thread_context_switch(cur, idle);
 }
 
-void smp_push_task(uint32_t core_idx, void (*entry)(void)) {
+void smp_push_task(uint32_t core_idx, void (*entry)(void*), void* arg) {
     if (core_idx > 255 || cores[core_idx] == NULL) return;
 
     struct core_state* target = cores[core_idx];
-    struct thread_state* new_thread = create_thread(entry, target->next_tid++);
+    struct thread_state* new_thread = create_thread(entry, arg, target->next_tid++);
 
     spin_lock(&target->queue_lock);
     new_thread->next = target->ready_list;
@@ -251,12 +253,12 @@ void smp_push_task(uint32_t core_idx, void (*entry)(void)) {
     }
 }
 
-void smp_push_task_bsp(void (*entry)(void)) {
+void smp_push_task_bsp(void (*entry)(void*), void* arg) {
     uint32_t core_idx = bsp_core_idx;
     if (core_idx > 255 || cores[core_idx] == NULL) return;
 
     struct core_state* target = cores[core_idx];
-    struct thread_state* new_thread = create_thread(entry, target->next_tid++);
+    struct thread_state* new_thread = create_thread(entry, arg, target->next_tid++);
 
     spin_lock(&target->queue_lock);
     new_thread->next = target->ready_list;
