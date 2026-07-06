@@ -130,18 +130,18 @@ static void klog_printc(char c) {
 	if (klog_end < klog_pos) klog_end = klog_pos;
 }
 
-void serial_init(void) {
-	serial_lock = 0;
-	serialf_lock = 0;
-	serialc_lock = 0;
-	ata_lock = 0;
-	vmem_lock = 0;
-	vmemf_lock = 0;
-	vmemc_lock = 0;
-	vmem_cur_lock = 0;
-	ps2_lock = 0;
-	
-    uint64_t rflags = spin_lock_irqsave(&serial_lock);
+void serial_init(aos_bool pre_init) {
+	if (pre_init) {
+		serial_lock = 0;
+		serialf_lock = 0;
+		serialc_lock = 0;
+		ata_lock = 0;
+		vmem_lock = 0;
+		vmemf_lock = 0;
+		vmemc_lock = 0;
+		vmem_cur_lock = 0;
+		ps2_lock = 0;
+	}
 
     asm_outb(SERIAL_PORT + 1, 0x00); // Disable interrupts
     asm_outb(SERIAL_PORT + 3, 0x80); // Enable DLAB
@@ -159,12 +159,12 @@ void serial_init(void) {
         serial_present = AOS_FALSE;
 
 	klog = preklog;
-	klog_pos = 0;
-	klog_cap = sizeof(preklog);
-	klog_end = 0;
 	klog_msg_started = AOS_FALSE;
-
-    spin_unlock_irqrestore(&serial_lock, rflags);
+	klog_cap = sizeof(preklog);
+	if (pre_init) {
+		klog_pos = 0;
+		klog_end = 0;
+	}
 }
 
 void serial_init_klog(const char* path, struct pbfs_mount* mnt) {

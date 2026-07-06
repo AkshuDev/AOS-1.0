@@ -8,7 +8,6 @@
 
 #include <stddef.h>
 
-#define PAGE_SIZE 0x1000
 #define AVMF_STATIC_SIZE 2048
 #define BITMAP_SIZE 131072
 

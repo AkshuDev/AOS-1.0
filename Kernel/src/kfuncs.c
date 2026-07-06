@@ -15,10 +15,23 @@
 
 // Memory and Stuff
 void* memset(void* s, int c, size_t n) {
+	size_t remaining = n;
+	void* ptr = s;
+	if (n > 8) {
+		size_t size = remaining / 8;
+		asm volatile(
+			"rep stosq"
+			:
+			: "D"(ptr), "a"((uint64_t)c), "c"(size)
+			: "memory"
+		);
+		remaining -= size * 8;
+		ptr = (void*)((uint8_t*)ptr + size * 8);
+	}
     asm volatile(
         "rep stosb"
         :
-        : "D"(s), "a"((uint8_t)c), "c"(n)
+        : "D"(ptr), "a"((uint8_t)c), "c"(remaining)
         : "memory"
     );
     return s;

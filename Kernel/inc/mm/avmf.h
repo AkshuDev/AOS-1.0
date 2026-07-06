@@ -1,6 +1,7 @@
 #pragma once
 // AOS Virtual Memory Format
 #include <aos_inttypes.h>
+#include <inc/core/kfuncs.h>
 
 #define AVMF_VERSION 1
 #define AVMF_SIGNATURE (uint32_t)0xA1322F // A, V (13th letter), M (22nd letter), F

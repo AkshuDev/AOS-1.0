@@ -15,17 +15,6 @@ static aos_bool pager_ready = AOS_FALSE;
 static uint64_t cpu_phys_bits = 0;
 static uint64_t cpu_virt_bits = 0;
 
-__attribute__((aligned(PAGE_SIZE)))
-static uint64_t pre_pml4[512] = {0};
-__attribute__((aligned(PAGE_SIZE)))
-static uint64_t pre_pdpt[512] = {0};
-__attribute__((aligned(PAGE_SIZE)))
-static uint64_t pre_pd[512] = {0};
-__attribute__((aligned(PAGE_SIZE)))
-static uint64_t pre_dm_pdpt[512] = {0};
-__attribute__((aligned(PAGE_SIZE)))
-static uint64_t pre_dm_pd[512] = {0};
-
 static void* pager_phys_to_virt(uint64_t phys) {
     if (!pager_ready) {
         return (void*)phys; // Identity
@@ -103,7 +92,7 @@ void pager_init(void) {
     uint64_t phys_idx = 0;
 	extern uint8_t __bss_end; // from linker script
 	uintptr_t bss_end = (uintptr_t)((uintptr_t)AOS_KERNEL_ADDR + (uintptr_t)&__bss_end);
-    for (int i = 0; i < e820->entry_count; i++) {
+	for (int i = 0; i < e820->entry_count; i++) {
         struct bs1_e820_entry* e = &e820->entries[i];
         uint64_t end_addr = e->base + e->len;
         

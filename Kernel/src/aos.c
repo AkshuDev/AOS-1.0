@@ -76,11 +76,11 @@ static uintptr_t stack_top = (uintptr_t)&stack_top__;
 
 void kernel_main(void) {
     asm volatile("cld");
-    serial_init();
+    serial_init(AOS_TRUE);
     serial_print("AOS++ LOADED!\n");
 
     pager_init(); // Inits AVMF Too
-	serial_init();
+	serial_init(AOS_FALSE);
 	
 	gdt_init();
 	tss_init();
