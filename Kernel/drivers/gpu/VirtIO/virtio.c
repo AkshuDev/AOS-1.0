@@ -197,6 +197,7 @@ static aos_bool setup_queue(virtio_controller* kvc, gpu_device_t* gpu, uint16_t 
     serial_print("[VIRTIO] Setting Queues....\n");
 
     kvc->common_cfg->queue_select = q_idx;
+	kdelay(1);
     uint16_t size = kvc->common_cfg->queue_size;
 
 	if (size < 1) {
@@ -329,6 +330,20 @@ aos_bool virtio_init(struct AOS_Module* m) {
 		kvc->valid = AOS_FALSE; controller_count--;
         return AOS_FALSE;
     }
+
+	if (kvc->common_cfg->num_queues < 1) {
+		serial_print("[VIRTIO] Device has no queues, quiting...\n");
+		kvc->valid = AOS_FALSE; controller_count--;
+		return AOS_FALSE;
+	}
+
+	kvc->main_buf_slot = 0;
+
+    // setup Queue
+    if (!setup_queue(kvc, gpu, 0)) {
+		kvc->valid = AOS_FALSE; controller_count--;
+		return AOS_FALSE;
+	}
     
     // setup buffers
     for (uint64_t i = 0; i < MAX_CMD_RESP_BUFS; i++) {
@@ -340,13 +355,6 @@ aos_bool virtio_init(struct AOS_Module* m) {
             return AOS_FALSE;
         }
     }
-    kvc->main_buf_slot = 0;
-
-    // setup Queue
-    if (!setup_queue(kvc, gpu, 0)) {
-		kvc->valid = AOS_FALSE; controller_count--;
-		return AOS_FALSE;
-	}
 
     kvc->common_cfg->device_status |= VIRTIO_STATUS_DRIVER_OK;
 

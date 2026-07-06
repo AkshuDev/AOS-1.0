@@ -210,23 +210,25 @@ struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags)
     return pml4;
 }
 
-void pager_destroy_table(int level) {
-    struct page_table* table = mapped_pml4;
+static void destroy_table(struct page_table* table, int level) {
     if (!table) return;
     if (level > 1) {
         for (int i = 0; i < 512; i++) {
             if (table->entries[i] & PAGE_PRESENT) {
                 if (level == 2 && (table->entries[i] & PAGE_HUGE)) continue;
-
+                
                 uint64_t phys = table->entries[i] & ~0xFFFULL;
                 struct page_table* sub_table = (struct page_table*)pager_phys_to_virt(phys);
-                pager_destroy_table(level - 1);
+                destroy_table(sub_table, level - 1); 
             }
         }
     }
+    avmf_free_phys(avmf_virt_to_phys((uint64_t)table));
+}
 
-    uint64_t phys_addr = avmf_virt_to_phys((uint64_t)table);
-    avmf_free_phys((uint64_t)table);
+void pager_destroy_table(int level) {
+    struct page_table* table = mapped_pml4;
+    return destroy_table(table, level);
 }
 
 void pager_unmap(uint64_t virt) {
