@@ -1,7 +1,5 @@
 #pragma once
 
-#define E820_MAX_ENT 128
-
 #define E820_TYPE_RAM 1
 #define E820_TYPE_RESERVED 2
 #define E820_TYPE_ACPI_RECLAIM 3
@@ -19,6 +17,8 @@ struct bs1_e820 {
     uint32_t entry_count;
     struct bs1_e820_entry entries[];
 } __attribute__((packed));
+
+#define E820_MAX_ENT (0xFFFFFFFF / sizeof(struct bs1_e820_entry))
 
 static inline const char* e820_get_type_str(uint32_t type) {
 	switch (type) {

@@ -288,7 +288,9 @@ EFIAPI static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, a
 
 EFIAPI void start_panic_shell(struct drive_device* current_drive, const char* err, size_t err_lines) {
 	if (pefi_state.initialized != 1) return;
-	pefi_state.system_table->ConOut->QueryMode(pefi_state.system_table->ConOut, (UINTN)pefi_state.system_table->ConOut->Mode->Mode, &uefi_width, &uefi_height);
+	if (EFI_ERROR(pefi_state.system_table->ConOut->QueryMode(pefi_state.system_table->ConOut, (UINTN)pefi_state.system_table->ConOut->Mode->Mode, &uefi_width, &uefi_height))) {
+		return;
+	}
 
     cdrive = current_drive;
     struct ambrc* ambrc = get_ambrc();

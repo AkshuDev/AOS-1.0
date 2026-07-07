@@ -40,51 +40,69 @@
 #define TRB_CMD_GET_PORT_BANDWIDTH 21
 #define TRB_CMD_FORCE_HEADER 22
 
-static pcie_device_t xhci_controller = {0};
+#define KxHCI_ALLOC_STEP 16
 
-static volatile uint32_t* xhci_mmio;
-static struct xhci_cap_regs* cap;
-static struct xhci_op_regs* op_regs;
-static volatile uint32_t* doorbells;
-static struct xhci_runtime_regs* runtime_regs;
+typedef struct {
+	uint64_t idx;
+	aos_bool valid;
 
-static uint64_t dcbaa;
+	pcie_device_t xhci_controller;
+	volatile uint32_t* xhci_mmio;
+	struct xhci_cap_regs* cap;
+	struct xhci_op_regs* op_regs;
+	volatile uint32_t* doorbells;
+	struct xhci_runtime_regs* runtime_regs;
 
-static struct xhci_trb* cmd_ring;
-static uint64_t cmd_ring_phys;
-static uint32_t cmd_index;
-static uint8_t cmd_cycle;
+	uint64_t dcbaa;
 
-static struct xhci_trb* event_ring;
-static uint32_t event_index;
-static uint8_t event_cycle;
+	struct xhci_trb* cmd_ring;
+	uint64_t cmd_ring_phys;
+	uint32_t cmd_index;
+	uint8_t cmd_cycle;
 
-static struct xhci_erst_entry* erst;
-static uint64_t erst_phys;
-static uint64_t event_ring_phys;
+	struct xhci_trb* event_ring;
+	uint32_t event_index;
+	uint8_t event_cycle;
 
-static uint32_t max_slots;
-static uint32_t max_ports;
-static uint64_t mapping_size;
-static uint64_t trbs_per_page;
+	struct xhci_erst_entry* erst;
+	uint64_t erst_phys;
+	uint64_t event_ring_phys;
 
-static uint64_t port;
-static uint64_t speed;
+	uint32_t max_slots;
+	uint32_t max_ports;
+	uint64_t mapping_size;
+	uint64_t trbs_per_page;
 
-static void destroy_n_unmap_xhci() {
-	if (cmd_ring) { avmf_free((uint64_t)cmd_ring); cmd_ring = NULL; }
-	if (event_ring) { avmf_free((uint64_t)event_ring); event_ring = NULL; }
-	if (erst) { avmf_free((uint64_t)erst); erst = NULL; }
-	if (dcbaa > 0) { avmf_free(dcbaa); dcbaa = 0; }
+	uint64_t port;
+	uint64_t speed;
+} xhci_controller;
+
+static xhci_controller* controllers;
+static uint64_t controller_count;
+static uint64_t controller_cap;
+
+static void destroy_n_unmap_xhci(xhci_controller* kxc) {
+	if (!kxc) return;
+
+	if (kxc->cmd_ring) { avmf_free((uint64_t)kxc->cmd_ring); kxc->cmd_ring = NULL; }
+	if (kxc->event_ring) { avmf_free((uint64_t)kxc->event_ring); kxc->event_ring = NULL; }
+	if (kxc->erst) { avmf_free((uint64_t)kxc->erst); kxc->erst = NULL; }
+	if (kxc->dcbaa > 0) { avmf_free(kxc->dcbaa); kxc->dcbaa = 0; }
+	
+	if (kxc->idx == controller_count - 1) controller_count--;
+	kxc->valid = AOS_FALSE;
 }
 
-static aos_bool map_xhci_mmio(void) {
-    uint8_t bus = xhci_controller.bus;
-    uint8_t slot = xhci_controller.slot;
-    uint8_t func = xhci_controller.func;
+static aos_bool map_xhci_mmio(xhci_controller* kxc) {
+	if (!kxc) return AOS_FALSE;
+
+    uint8_t bus = kxc->xhci_controller.bus;
+    uint8_t slot = kxc->xhci_controller.slot;
+    uint8_t func = kxc->xhci_controller.func;
 
     uint32_t bar0 = pcie_read_bar(bus, slot, func, 0);
     uint64_t bar_phys = bar0 & ~0xFULL;
+	if ((bar_phys & 0xFFF) != 0) return AOS_FALSE; // BAR should be page-aligned
 
     aos_bool is_64bit = ((bar0 >> 1) & 0b011) == 0x2;
 	uint32_t orig0 = bar0;
@@ -100,6 +118,8 @@ static aos_bool map_xhci_mmio(void) {
         bar_phys |= ((uint64_t)orig1 << 32);
     }
 
+	pcie_toggle_memory_space(bus, slot, func, AOS_FALSE);
+
     pcie_write_bar(bus, slot, func, 0, 0xFFFFFFFF);
     if (is_64bit) pcie_write_bar(bus, slot, func, 1, 0xFFFFFFFF);
 
@@ -109,52 +129,80 @@ static aos_bool map_xhci_mmio(void) {
     pcie_write_bar(bus, slot, func, 0, orig0);
     if (is_64bit) pcie_write_bar(bus, slot, func, 1, orig1);
 
-    uint64_t mask = mask0 & ~0xFULL;
-    if (is_64bit) mask |= ((uint64_t)mask1 << 32);
+	pcie_toggle_memory_space(bus, slot, func, AOS_TRUE);
 
-    mapping_size = ~(mask) + 1;
-	if (mapping_size < sizeof(struct xhci_cap_regs)) return AOS_FALSE;
+    uint64_t size = 0;
+	if (is_64bit) {
+		uint64_t mask = (mask0 & ~0xFULL) | ((uint64_t)mask1 << 32);
+		size = ~mask + 1;
+	} else {
+		uint32_t mask = (uint32_t)(mask0 & ~0xFULL);
+		size = (uint32_t)(~mask + 1);
+	}
 
+    kxc->mapping_size = size;
+	if (kxc->mapping_size < sizeof(struct xhci_cap_regs)) return AOS_FALSE;
+
+	pager_map_range(AOS_DIRECT_MAP_BASE + bar_phys, bar_phys, kxc->mapping_size, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
 	if (((struct xhci_cap_regs*)(AOS_DIRECT_MAP_BASE + bar_phys))->hc_version <= 0) {
 		serial_print("[xHCI] HCVersion Invalid!\n");
 		return AOS_FALSE;
 	}
 
-    pcie_enable_busmaster(bus, slot, func);
+	pcie_toggle_busmaster(bus, slot, func, AOS_TRUE);
 
-    xhci_mmio = (volatile uint32_t*)(AOS_DIRECT_MAP_BASE + bar_phys);
-    cap = (struct xhci_cap_regs*)xhci_mmio;
-    op_regs = (struct xhci_op_regs*)((uint8_t*)xhci_mmio + cap->cap_length);
-	runtime_regs = (struct xhci_runtime_regs*)((uint8_t*)xhci_mmio + cap->rtsoff);
-	doorbells = (volatile uint32_t*)((uint8_t*)xhci_mmio + cap->dboff);
+    kxc->xhci_mmio = (volatile uint32_t*)(AOS_DIRECT_MAP_BASE + bar_phys);
+    kxc->cap = (struct xhci_cap_regs*)kxc->xhci_mmio;
+    kxc->op_regs = (struct xhci_op_regs*)((uint8_t*)kxc->xhci_mmio + kxc->cap->cap_length);
+	kxc->runtime_regs = (struct xhci_runtime_regs*)((uint8_t*)kxc->xhci_mmio + kxc->cap->rtsoff);
+	kxc->doorbells = (volatile uint32_t*)((uint8_t*)kxc->xhci_mmio + kxc->cap->dboff);
 
-	max_slots = cap->hcs_params1 & 0xFF;
-	max_ports = (cap->hcs_params1 >> 24) & 0xFF;
-	trbs_per_page = PAGE_SIZE / sizeof(struct xhci_trb);
+	kxc->max_slots = kxc->cap->hcs_params1 & 0xFF;
+	kxc->max_ports = (kxc->cap->hcs_params1 >> 24) & 0xFF;
+	kxc->trbs_per_page = PAGE_SIZE / sizeof(struct xhci_trb);
 
-    serial_printf("[xHCI] Mapped all XHCI (Size: 0x%llx) (Version: %u)\n", mapping_size, cap->hc_version);
+	if (kxc->cap->cap_length > kxc->mapping_size) {
+		serial_print("[xHCI] Device Broken! (CAP Length)\n");
+		return AOS_FALSE;
+	}
+
+	if (kxc->cap->dboff >= kxc->mapping_size) {
+		serial_print("[xHCI] Device Broken! (DB Offset)\n");
+		return AOS_FALSE;
+	}
+
+	if (kxc->cap->rtsoff >= kxc->mapping_size) {
+		serial_print("[xHCI] Device Broken! (RTS Offset)\n");
+		return AOS_FALSE;
+	}
+
+    serial_printf("[xHCI] Mapped all XHCI (Size: 0x%llx) (Version: %u)\n", kxc->mapping_size, kxc->cap->hc_version);
 	return AOS_TRUE;
 }
 
-static struct xhci_trb* xhci_next_event(void) {
-    struct xhci_trb* trb = &event_ring[event_index];
+static struct xhci_trb* xhci_next_event(xhci_controller* kxc) {
+	if (!kxc) return NULL;
 
-    if ((trb->control & 1) != event_cycle) return NULL;
+    struct xhci_trb* trb = &kxc->event_ring[kxc->event_index];
+
+    if ((trb->control & 1) != kxc->event_cycle) return NULL;
     struct xhci_trb* result = trb;
 
-    event_index++;
-    if (event_index == trbs_per_page) {
-        event_index = 0;
-        event_cycle ^= 1;
+    kxc->event_index++;
+    if (kxc->event_index == kxc->trbs_per_page) {
+        kxc->event_index = 0;
+        kxc->event_cycle ^= 1;
     }
-    runtime_regs->intr_reg_set[0].erdp = (event_ring_phys + event_index * sizeof(struct xhci_trb)) | (1 << 3);
+    kxc->runtime_regs->intr_reg_set[0].erdp = (kxc->event_ring_phys + kxc->event_index * sizeof(struct xhci_trb)) | (1 << 3);
     return result;
 }
 
-static struct xhci_trb* xhci_wait_cmd(void) {
+static struct xhci_trb* xhci_wait_cmd(xhci_controller* kxc) {
+	if (!kxc) return NULL;
+
     uint64_t timeout = kget_ms_passed();
     while (1) {
-        struct xhci_trb* event = xhci_next_event();
+        struct xhci_trb* event = xhci_next_event(kxc);
         if (event) {
             uint32_t type = (event->control >> 10) & 0x3F;
             if (type == TRB_COMPLETION_EVENT) return event;
@@ -163,18 +211,20 @@ static struct xhci_trb* xhci_wait_cmd(void) {
     }
 }
 
-static void xhci_send_cmd(uint32_t type, uint64_t param) {
-	cmd_ring[cmd_index].param = param;
-	cmd_ring[cmd_index].status = 0;
-	cmd_ring[cmd_index].control = (type << 10) | cmd_cycle;
+static void xhci_send_cmd(xhci_controller* kxc, uint32_t type, uint64_t param) {
+	if (!kxc) return;
 
-	cmd_index++;
-	if (cmd_index == trbs_per_page-1){
-		cmd_index = 0;
-		cmd_cycle ^= 1;
+	kxc->cmd_ring[kxc->cmd_index].param = param;
+	kxc->cmd_ring[kxc->cmd_index].status = 0;
+	kxc->cmd_ring[kxc->cmd_index].control = (type << 10) | kxc->cmd_cycle;
+
+	kxc->cmd_index++;
+	if (kxc->cmd_index == kxc->trbs_per_page-1){
+		kxc->cmd_index = 0;
+		kxc->cmd_cycle ^= 1;
 	}
 
-	doorbells[0] = 0;
+	kxc->doorbells[0] = 0;
 }
 
 aos_bool xhci_init(struct AOS_Module* module) {
@@ -182,167 +232,194 @@ aos_bool xhci_init(struct AOS_Module* module) {
     if (module->hdr.type != MODULE_TYPE_DRIVER) return AOS_FALSE;
     if (module->Modules.driver_module.type != MODULE_DRIVER_TYPE_xHCI) return AOS_FALSE;
     
-    xhci_controller = module->Modules.driver_module.pcie_device;
-    if (!map_xhci_mmio()) return AOS_FALSE;
+	if (!controllers) {
+		controllers = (xhci_controller*)avmf_alloc(sizeof(xhci_controller) * KxHCI_ALLOC_STEP, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, NULL);
+		if (!controllers) return AOS_FALSE;
+		controller_cap = KxHCI_ALLOC_STEP;
+		controller_count = 0;
+	} else if (controller_count >= controller_cap) {
+		xhci_controller* nptr = (xhci_controller*)avmf_alloc(sizeof(xhci_controller) * (controller_cap + KxHCI_ALLOC_STEP), MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, NULL);
+		if (!nptr) return AOS_FALSE;
+		memcpy(nptr, controllers, sizeof(xhci_controller)*controller_count);
+		avmf_free((uint64_t)controllers);
+		controllers = nptr;
+		controller_cap += KxHCI_ALLOC_STEP;
+	}
+
+	xhci_controller* kxc = &controllers[controller_count];
+	memset(kxc, 0, sizeof(xhci_controller));
+	kxc->idx = controller_count;
+	kxc->valid = AOS_TRUE;
+	controller_count++;
+
+    kxc->xhci_controller = module->Modules.driver_module.pcie_device;
+    if (!map_xhci_mmio(kxc)) {
+		destroy_n_unmap_xhci(kxc);
+		return AOS_FALSE;
+	}
 
 	// Reset
 	serial_print("[xHCI] Resetting Controller...\n");
-	op_regs->usbcmd &= ~1;
+	kxc->op_regs->usbcmd &= ~1;
 	uint64_t timeout = kget_ms_passed();
-	while (!(op_regs->usbsts & (1 << 0))) {
+	while (!(kxc->op_regs->usbsts & (1 << 0))) {
 		if (kget_ms_passed() - timeout >= 10000) {
 			serial_print("[xHCI] Controller Timeout!\n");
+			destroy_n_unmap_xhci(kxc);
 			return AOS_FALSE;
 		}
 		asm volatile("pause");
 	}
 
 	serial_print("[xHCI] Setting HCRST...\n");
-	op_regs->usbcmd |= (1 << 1); // Set HCRST
+	kxc->op_regs->usbcmd |= (1 << 1); // Set HCRST
 	timeout = kget_ms_passed();
-	while (op_regs->usbcmd & (1 << 1)) {
+	while (kxc->op_regs->usbcmd & (1 << 1)) {
 		if (kget_ms_passed() - timeout >= 10000) {
 			serial_print("[xHCI] Controller Timeout!\n");
+			destroy_n_unmap_xhci(kxc);
 			return AOS_FALSE;
 		}
 		asm volatile("pause");
 	}
 	timeout = kget_ms_passed();
-	while (op_regs->usbsts & (1 << 11)) {
+	while (kxc->op_regs->usbsts & (1 << 11)) {
 		if (kget_ms_passed() - timeout >= 10000) {
 			serial_print("[xHCI] Controller Timeout!\n");
+			destroy_n_unmap_xhci(kxc);
 			return AOS_FALSE;
 		}
 		asm volatile("pause");
 	}
 
 	serial_print("[xHCI] Allocating DCBAA...\n");
-	dcbaa = avmf_alloc(ALIGN_UP((max_slots + 1) * sizeof(uint64_t), 64), MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &op_regs->dcbaap);
-	if (!dcbaa) {
+	kxc->dcbaa = avmf_alloc(ALIGN_UP((kxc->max_slots + 1) * sizeof(uint64_t), 64), MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &kxc->op_regs->dcbaap);
+	if (!kxc->dcbaa) {
 		serial_print("[xHCI] Failed to allocate DCBAA\n");
+		destroy_n_unmap_xhci(kxc);
 		return AOS_FALSE;
 	}
-	memset((void*)dcbaa, 0, (max_slots + 1) * sizeof(uint64_t));
+	memset((void*)kxc->dcbaa, 0, (kxc->max_slots + 1) * sizeof(uint64_t));
 
 	serial_print("[xHCI] Allocating CMD Ring...\n");
-	cmd_ring = (struct xhci_trb*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &cmd_ring_phys);
-	if (!cmd_ring) {
+	kxc->cmd_ring = (struct xhci_trb*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &kxc->cmd_ring_phys);
+	if (!kxc->cmd_ring) {
 		serial_print("[xHCI] Failed to allocate CMD Ring\n");
-		destroy_n_unmap_xhci();
+		destroy_n_unmap_xhci(kxc);
 		return AOS_FALSE;
 	}
-	memset(cmd_ring, 0, PAGE_SIZE);
+	memset(kxc->cmd_ring, 0, PAGE_SIZE);
 
-	cmd_ring[trbs_per_page-1].param = cmd_ring_phys;
-	cmd_ring[trbs_per_page-1].control = 1 | (6 << 10) | (1 << 1); // Link TRB Type | Toggle Cycle
+	kxc->cmd_ring[kxc->trbs_per_page-1].param = kxc->cmd_ring_phys;
+	kxc->cmd_ring[kxc->trbs_per_page-1].control = 1 | (6 << 10) | (1 << 1); // Link TRB Type | Toggle Cycle
 
 	serial_print("[xHCI] Allocating EVENT Ring...\n");
-	event_ring = (struct xhci_trb*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &event_ring_phys);
-	if (!event_ring) {
+	kxc->event_ring = (struct xhci_trb*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &kxc->event_ring_phys);
+	if (!kxc->event_ring) {
 		serial_print("[xHCI] Failed to allocate EVENT Ring\n");
-		destroy_n_unmap_xhci();
+		destroy_n_unmap_xhci(kxc);
 		return AOS_FALSE;
 	}
-	memset(event_ring, 0, PAGE_SIZE);
+	memset(kxc->event_ring, 0, PAGE_SIZE);
 
 	serial_print("[xHCI] Allocating ERST...\n");
-	erst = (struct xhci_erst_entry*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &erst_phys);
-	if (!erst) {
+	kxc->erst = (struct xhci_erst_entry*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &kxc->erst_phys);
+	if (!kxc->erst) {
 		serial_print("[xHCI] Failed to allocate ERST\n");
-		destroy_n_unmap_xhci();
+		destroy_n_unmap_xhci(kxc);
 		return AOS_FALSE;
 	}
-	memset(erst, 0, PAGE_SIZE);
+	memset(kxc->erst, 0, PAGE_SIZE);
 
-	cmd_index = 0;
-	cmd_cycle = 1;
-	event_index = 0;
-	event_cycle = 1;
+	kxc->cmd_index = 0;
+	kxc->cmd_cycle = 1;
+	kxc->event_index = 0;
+	kxc->event_cycle = 1;
 
-	op_regs->crcr = cmd_ring_phys | cmd_cycle;
+	kxc->op_regs->crcr = kxc->cmd_ring_phys | kxc->cmd_cycle;
 
-	erst[0].ring_segment_base = event_ring_phys;
-	erst[0].ring_segment_size = trbs_per_page;
+	kxc->erst[0].ring_segment_base = kxc->event_ring_phys;
+	kxc->erst[0].ring_segment_size = kxc->trbs_per_page;
 
-	runtime_regs->intr_reg_set[0].erstsz = 1;
-	runtime_regs->intr_reg_set[0].erstba = erst_phys;
-	runtime_regs->intr_reg_set[0].erdp = event_ring_phys;
+	kxc->runtime_regs->intr_reg_set[0].erstsz = 1;
+	kxc->runtime_regs->intr_reg_set[0].erstba = kxc->erst_phys;
+	kxc->runtime_regs->intr_reg_set[0].erdp = kxc->event_ring_phys;
 
-	op_regs->config = max_slots;
+	kxc->op_regs->config = kxc->max_slots;
 
-	op_regs->usbcmd |= 1;
+	kxc->op_regs->usbcmd |= 1;
 	timeout = kget_ms_passed();
-	while (op_regs->usbsts & 1) {
+	while (kxc->op_regs->usbsts & 1) {
 		if (kget_ms_passed() - timeout >= 10000) {
 			serial_print("[xHCI] Controller Timeout!\n");
-			destroy_n_unmap_xhci();
+			destroy_n_unmap_xhci(kxc);
 			return AOS_FALSE;
 		}
 		asm volatile("pause");
 	}
 
-	runtime_regs->intr_reg_set[0].iman |= (1 << 1); // Enable interrupts
-	op_regs->usbcmd |= (1 << 2); // Enable Global interrupts
+	kxc->runtime_regs->intr_reg_set[0].iman |= (1 << 1); // Enable interrupts
+	kxc->op_regs->usbcmd |= (1 << 2); // Enable Global interrupts
 
-	xhci_send_cmd(TRB_CMD_ENABLE_SLOT, 0);
-	struct xhci_trb* event = xhci_wait_cmd();
+	xhci_send_cmd(kxc, TRB_CMD_ENABLE_SLOT, 0);
+	struct xhci_trb* event = xhci_wait_cmd(kxc);
 	if (!event) {
 		serial_print("[xHCI] Enable Slot timeout\n");
-		destroy_n_unmap_xhci();
+		destroy_n_unmap_xhci(kxc);
 		return AOS_FALSE;
 	}
 
 	if (((event->status >> 24) & 0xFF) != 1) {
 		serial_printf("[xHCI] Enable Slot Command failed: %u\n", ((event->status >> 24) & 0xFF));
-		destroy_n_unmap_xhci();
+		destroy_n_unmap_xhci(kxc);
 		return AOS_FALSE;
 	}
 	
-	port = UINT64_MAX;
+	kxc->port = UINT64_MAX;
 	uint8_t slot_id = (event->control >> 24) & 0xFF;
-	for (uint32_t i = 0; i < max_ports; i++) {
-		uint32_t portsc = op_regs->ports[i].portsc;
+	for (uint32_t i = 0; i < kxc->max_ports; i++) {
+		uint32_t portsc = kxc->op_regs->ports[i].portsc;
 		if (portsc & 1) {
 			serial_printf("[xHCI] Found Device on Port: %u\n", i + 1);
-			port = i;
+			kxc->port = i;
 			break;
 		}
 	}
 
-	if (port == UINT64_MAX) {
+	if (kxc->port == UINT64_MAX) {
 		serial_print("[xHCI] No devices found!\n");
-		destroy_n_unmap_xhci();
+		destroy_n_unmap_xhci(kxc);
 		return AOS_FALSE;
 	}
 
-	serial_printf("[xHCI] Resetting Port %llu...\n", port);
+	serial_printf("[xHCI] Resetting Port %llu...\n", kxc->port);
 
-	uint32_t portsc = op_regs->ports[port].portsc;
+	uint32_t portsc = kxc->op_regs->ports[kxc->port].portsc;
 	portsc &= ~(0x7F << 17);
 	portsc |= (1 << 4); // PR
-	op_regs->ports[port].portsc = portsc;
+	kxc->op_regs->ports[kxc->port].portsc = portsc;
 
 	timeout = kget_ms_passed();
-	while (op_regs->ports[port].portsc & (1 << 4)) {
+	while (kxc->op_regs->ports[kxc->port].portsc & (1 << 4)) {
 		if (kget_ms_passed() - timeout >= 10000) {
 			serial_print("[xHCI] Port reset timed out!\n");
-			destroy_n_unmap_xhci();
+			destroy_n_unmap_xhci(kxc);
 			return AOS_FALSE;
 		}
 		asm volatile("pause");
 	}
 	timeout = kget_ms_passed();
-	while (!(op_regs->ports[port].portsc & (1 << 1))) {
+	while (!(kxc->op_regs->ports[kxc->port].portsc & (1 << 1))) {
 		if (kget_ms_passed() - timeout >= 10000) {
 			serial_print("[xHCI] Port Enable timed out!\n");
-			destroy_n_unmap_xhci();
+			destroy_n_unmap_xhci(kxc);
 			return AOS_FALSE;
 		}
 		asm volatile("pause");
 	}
 
-	speed = (op_regs->ports[port].portsc >> 10) & 0xF;
-	serial_printf("[xHCI] Port speed: %u\n", speed);
+	kxc->speed = (kxc->op_regs->ports[kxc->port].portsc >> 10) & 0xF;
+	serial_printf("[xHCI] Port speed: %u\n", kxc->speed);
 
     return AOS_TRUE;
 }

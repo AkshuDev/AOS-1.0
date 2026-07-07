@@ -14,7 +14,6 @@
 #include <inc/core/kfuncs.h>
 
 #define KVIRTIO_ALLOC_STEP 16
-#define KVIRTIO_MAGIC 0x00160912
 
 #define MAX_CMD_RESP_BUFS 16
 
@@ -37,13 +36,13 @@ typedef struct {
 	uint32_t gpu_cmd_core;
 
 	volatile struct virtio_common_cfg* common_cfg;
+	uint64_t mapping_size;
 
 	uint64_t idx;
 	struct gpu_device* gpu;
 	aos_bool valid;
 } virtio_controller;
 
-static uint32_t bss_zeroed_magic; // Should be KVIRTIO_MAGIC to ensure bss is zeroed or initialized
 static virtio_controller* controllers;
 static uint64_t controller_count;
 static uint64_t controller_cap;
@@ -75,7 +74,13 @@ static uint8_t mmio_read8(uint64_t addr) {
 
 static void virtio_sync_poll(void* kvc_raw) {
 	virtio_controller* kvc = (virtio_controller*)kvc_raw;
+	uint64_t timeout = kget_timestamp_ms();
     while (kvc->virtq.used->idx != kvc->virtq.avail->idx) {
+		if (kget_timestamp_ms() - timeout >= 10000) {
+			serial_print("[VIRTIO] Timeout!\n");
+			smp_yield();
+			return;
+		}
         __asm__ volatile("pause");
     }
 
@@ -171,32 +176,136 @@ static void virtio_submit_sync(virtio_controller* kvc, void* cmd, uint64_t cmd_p
     kvc->main_buf_slot++;
 }
 
-static struct virtio_cap get_cap(uint8_t b, uint8_t s, uint8_t f, uint8_t target_type) {
+static struct virtio_cap get_cap(uint8_t b, uint8_t s, uint8_t f, uint8_t target_type, aos_bool* valid) {
     struct virtio_cap cap = {0};
     uint8_t cap_ptr = pcie_read(b, s, f, 0x34) & 0xFF;
+	*valid = AOS_FALSE;
+
     while (cap_ptr != 0) {
-        uint32_t cap_hdr = pcie_read(b, s, f, cap_ptr);
-        uint8_t cap_id = cap_hdr & 0xFF;
+        uint32_t hdr = pcie_read(b, s, f, cap_ptr);
+        uint8_t cap_id = hdr & 0xFF;
+		uint8_t cap_next = (hdr >> 8) & 0xFF;
+		uint8_t cfg_type = (hdr >> 24) & 0xFF;
+
+		uint32_t barinfo = pcie_read(b, s, f, cap_ptr + 4);
+		uint8_t bar = barinfo & 0xFF;
+
+		if (bar >= 6) return cap;
 
         if (cap_id == 0x09) { // Vendor Specific
-            uint8_t type = (pcie_read(b, s, f, cap_ptr + 3) >> 24) & 0xFF;
-            if (type == target_type) {
+            if (cfg_type == target_type) {
                 cap.cap_ptr = cap_ptr;
-                cap.bar = (pcie_read(b, s, f, cap_ptr + 4) >> 0) & 0xFF;
+                cap.bar = bar;
                 cap.offset = pcie_read(b, s, f, cap_ptr + 8);
-                cap.length = pcie_read(b, s, f, cap_ptr + 12);
+				cap.length = pcie_read(b, s, f, cap_ptr + 12);
+				*valid = AOS_TRUE;
                 return cap;
             }
         }
-        cap_ptr = (cap_hdr >> 8) & 0xFF;
+        cap_ptr = cap_next;
     }
     return cap;
+}
+
+static aos_bool virtio_map(virtio_controller* kvc) {
+	if (!kvc) return AOS_FALSE;
+
+	uint8_t bus = kvc->gpu->pcie_device->bus;
+    uint8_t slot = kvc->gpu->pcie_device->slot;
+    uint8_t func = kvc->gpu->pcie_device->func;
+
+	aos_bool valid = AOS_FALSE;
+	struct virtio_cap common_cap = get_cap(bus, slot, func, 1, &valid);
+	if (!valid) {
+		serial_print("[VIRTIO] Invailid CAP\n");
+		return AOS_FALSE;
+	}
+
+    uint32_t bar = pcie_read_bar(bus, slot, func, common_cap.bar);
+    uint64_t bar_phys = bar & ~0xFULL;
+	if ((bar_phys & 0xFFF) != 0) { // BAR should be page-aligned
+		serial_print("[VIRTIO] BAR0 is not page-aligned, mapping failed!\n");
+		return AOS_FALSE;
+	}
+
+    aos_bool is_64bit = ((bar >> 1) & 0b011) == 0x2;
+	uint32_t orig0 = bar;
+    uint32_t orig1 = 0;
+
+	if ((bar & 0b001) == 0x1) {
+		serial_print("[VIRTIO] BAR0 is not a memory BAR, mapping failed!\n");
+		return AOS_FALSE;
+	}
+
+    if (is_64bit) {
+        orig1 = pcie_read_bar(bus, slot, func, common_cap.bar+1);
+        bar_phys |= ((uint64_t)orig1 << 32);
+    }
+
+	aos_bool memspace = pcie_get_memory_space_toggled(bus, slot, func);
+	if (memspace) pcie_toggle_memory_space(bus, slot, func, AOS_FALSE);
+
+    pcie_write_bar(bus, slot, func, common_cap.bar, 0xFFFFFFFF);
+    if (is_64bit) pcie_write_bar(bus, slot, func, common_cap.bar+1, 0xFFFFFFFF);
+
+    uint32_t mask0 = pcie_read_bar(bus, slot, func, common_cap.bar);
+    uint32_t mask1 = is_64bit ? pcie_read_bar(bus, slot, func, common_cap.bar+1) : 0;
+
+    pcie_write_bar(bus, slot, func, common_cap.bar, orig0);
+    if (is_64bit) pcie_write_bar(bus, slot, func, common_cap.bar+1, orig1);
+
+	if (memspace) pcie_toggle_memory_space(bus, slot, func, AOS_TRUE);
+
+	uint64_t size = 0;
+	if (is_64bit) {
+		uint64_t mask = (mask0 & ~0xFULL) | ((uint64_t)mask1 << 32);
+		size = ~mask + 1;
+	} else {
+		uint32_t mask = (uint32_t)(mask0 & ~0xFULL);
+		size = (uint32_t)(~mask + 1);
+	}
+
+    kvc->mapping_size = size;
+	if (kvc->mapping_size < sizeof(struct virtio_common_cfg)) {
+		serial_print("[VIRTIO] Device reported memory size is lower than minimum, mapping failed!\n");
+		return AOS_FALSE;
+	}
+
+	pager_map_range(AOS_DIRECT_MAP_BASE + bar_phys, bar_phys, kvc->mapping_size, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
+	pcie_toggle_busmaster(bus, slot, func, AOS_TRUE);
+
+	kvc->common_cfg = (volatile struct virtio_common_cfg*)(AOS_DIRECT_MAP_BASE + bar_phys + common_cap.offset);
+	serial_printf("[VIRTIO] Mapped all VIRTIO COMMON CFG (Size: 0x%llx)\n", kvc->mapping_size);
+	return AOS_TRUE;
+}
+
+static void virtio_destroy(virtio_controller* kvc) {
+	for (uint64_t i = 0; i < MAX_CMD_RESP_BUFS; i++) {
+		if (kvc->cmd_buf[i]) {
+			avmf_free((uint64_t)kvc->cmd_buf[i]);
+			kvc->cmd_buf[i] = NULL;
+			kvc->cmd_buf_phys[i] = 0;
+		}
+		if (kvc->resp_buf[i]) {
+			avmf_free((uint64_t)kvc->resp_buf[i]);
+			kvc->resp_buf[i] = NULL;
+			kvc->resp_buf_phys[i] = 0;
+		}
+	}
+	if (kvc->virtq.desc) {
+		avmf_free((uint64_t)kvc->virtq.desc);
+		kvc->virtq.desc = NULL;
+	}
+
+	kvc->valid = AOS_FALSE;
+	if (kvc->idx == controller_count-1) controller_count--;
 }
 
 static aos_bool setup_queue(virtio_controller* kvc, gpu_device_t* gpu, uint16_t q_idx) {
     serial_print("[VIRTIO] Setting Queues....\n");
 
     kvc->common_cfg->queue_select = q_idx;
+	kvc->common_cfg->queue_msix_vector = 0xFFFF;
 	kdelay(1);
     uint16_t size = kvc->common_cfg->queue_size;
 
@@ -214,6 +323,8 @@ static aos_bool setup_queue(virtio_controller* kvc, gpu_device_t* gpu, uint16_t 
     if (!mem) {serial_print("[VIRTIO] Failed to Allocate Memory!\n"); return AOS_FALSE;}
     if (!phys) {serial_print("[VIRTIO] Failed to retrieve physical address!\n"); return AOS_FALSE;}
 
+	memset(mem, 0, desc_t_size + avail_r_size + used_r_size);
+
     uint64_t flags = spin_lock_irqsave(&kvc->virtq_lock);
     kvc->virtq.desc = (struct virtq_desc*)mem;
     kvc->virtq.avail = (struct virtq_avail*)((uintptr_t)mem + desc_t_size);
@@ -226,6 +337,11 @@ static aos_bool setup_queue(virtio_controller* kvc, gpu_device_t* gpu, uint16_t 
     kvc->common_cfg->queue_avail = phys + desc_t_size;
     kvc->common_cfg->queue_used = (uintptr_t)phys + avail_r_size + desc_t_size;
     kvc->common_cfg->queue_enable = 1;
+	kdelay(1);
+	if (kvc->common_cfg->queue_enable != 1) {
+		serial_print("[VIRTIO] Device rejected queue!\n");
+		return AOS_FALSE;
+	}
 
     serial_print("[VIRTIO] Queues ready!\n");
 	return AOS_TRUE;
@@ -259,12 +375,6 @@ aos_bool virtio_init(struct AOS_Module* m) {
 	if (m->hdr.type != MODULE_TYPE_DRIVER) return AOS_FALSE;
     if (m->Modules.driver_module.type != MODULE_DRIVER_TYPE_GPU) return AOS_FALSE;
 
-	if (bss_zeroed_magic != KVIRTIO_MAGIC) {
-		controllers = NULL;
-		controller_count = 0;
-		controller_cap = 0;
-		bss_zeroed_magic = KVIRTIO_MAGIC;
-	}
 	if (!controllers) {
 		controllers = (virtio_controller*)avmf_alloc(sizeof(virtio_controller) * KVIRTIO_ALLOC_STEP, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, NULL);
 		if (!controllers) return AOS_FALSE;
@@ -284,56 +394,83 @@ aos_bool virtio_init(struct AOS_Module* m) {
 	memset(kvc, 0, sizeof(virtio_controller));
 	kvc->idx = controller_count;
 	kvc->gpu = gpu;
-	kvc->valid = AOS_TRUE;
+	kvc->valid = AOS_FALSE;
 	gpu->controller_idx = controller_count;
 	controller_count++;
 
     pcie_device_t* dev = &m->Modules.driver_module.pcie_device;
     PCIe_FB* fb = gpu->framebuffer;
-    uintptr_t bar0 = dev->bar0 & ~0xF;
 
     serial_print("[VIRTIO DRIVER] Initializing...\n");
-
-    struct virtio_cap common_cap = get_cap(dev->bus, dev->slot, dev->func, 1);
-    uint32_t bar_val = pcie_read_bar(dev->bus, dev->slot, dev->func, common_cap.bar);
-    uintptr_t bar_phys = bar_val & ~0xF;
-    uintptr_t common_cfg_phys = bar_phys + common_cap.offset;
-    kvc->common_cfg = (volatile struct virtio_common_cfg*)(common_cfg_phys + AOS_DIRECT_MAP_BASE);
-
-    struct virtio_cap notify_cap = get_cap(dev->bus, dev->slot, dev->func, 2);
+	if (!virtio_map(kvc)) {
+		virtio_destroy(kvc);
+		return AOS_FALSE;
+	}
+    
+	aos_bool valid_cap = AOS_FALSE;
+    struct virtio_cap notify_cap = get_cap(dev->bus, dev->slot, dev->func, 2, &valid_cap);
+	if (!valid_cap) {
+		serial_print("[VIRTIO] Invailid CAP\n");
+		virtio_destroy(kvc);
+		return AOS_FALSE;
+	}
     uint32_t n_bar_val = pcie_read_bar(dev->bus, dev->slot, dev->func, notify_cap.bar);
     kvc->notify_base = (n_bar_val & ~0xF) + notify_cap.offset + AOS_DIRECT_MAP_BASE;
     kvc->notify_multiplier = pcie_read(dev->bus, dev->slot, dev->func, notify_cap.cap_ptr + 16);
 
     // RESET
     kvc->common_cfg->device_status = 0;
-    while (kvc->common_cfg->device_status != 0) { __asm__ volatile("pause"); }
+	uint64_t timeout = kget_ms_passed();
+    while (kvc->common_cfg->device_status != 0) {
+		if (kget_ms_passed() - timeout > 10000) {
+			serial_print("[VIRTIO] Reset timed out!\n");
+			virtio_destroy(kvc);
+			return AOS_FALSE;
+		}
+		__asm__ volatile("pause");
+	}
     kvc->common_cfg->device_status |= VIRTIO_STATUS_ACKNOWLEDGE;
     kvc->common_cfg->device_status |= VIRTIO_STATUS_DRIVER;
 
+	kdelay(1);
+
     // Features
     kvc->common_cfg->device_feature_select = 0;
-    uint32_t features = kvc->common_cfg->device_feature;
+  	uint32_t dev_lo = kvc->common_cfg->device_feature;
 
-    if (!(features & (1 << 0))) { // VIRTIO_GPU_F_VIRGL is bit 0
-        gpu->acceleration_present = 0;
-        kvc->acceleration_present = 0;
-    } else {
-        gpu->acceleration_present = 1;
-        kvc->acceleration_present = 1;
-    }
-    kvc->common_cfg->driver_feature = features;
+	kvc->common_cfg->device_feature_select = 1;
+	uint32_t dev_hi = kvc->common_cfg->device_feature;
+
+	uint64_t device_features = ((uint64_t)dev_hi << 32) | dev_lo;
+	uint64_t driver_features = 0;
+
+	if (device_features & (1ULL << VIRTIO_F_VERSION_1)) driver_features |= 1ULL << VIRTIO_F_VERSION_1;
+	if (device_features & (1ULL << VIRTIO_GPU_F_VIRGL)) {
+		driver_features |= 1ULL << VIRTIO_GPU_F_VIRGL;
+		gpu->acceleration_present = 1;
+		kvc->acceleration_present = 1;
+	} else {
+		gpu->acceleration_present = 0;
+		kvc->acceleration_present = 0;
+	}
+
+	kvc->common_cfg->driver_feature_select = 0;
+	kvc->common_cfg->driver_feature = (uint32_t)driver_features;
+
+	kvc->common_cfg->driver_feature_select = 1;
+	kvc->common_cfg->driver_feature = (uint32_t)(driver_features >> 32);
 
     kvc->common_cfg->device_status |= VIRTIO_STATUS_FEATURES_OK;
+	kdelay(1);
     if (!(kvc->common_cfg->device_status & VIRTIO_STATUS_FEATURES_OK)) {
         serial_print("[VIRTIO] Failed to negotiate features!\n");
-		kvc->valid = AOS_FALSE; controller_count--;
+		virtio_destroy(kvc);
         return AOS_FALSE;
     }
 
 	if (kvc->common_cfg->num_queues < 1) {
 		serial_print("[VIRTIO] Device has no queues, quiting...\n");
-		kvc->valid = AOS_FALSE; controller_count--;
+		virtio_destroy(kvc);
 		return AOS_FALSE;
 	}
 
@@ -341,7 +478,7 @@ aos_bool virtio_init(struct AOS_Module* m) {
 
     // setup Queue
     if (!setup_queue(kvc, gpu, 0)) {
-		kvc->valid = AOS_FALSE; controller_count--;
+		virtio_destroy(kvc);
 		return AOS_FALSE;
 	}
     
@@ -351,15 +488,16 @@ aos_bool virtio_init(struct AOS_Module* m) {
         kvc->resp_buf[i] = (struct virtio_gpu_resp_display_info*)avmf_alloc(0x1000, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &kvc->resp_buf_phys[i]);
         if (!kvc->cmd_buf || !kvc->resp_buf) {
             serial_print("[VIRTIO] Failed to allocate command and response buffers!\n");
-			kvc->valid = AOS_FALSE; controller_count--;
+			virtio_destroy(kvc);
             return AOS_FALSE;
         }
     }
 
     kvc->common_cfg->device_status |= VIRTIO_STATUS_DRIVER_OK;
+	kdelay(1);
 
     // Setup gpu core
-    if (smp_get_first_free_core(&kvc->gpu_cmd_core) != 1) {
+    if (!smp_get_first_free_core(&kvc->gpu_cmd_core)) {
         kvc->gpu_cmd_core = 0xFFFF;
     }
 
@@ -389,6 +527,7 @@ aos_bool virtio_init(struct AOS_Module* m) {
 
     gpu->active = 1;
     serial_print("[VIRTIO] Initialization completed!\n");
+	kvc->valid = AOS_TRUE;
 	return AOS_TRUE;
 }
 

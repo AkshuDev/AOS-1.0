@@ -30,6 +30,8 @@
 #define MEDIA_DEVICE_PATH 0x04
 #define MEDIA_HARDDRIVE_DP 0x01
 #define MEDIA_HW_PCI_DP 0x01
+#define HARDWARE_DEVICE_PATH 0x01
+#define HW_PCI_DP 0x01
 #define END_DEVICE_PATH_TYPE 0x7F
 #define END_ENTIRE_DEVICE_PATH_SUBTYPE 0xFF
 #define IS_DEVICE_PATH_END(dp) ((dp) == NULL || ((dp)->Type == END_DEVICE_PATH_TYPE && (dp)->SubType == END_ENTIRE_DEVICE_PATH_SUBTYPE))
@@ -395,16 +397,21 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     }
 
 	uint64_t tsc_start = timer_read_tsc();
-	if (SystemTable == NULL) return EFI_LOAD_ERROR;
+	if (SystemTable == NULL) return ENCODE_ERROR(EFI_LOAD_ERROR);
 
-	SystemTable->ConOut->QueryMode(SystemTable->ConOut, (UINTN)SystemTable->ConOut->Mode->Mode, &uefi_width, &uefi_height);
+	if (EFI_ERROR(SystemTable->ConOut->QueryMode(SystemTable->ConOut, (UINTN)SystemTable->ConOut->Mode->Mode, &uefi_width, &uefi_height))) {
+		SystemTable->ConOut->OutputString(SystemTable->ConOut, u"Failed to query mode!\r\n");
+		return ENCODE_ERROR(EFI_LOAD_ERROR);
+	}
 
 	SystemTable->ConOut->OutputString(SystemTable->ConOut, u"Loading PEFI...\r\n");
+
+	SystemTable->BootServices->SetWatchdogTimer(0, 0, 0, NULL);
 
     InitalizeLib(SystemTable, ImageHandle);
     if (pefi_state.initialized != 1) {
 		SystemTable->ConOut->OutputString(SystemTable->ConOut, u"Failed to initialize PEFI!\r\n");
-        return EFI_LOAD_ERROR;
+        return ENCODE_ERROR(EFI_LOAD_ERROR);
     }
 
 	SystemTable->ConOut->OutputString(SystemTable->ConOut, u"PEFI Loaded\r\n");
@@ -419,7 +426,7 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     g_BIP = pefi_find_block_io(SystemTable);
     if (g_BIP == NULL) {
         pefi_print(SystemTable, u"Failed to find Block IO!\r\n");
-        return EFI_LOAD_ERROR;
+        return ENCODE_ERROR(EFI_LOAD_ERROR);
     }
     g_RBIP = get_physical_disk_io();
 
@@ -439,7 +446,7 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 	EFI_PHYSICAL_ADDRESS SystemInfoPhys = AOS_SYS_INFO_ADDR;
 	if (EFI_ERROR(SystemTable->BootServices->AllocatePages(AllocateAddress, EfiLoaderData, (ALIGN_UP(sizeof(aos_sysinfo_t), 0x1000))/0x1000, &SystemInfoPhys))) {
 		vmem_print(&cursor, "Failed to allocate System Information Structure!\n");
-		return EFI_OUT_OF_RESOURCES;
+		return ENCODE_ERROR(EFI_OUT_OF_RESOURCES);
 	}
 
     ktimer_calibrate();
@@ -466,18 +473,18 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 	EFI_LOADED_IMAGE_PROTOCOL* LoadedImage;
 	if (EFI_ERROR(SystemTable->BootServices->HandleProtocol(ImageHandle, &gEfiLoadedImageProtocolGuid, (VOID**)&LoadedImage))) {
 		vmem_print(&cursor, "Failed to retrieve current drive!\n");
-		return EFI_LOAD_ERROR;
+		return ENCODE_ERROR(EFI_LOAD_ERROR);
 	}
 	EFI_DEVICE_PATH_PROTOCOL* DevicePath;
 	if (EFI_ERROR(SystemTable->BootServices->HandleProtocol(LoadedImage->DeviceHandle, &gEfiDevicePathProtocolGuid, (VOID**)&DevicePath))) {
 		vmem_print(&cursor, "Failed to retrieve current drive path protocol!\n");
-		return EFI_LOAD_ERROR;
+		return ENCODE_ERROR(EFI_LOAD_ERROR);
 	}
 
 	EFI_DEVICE_PATH_PROTOCOL* Node = DevicePath;
 	struct aos_sysinfo_pcie boot_drive = {0};
 	while (!IS_DEVICE_PATH_END(Node)) {
-		if (Node->Type == MEDIA_HARDDRIVE_DP && Node->SubType == MEDIA_HW_PCI_DP) {
+		if (Node->Type == HARDWARE_DEVICE_PATH && Node->SubType == HW_PCI_DP) {
 			EFI_PCI_DEVICE_PATH *PciNode = (EFI_PCI_DEVICE_PATH*)Node;
 
 			boot_drive.slot = (uint16_t)PciNode->Device;
@@ -501,7 +508,7 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     blockio_pair_t* pair = btl_malloc(sizeof(blockio_pair_t));
     if (!pair) {
         pefi_print(SystemTable, u"Failed to allocate memory!\r\n");
-        return EFI_OUT_OF_RESOURCES;
+        return ENCODE_ERROR(EFI_OUT_OF_RESOURCES);
     }
     pair->raw = g_RBIP;
 	pair->partition = g_BIP;
@@ -518,7 +525,7 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 	if (out != PBFS_RES_SUCCESS) {
 		vmem_printf(&cursor, "Failed to mount, Error:\n\t%s\n", pbfs_get_err_str(out));
 		vmem_printf(&cursor, "Used Drive %s\n\tBlock Count: %llu\n\tBlock Size: %llu\n", cur_drive.block_dev.name, cur_drive.block_dev.block_count, cur_drive.block_dev.block_size);
-		return EFI_LOAD_ERROR;
+		return ENCODE_ERROR(EFI_LOAD_ERROR);
 	}
 
     aos_sysinfo_t* SystemInfo = (aos_sysinfo_t*)AOS_SYS_INFO_LOC;
@@ -835,7 +842,7 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
     if (!read_f(&cur_drive.block_dev, uint128_to_u64(os_entries[final_kernel_idx].lba), uint128_to_u32(os_entries[final_kernel_idx].count), (void*)ambrc->kernel_info[final_kernel_idx].load_addr)) {
         vmem_print(&cursor, "Failed to read kernel, Disk error!\n");
-		return EFI_LOAD_ERROR;
+		return ENCODE_ERROR(EFI_LOAD_ERROR);
     }
 
 	SystemInfo->kernel_info = AOS_BOOTLOADER_KERNEL_ACTIVE_FLAG;
@@ -873,7 +880,9 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 	vmem_print(&cursor, "Allocating memory pool for map...\n");
 	while (status == ENCODE_ERROR(EFI_BUFFER_TOO_SMALL)) {
     	map_size += desc_size * 2;
-		SystemTable->BootServices->AllocatePool(EfiLoaderData, map_size, (VOID**)&map);
+		if (map) SystemTable->BootServices->FreePool(map);
+		if (EFI_ERROR(SystemTable->BootServices->AllocatePool(EfiLoaderData, map_size, (VOID**)&map)))
+			return ENCODE_ERROR(EFI_OUT_OF_RESOURCES);
 		status = SystemTable->BootServices->GetMemoryMap(&map_size, map, &map_key, &desc_size, &desc_version);
 	}
 	if (EFI_ERROR(status)) {
@@ -882,13 +891,22 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 	}
 
 	vmem_print(&cursor, "Initializing E820 Map...\n");
-	struct bs1_e820_entry e820[E820_MAX_ENT];
-	size_t e820_count = 0;
+	EFI_PHYSICAL_ADDRESS E820MapPhys = AOS_E820_INFO_ADDR;
+	if (EFI_ERROR(SystemTable->BootServices->AllocatePages(AllocateAddress, EfiLoaderData, (ALIGN_UP(sizeof(struct bs1_e820) + (sizeof(struct bs1_e820_entry)*(map_size / desc_size)), 0x1000))/0x1000, &E820MapPhys))) {
+		vmem_print(&cursor, "Failed to allocate E820 Map Structure!\n");
+		return ENCODE_ERROR(EFI_OUT_OF_RESOURCES);
+	}
+	struct bs1_e820* e820_m = (struct bs1_e820*)AOS_E820_INFO_ADDR;
+	struct bs1_e820_entry* e820 = (struct bs1_e820_entry*)e820_m->entries;
+	uint32_t e820_count = 0;
 
+	struct bs1_e820_entry* last_entry = NULL;
 	for (UINTN off = 0; off < map_size; off += desc_size) {
+		if (e820_count >= E820_MAX_ENT) break;
 		EFI_MEMORY_DESCRIPTOR* desc = (EFI_MEMORY_DESCRIPTOR*)((uint8_t*)map + off);
-		e820[e820_count].base = desc->PhysicalStart;
-		e820[e820_count].len = desc->NumberOfPages * 0x1000ULL;
+		struct bs1_e820_entry* e = &e820[e820_count];
+		e->base = desc->PhysicalStart;
+		e->len = desc->NumberOfPages * 0x1000ULL;
 		switch (desc->Type) {
 			case EfiConventionalMemory:
 			case EfiLoaderCode:
@@ -896,41 +914,67 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 			case EfiBootServicesCode:
 			case EfiBootServicesData:
 			case EfiPersistentMemory:
-				e820[e820_count].type = E820_TYPE_RAM;
+				e->type = E820_TYPE_RAM;
 				break;
 
 			case EfiACPIReclaimMemory:
-				e820[e820_count].type = E820_TYPE_ACPI_RECLAIM;
+				e->type = E820_TYPE_ACPI_RECLAIM;
 				break;
 
 			case EfiACPIMemoryNVS:
-				e820[e820_count].type = E820_TYPE_ACPI_NVS;
+				e->type = E820_TYPE_ACPI_NVS;
 				break;
 
 			case EfiUnusableMemory:
-				e820[e820_count].type = E820_TYPE_BAD;
+				e->type = E820_TYPE_BAD;
 				break;
 
 			default:
-				e820[e820_count].type = E820_TYPE_RESERVED;
+				e->type = E820_TYPE_RESERVED;
 				break;
 		}
-		e820[e820_count].ext = 1;
-		e820_count++;
+		e->ext = 1;
+
+		if (last_entry) {
+			if (
+				e->base == (last_entry->base + last_entry->len) &&
+				e->type == last_entry->type &&
+				e->ext == last_entry->ext
+			) {
+				last_entry->len += e->len;
+			} else {
+				last_entry = e;
+				e820_count++;
+			}
+		} else {
+			last_entry = e;
+			e820_count++;
+		}
 	}
 
-	EFI_PHYSICAL_ADDRESS E820MapPhys = AOS_E820_INFO_ADDR;
-	if (EFI_ERROR(SystemTable->BootServices->AllocatePages(AllocateAddress, EfiLoaderData, (ALIGN_UP(sizeof(struct bs1_e820) + (sizeof(struct bs1_e820_entry)*e820_count), 0x1000))/0x1000, &E820MapPhys))) {
-		vmem_print(&cursor, "Failed to allocate E820 Map Structure!\n");
-		return EFI_OUT_OF_RESOURCES;
-	}
-	struct bs1_e820* e820_m = (struct bs1_e820*)AOS_E820_INFO_ADDR;
 	e820_m->entry_count = e820_count;
-	memcpy(e820_m->entries, e820, sizeof(struct bs1_e820_entry)*e820_count);
 
 	vmem_print(&cursor, "Jumping to Kernel...\n");
 	vmem_flush();
-	SystemTable->BootServices->ExitBootServices(ImageHandle, map_key);
+	status = SystemTable->BootServices->ExitBootServices(ImageHandle, map_key);
+	while (status == ENCODE_ERROR(EFI_INVALID_PARAMETER)) {
+		EFI_STATUS status2 = SystemTable->BootServices->GetMemoryMap(&map_size, map, &map_key, &desc_size, &desc_version);
+		while (status2 == ENCODE_ERROR(EFI_BUFFER_TOO_SMALL)) {
+			map_size += desc_size * 2;
+			if (map) SystemTable->BootServices->FreePool(map);
+			if (EFI_ERROR(SystemTable->BootServices->AllocatePool(EfiLoaderData, map_size, (VOID**)&map)))
+				return ENCODE_ERROR(EFI_OUT_OF_RESOURCES);
+			status2 = SystemTable->BootServices->GetMemoryMap(&map_size, map, &map_key, &desc_size, &desc_version);
+		}
+		if (EFI_ERROR(status2)) {
+			vmem_printf(&cursor, "Failed to allocate memory pool! : %llu\n", status2);
+			return status2;
+		}
+		status = SystemTable->BootServices->ExitBootServices(ImageHandle, map_key);
+		if (EFI_ERROR(status) && status != ENCODE_ERROR(EFI_INVALID_PARAMETER)) {
+			return status;
+		}
+	}
 
 	stage3_jump_to_kernel((void(*)(void))((void*)ambrc->kernel_info[final_kernel_idx].entry_point), AOS_KERNEL_STACK_TOP);
 

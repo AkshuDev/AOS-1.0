@@ -87,8 +87,8 @@ void pager_init(void) {
 
     struct bs1_e820* e820 = (struct bs1_e820*)AOS_E820_INFO_ADDR;
     uint64_t max_phys_addr = 0;
-    uint64_t base_phys[128];
-    uint64_t limit_phys[128];
+    uint64_t base_phys[256];
+    uint64_t limit_phys[256];
     uint64_t phys_idx = 0;
 	extern uint8_t __bss_end; // from linker script
 	uintptr_t bss_end = (uintptr_t)((uintptr_t)AOS_KERNEL_ADDR + (uintptr_t)&__bss_end);

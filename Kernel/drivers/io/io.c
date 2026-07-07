@@ -323,6 +323,7 @@ void serial_printf(const char* fmt, ...) {
                 case 's': {
                     const char* s = va_arg(args, const char*);
                     serial_print(s ? s : "(NULL)");
+					klog_msg_started = AOS_TRUE;
                     break;
                 }
                 case 'i':
@@ -346,6 +347,7 @@ void serial_printf(const char* fmt, ...) {
                     if (*fmt == 'p') {
                         p = (uintptr_t)va_arg(args, void*);
                         serial_print("0x");
+						klog_msg_started = AOS_TRUE;
                         if (width == 0) width = 16;
                         zero_pad = 1;
                     } else {

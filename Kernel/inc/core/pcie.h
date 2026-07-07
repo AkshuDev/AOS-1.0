@@ -51,4 +51,7 @@ aos_bool pcie_write(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uin
 aos_bool pcie_find(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint16_t target_vendor, uint8_t use_vendor) __attribute__((used));
 aos_bool pcie_find_ex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint8_t target_subclass, uint8_t target_progifclass, uint16_t target_vendor, uint8_t use_vendor) __attribute__((used));
 aos_bool pcie_find_rex(uint8_t* bus, uint8_t* slot, uint8_t* func, uint32_t* bar0, uint8_t target_class, uint8_t target_subclass, uint8_t target_progifclass, uint8_t target_revision, uint16_t target_vendor, uint8_t use_vendor) __attribute__((used));
-aos_bool pcie_enable_busmaster(uint8_t bus, uint8_t slot, uint8_t func) __attribute__((used));
+aos_bool pcie_toggle_memory_space(uint8_t bus, uint8_t slot, uint8_t func, aos_bool toggle) __attribute__((used));
+aos_bool pcie_toggle_busmaster(uint8_t bus, uint8_t slot, uint8_t func, aos_bool toggle) __attribute__((used));
+aos_bool pcie_get_busmaster_toggled(uint8_t bus, uint8_t slot, uint8_t func) __attribute__((used));
+aos_bool pcie_get_memory_space_toggled(uint8_t bus, uint8_t slot, uint8_t func) __attribute__((used));

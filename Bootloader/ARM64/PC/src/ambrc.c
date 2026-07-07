@@ -663,7 +663,9 @@ EFIAPI static void ambrc_handle_changes(struct ambrc* ambrc, struct VMemDesign* 
 
 EFIAPI void start_ambrc(struct drive_device* drive) {
 	if (pefi_state.initialized != 1) return;
-	pefi_state.system_table->ConOut->QueryMode(pefi_state.system_table->ConOut, (UINTN)pefi_state.system_table->ConOut->Mode->Mode, &uefi_width, &uefi_height);
+	if (EFI_ERROR(pefi_state.system_table->ConOut->QueryMode(pefi_state.system_table->ConOut, (UINTN)pefi_state.system_table->ConOut->Mode->Mode, &uefi_width, &uefi_height))) {
+		return;
+	}
 
     gdrive = drive;
     struct ambrc* ambrc = get_ambrc();

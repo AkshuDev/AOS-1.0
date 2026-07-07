@@ -32,14 +32,11 @@ void aos_start_vshell(void) {
 void aospp_start(void) {
     serial_print("[AOS++] Searching for GPU...\n");
     if (!gpu_find_gpu(&gpu_framebuffer, &gpu_m)) {
-        serial_print("[AOS++] Failed to find/detect any GPU!\n");
+        serial_print("[AOS++] Failed to find/detect any usable GPU!\n");
         return;
     }
 
 	gpu_device_t* gpu_device = &gpu_m->Modules.driver_module.DriverConnections.gpu_connector;
-
-    serial_print("[AOS++] Initializing GPU Driver...\n");
-    if (gpu_device->init != NULL) gpu_device->init(gpu_m);
 
     if (gpu_device->init_resources != NULL) gpu_device->init_resources(gpu_device, 1);
     serial_print("[AOS++] Initializing Pyrion...\n");

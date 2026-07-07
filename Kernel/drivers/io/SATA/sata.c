@@ -21,7 +21,6 @@
 #undef PBFS_NDRIVERS
 
 #define KSATA_MAX_PORTS 32
-#define KSATA_MAGIC 0x0019A20A
 #define KSATA_ALLOC_STEP 16
 #define KSATA_MAX_CONTROLLERS 256
 
@@ -29,11 +28,13 @@
 
 typedef struct {
 	uint64_t idx;
+	aos_bool valid;
 
 	pcie_device_t sata_device;
 	aos_bool found_sata;
 
 	volatile struct sata_hba_mem* hba_mem;
+	uint64_t mapping_size;
 
 	struct sata_port_state port_states[KSATA_MAX_PORTS];
 	uint8_t ports_available[32];
@@ -41,7 +42,6 @@ typedef struct {
 	spinlock_t drive_lock;
 } sata_controller;
 
-static uint32_t bss_zeroed_magic; // Should be KSATA_MAGIC to ensure bss is zeroed or initialized
 static sata_controller* controllers;
 static uint64_t controller_count;
 static uint64_t controller_cap;
@@ -167,16 +167,68 @@ static aos_bool sata_port_init(sata_controller* ksc, struct sata_hba_port* port,
     return AOS_TRUE;
 }
 
-static void sata_map_bar(sata_controller* ksc) {
-	if (!ksc) return;
-    uint64_t bar5 = pcie_read_bar(ksc->sata_device.bus, ksc->sata_device.slot, ksc->sata_device.func, 5);
-    if (bar5 & 1) {
-        serial_print("[AHCI] BAR5 is not MMIO!\n");
-        return;
-    }
-    uint64_t phys = bar5 & ~0xF;
+static aos_bool sata_map_bar(sata_controller* ksc) {
+	if (!ksc) return AOS_FALSE;
 
-    ksc->hba_mem = (struct sata_hba_mem*)(AOS_DIRECT_MAP_BASE + phys);
+    uint8_t bus = ksc->sata_device.bus;
+    uint8_t slot = ksc->sata_device.slot;
+    uint8_t func = ksc->sata_device.func;
+
+    uint32_t bar5 = pcie_read_bar(bus, slot, func, 5);
+    uint64_t bar_phys = bar5 & ~0xFULL;
+	if ((bar_phys & 0xFFF) != 0) { // BAR should be page-aligned
+		serial_print("[AHCI] BAR5 is not page-aligned, mapping failed!\n");
+		return AOS_FALSE;
+	}
+
+    aos_bool is_64bit = ((bar5 >> 1) & 0b011) == 0x2;
+	uint32_t orig0 = bar5;
+    uint32_t orig1 = 0;
+
+	if ((bar5 & 0b001) == 0x1) {
+		serial_print("[AHCI] BAR5 is not a memory BAR, mapping failed!\n");
+		return AOS_FALSE;
+	}
+
+    if (is_64bit) {
+        orig1 = pcie_read_bar(bus, slot, func, 6);
+        bar_phys |= ((uint64_t)orig1 << 32);
+    }
+
+	pcie_toggle_memory_space(bus, slot, func, AOS_FALSE);
+	
+    pcie_write_bar(bus, slot, func, 5, 0xFFFFFFFF);
+    if (is_64bit) pcie_write_bar(bus, slot, func, 6, 0xFFFFFFFF);
+
+    uint32_t mask0 = pcie_read_bar(bus, slot, func, 5);
+    uint32_t mask1 = is_64bit ? pcie_read_bar(bus, slot, func, 6) : 0;
+
+    pcie_write_bar(bus, slot, func, 5, orig0);
+    if (is_64bit) pcie_write_bar(bus, slot, func, 6, orig1);
+
+	pcie_toggle_memory_space(bus, slot, func, AOS_TRUE);
+
+	uint64_t size = 0;
+	if (is_64bit) {
+		uint64_t mask = (mask0 & ~0xFULL) | ((uint64_t)mask1 << 32);
+		size = ~mask + 1;
+	} else {
+		uint32_t mask = (uint32_t)(mask0 & ~0xFULL);
+		size = (uint32_t)(~mask + 1);
+	}
+
+    ksc->mapping_size = size;
+	if (ksc->mapping_size < 0x100) {
+		serial_print("[AHCI] Device reported memory size is lower than minimum, mapping failed!\n");
+		return AOS_FALSE;
+	}
+
+	pager_map_range(AOS_DIRECT_MAP_BASE + bar_phys, bar_phys, ksc->mapping_size, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
+	pcie_toggle_busmaster(bus, slot, func, AOS_TRUE);
+
+	ksc->hba_mem = (struct sata_hba_mem*)(AOS_DIRECT_MAP_BASE + bar_phys);
+	serial_printf("[AHCI] Mapped all AHCI (Size: 0x%llx)\n", ksc->mapping_size);
+	return AOS_TRUE;
 }
 
 static aos_bool sata_exec_cmd_internal(struct sata_port_state* state, uint8_t command, uint8_t fis_type, aos_bool write, uint64_t lba, uint32_t count, void* buffer, aos_bool has_data, aos_bool has_lba, aos_bool has_count) {
@@ -364,12 +416,6 @@ aos_bool sata_init(struct AOS_Module* m) {
     if (m->hdr.type != MODULE_TYPE_DRIVER) return AOS_FALSE;
     if (m->Modules.driver_module.type != MODULE_DRIVER_TYPE_SATA) return AOS_FALSE;
 
-	if (bss_zeroed_magic != KSATA_MAGIC) {
-		controllers = NULL;
-		controller_count = 0;
-		controller_cap = 0;
-		bss_zeroed_magic = KSATA_MAGIC;
-	}
 	if (!controllers) {
 		controllers = (sata_controller*)avmf_alloc(sizeof(sata_controller) * KSATA_ALLOC_STEP, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, NULL);
 		if (!controllers) return AOS_FALSE;
@@ -392,11 +438,12 @@ aos_bool sata_init(struct AOS_Module* m) {
 	m->Modules.driver_module.DriverConnections.drive_connector.controller_idx = ksc->idx;
 
     ksc->sata_device = m->Modules.driver_module.pcie_device;
+	ksc->valid = AOS_FALSE;
 
-    sata_map_bar(ksc);
-    if (ksc->hba_mem == NULL) return AOS_FALSE;
-    pcie_enable_busmaster(ksc->sata_device.bus, ksc->sata_device.slot, ksc->sata_device.func);
-
+    if (!sata_map_bar(ksc)) {
+		controller_count--;
+		return AOS_FALSE;
+	}
     // Reset
     ksc->hba_mem->ghc |= (1 << 31); // AHCI
 
@@ -415,6 +462,7 @@ aos_bool sata_init(struct AOS_Module* m) {
 
     if (!(ksc->hba_mem->cap & (1 << 31))) {
         serial_print("[AHCI] Controller does not support 64-bit DMA\n");
+		controller_count--;
         return AOS_FALSE;
     }
 
@@ -485,10 +533,12 @@ aos_bool sata_init(struct AOS_Module* m) {
 
     if (ports_found > 0) {
         ksc->found_sata = AOS_TRUE;
+		ksc->valid = AOS_TRUE;
         serial_print("[AHCI] Controller Found and online\n");
         return AOS_TRUE;
     } else {
         ksc->found_sata = AOS_FALSE;
+		controller_count--;
         serial_print("[AHCI] No Controller was found!\n");
         return AOS_FALSE;
     }

@@ -99,6 +99,9 @@ enum virtio_gpu_ctrl_type {
 
 #define VIRTIO_GPU_RESOURCE_FLAG_Y_0_TOP (1 << 0)
 
+#define VIRTIO_GPU_F_VIRGL 0
+#define VIRTIO_F_VERSION_1 (1 << 5)
+
 struct virtio_rect {
     uint32_t x;
     uint32_t y;

@@ -270,22 +270,22 @@ void smp_push_task_bsp(void (*entry)(void*), void* arg) {
     }
 }
 
-uint8_t smp_get_first_free_core(uint32_t* out) {
+aos_bool smp_get_first_free_core(uint32_t* out) {
     for (uint32_t i = 0; i < 256; i++){
         if (cores[i] == NULL) continue;
 
         if (cores[i]->status == CORE_STATUS_READY) {
             *out = cores[i]->core_idx;
-            return 1;
+            return AOS_TRUE;
         }
     }
-    return 0;
+    return AOS_FALSE;
 }
 
-uint8_t smp_get_core_status(uint32_t core_idx, enum core_status *out) {
-    if (core_idx > 255 || cores[core_idx] == NULL) return 0;
+aos_bool smp_get_core_status(uint32_t core_idx, enum core_status *out) {
+    if (core_idx > 255 || cores[core_idx] == NULL) return AOS_FALSE;
     *out = cores[core_idx]->status;
-    return 1;
+    return AOS_TRUE;
 }
 
 void smp_reserve_core(uint32_t core_idx) {
