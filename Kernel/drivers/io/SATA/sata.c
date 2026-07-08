@@ -99,6 +99,21 @@ static int sata_find_cmdslot(struct sata_hba_port* port) {
     return -1;
 }
 
+static void sata_destroy(sata_controller* ksc) {
+	if (!ksc) return;
+
+	for (uint8_t i = 0; i < KSATA_MAX_PORTS; i++) {
+		if (ksc->port_states[i].active) {
+			sata_port_stop(ksc->port_states[i].port);
+		}
+		ksc->ports_available[i] = AOS_FALSE;
+	}
+
+	ksc->found_sata = AOS_FALSE;
+	ksc->valid = AOS_FALSE;
+	if (ksc->idx == controller_count-1) controller_count--;
+}
+
 static aos_bool sata_port_init(sata_controller* ksc, struct sata_hba_port* port, struct sata_port_state* state) {
 	if (!ksc) return AOS_FALSE;
 
@@ -441,7 +456,7 @@ aos_bool sata_init(struct AOS_Module* m) {
 	ksc->valid = AOS_FALSE;
 
     if (!sata_map_bar(ksc)) {
-		controller_count--;
+		sata_destroy(ksc);
 		return AOS_FALSE;
 	}
     // Reset
@@ -462,7 +477,7 @@ aos_bool sata_init(struct AOS_Module* m) {
 
     if (!(ksc->hba_mem->cap & (1 << 31))) {
         serial_print("[AHCI] Controller does not support 64-bit DMA\n");
-		controller_count--;
+		sata_destroy(ksc);
         return AOS_FALSE;
     }
 
@@ -537,8 +552,7 @@ aos_bool sata_init(struct AOS_Module* m) {
         serial_print("[AHCI] Controller Found and online\n");
         return AOS_TRUE;
     } else {
-        ksc->found_sata = AOS_FALSE;
-		controller_count--;
+        sata_destroy(ksc);
         serial_print("[AHCI] No Controller was found!\n");
         return AOS_FALSE;
     }

@@ -86,7 +86,7 @@ aos_bool modules_init(void) {
         .type = MODULE_TYPE_DRIVER,
         .registered = AOS_FALSE
     };
-    modules[id].initialize_on_register = AOS_TRUE;
+    modules[id].initialize_on_register = AOS_FALSE;
 	modules[id].init_module = virtio_init;
 	modules[id].Modules.driver_module = (struct AOS_ModuleDriver){
         .type = MODULE_DRIVER_TYPE_GPU,

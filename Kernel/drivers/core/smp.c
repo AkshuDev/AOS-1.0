@@ -288,6 +288,10 @@ aos_bool smp_get_core_status(uint32_t core_idx, enum core_status *out) {
     return AOS_TRUE;
 }
 
+aos_bool smp_is_bsp_core(void) {
+	return get_lapic_id() == bsp_core_idx;
+}
+
 void smp_reserve_core(uint32_t core_idx) {
     if (core_idx > 255 || cores[core_idx] == NULL) return;
     struct core_state* target = cores[core_idx];
@@ -435,18 +439,108 @@ void smp_init(void) {
     asm volatile("sti");
 }
 
+uint32_t smp_get_current_core(void) {
+	return (uint32_t)get_lapic_id();
+}
+
+void smp_shutdown_core(uint32_t core_idx) {
+	if (core_idx > 255 || cores[core_idx] == NULL) return;
+    struct core_state* target = cores[core_idx];
+
+    uint64_t flags = spin_lock_irqsave(&target->command_lock);
+    target->shutdown_core = 1;
+	if (target->stack) avmf_free((uint64_t)target->stack);
+	if (target->idle_thread) avmf_free((uint64_t)target->idle_thread);
+	if (target->ready_list) avmf_free((uint64_t)target->ready_list);
+    spin_unlock_irqrestore(&target->command_lock, flags);
+
+	// Broadcast INIT IPI to reset the AP
+	lapic_write(LAPIC_REG_ICR_HIGH, target->lapic_id << 24);
+	lapic_write(LAPIC_REG_ICR_LOW, 0x00004500); // INIT, level=assert
+	kdelay(10);
+
+	// Deassert INIT3
+	lapic_write(LAPIC_REG_ICR_LOW, 0x00004000); // INIT deassert
+	kdelay(10);
+	
+	avmf_free((uint64_t)target);
+	cores[core_idx] = NULL;
+}
+
+void smp_reset_core(uint32_t core_idx) {
+	if (core_idx > 255 || cores[core_idx] == NULL) return;
+    struct core_state* target = cores[core_idx];
+
+    uint64_t flags = spin_lock_irqsave(&target->command_lock);
+    target->shutdown_core = 1;
+
+	if (target->ready_list) avmf_free((uint64_t)target->ready_list);
+    spin_unlock_irqrestore(&target->command_lock, flags);
+
+	// Broadcast INIT IPI to reset the AP
+	lapic_write(LAPIC_REG_ICR_HIGH, target->lapic_id << 24);
+	lapic_write(LAPIC_REG_ICR_LOW, 0x00004500); // INIT, level=assert
+	kdelay(10);
+
+	// Deassert INIT3
+	lapic_write(LAPIC_REG_ICR_LOW, 0x00004000); // INIT deassert
+	kdelay(10);
+
+	spin_lock(&boot_lock);
+	ap_boot_flag = AOS_FALSE;
+
+	if (target->idle_thread) {
+		target->idle_thread->tid = 0;
+		target->idle_thread->status = THREAD_STATUS_RUNNING;
+	}
+	target->ready_list = NULL;
+	target->queue_lock = 0;
+	target->command_lock = 0;
+	target->status = CORE_STATUS_READY;
+	target->next_tid = 0;
+	target->shutdown_core = 0;
+
+	uintptr_t trampoline_len = (uintptr_t)&smp_trampoline_end - (uintptr_t)&smp_trampoline_start;
+    uint64_t current_cr3;
+    asm volatile("mov %%cr3, %0" : "=r"(current_cr3));
+	
+	memcpy((void*)(AOS_DIRECT_MAP_BASE + 0x8000), &smp_trampoline_start, trampoline_len);
+	*(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x500) = current_cr3;
+	*(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x510) = (uintptr_t)target->stack + 16384;
+	*(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x518) = (uintptr_t)ap_kernel_entry;
+	*(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x520) = (uintptr_t)target;
+
+	serial_printf("[SMP] Sending SIPI to APIC ID %lld\n", core_idx);
+	send_ipi(core_idx, 0x08);
+	if (!ap_boot_flag) {
+		kdelay(200);
+		if (!ap_boot_flag) {
+			send_wakeup_ipi(core_idx, 0x08);
+
+			uint64_t timeout = kget_ms_passed();
+			while(!ap_boot_flag && kget_ms_passed() - timeout < 1000) { asm volatile("pause");}
+		}
+	}
+
+	if (!ap_boot_flag) {
+		serial_printf("[SMP] Error: Core %lld failed to check in!\n", core_idx);
+	} else {
+		serial_printf("[SMP] Core %lld checked in successfully.\n", core_idx);
+	}
+
+	spin_unlock(&boot_lock);
+}
+
+void smp_reset(void) {
+	for (int i = 0; i < 256; i++) {
+        if (cores[i] == NULL) continue;
+        smp_reset_core(i);
+    }
+}
+
 void smp_shutdown(void) {
     for (int i = 0; i < 256; i++) {
         if (cores[i] == NULL) continue;
-        cores[i]->shutdown_core = 1;
-        
-        // Broadcast INIT IPI to reset the AP
-        lapic_write(LAPIC_REG_ICR_HIGH, cores[i]->lapic_id << 24);
-        lapic_write(LAPIC_REG_ICR_LOW, 0x00004500); // INIT, level=assert
-        kdelay(10);
-
-        // Deassert INIT3
-        lapic_write(LAPIC_REG_ICR_LOW, 0x00004000); // INIT deassert
-        kdelay(10);
+        smp_shutdown_core(i);
     }
 }

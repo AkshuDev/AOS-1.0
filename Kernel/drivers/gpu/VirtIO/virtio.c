@@ -29,6 +29,7 @@ typedef struct {
 	uint64_t worker_buf_slot;
 
 	spinlock_t virtq_lock;
+	uint16_t last_seen_used;
 
 	uintptr_t notify_base;
 	uint32_t notify_multiplier;
@@ -85,12 +86,10 @@ static void virtio_sync_poll(void* kvc_raw) {
     }
 
     uint64_t flags = spin_lock_irqsave(&kvc->virtq_lock);
-    uint16_t head = kvc->virtq.free_head;
-    uint16_t next = (head + 1) % kvc->virtq.queue_size;
-    kvc->virtq.free_head = (next + 1) % kvc->virtq.queue_size;
-    spin_unlock_irqrestore(&kvc->virtq_lock, flags);
-    
+	kvc->last_seen_used = kvc->virtq.used->idx;
     kvc->worker_buf_slot++;
+    spin_unlock_irqrestore(&kvc->virtq_lock, flags);
+
     serial_print("[VIRTIO] Submitted Sync\n");
 
     smp_yield();
@@ -100,7 +99,8 @@ static void virtio_submit_async(virtio_controller* kvc, void* cmd, uint64_t cmd_
     serial_printf("[VIRTIO] Submitting Sync [CMD: %lx, CMD PHYS: %lx, CMD SIZE: %lx]\n", (uint64_t)cmd, cmd_phys, cmd_size);
 
     uint64_t flags = spin_lock_irqsave(&kvc->virtq_lock);
-    uint16_t head = kvc->virtq.free_head;
+    uint16_t avail_idx = kvc->virtq.avail->idx;
+    uint16_t head = (avail_idx * 2) % kvc->virtq.queue_size;
     uint16_t next = (head + 1) % kvc->virtq.queue_size;
 
     // Descriptor 1: The Command (Read-only)
@@ -117,9 +117,10 @@ static void virtio_submit_async(virtio_controller* kvc, void* cmd, uint64_t cmd_
     kvc->virtq.desc[next].flags = VIRTQ_DESC_F_WRITE;
     kvc->virtq.desc[next].next = 0;
 
-    kvc->virtq.avail->ring[kvc->virtq.avail->idx % kvc->virtq.queue_size] = head;
-    __asm__ volatile("sfence" ::: "memory"); // Ensure GPU sees RAM update
+    kvc->virtq.avail->ring[avail_idx % kvc->virtq.queue_size] = head;
+    __asm__ volatile("mfence" ::: "memory"); // Ensure GPU sees RAM update
     kvc->virtq.avail->idx++;
+	__asm__ volatile("mfence" ::: "memory"); // Ensure GPU sees RAM update
     spin_unlock_irqrestore(&kvc->virtq_lock, flags);
 
     // Notify Doorbell
@@ -128,24 +129,28 @@ static void virtio_submit_async(virtio_controller* kvc, void* cmd, uint64_t cmd_
     mmio_write32(db, 0);
 
     // Poll for completion
-    serial_print("[VIRTIO] Polling on a new thread\n");
     enum core_status status = 0;
     smp_get_core_status(kvc->gpu_cmd_core, &status);
 
-    if (kvc->gpu_cmd_core != 0xFFFF && status == CORE_STATUS_RESERVED)
+    if (kvc->gpu_cmd_core != 0xFFFF && status == CORE_STATUS_RESERVED) {
+		serial_printf("[VIRTIO] Polling on a Core %u\n", kvc->gpu_cmd_core);
         smp_push_task(kvc->gpu_cmd_core, virtio_sync_poll, kvc); // Push task here
-    else
+	} else {
+		serial_print("[VIRTIO] Polling [Core is not available]\n");
         virtio_sync_poll(kvc); // either no extra core, or core busy
+	}
 
     kvc->main_buf_slot++;
 }
 
 static void virtio_submit_sync(virtio_controller* kvc, void* cmd, uint64_t cmd_phys, size_t cmd_size, void* resp, uint64_t resp_phys, size_t resp_size) {
     serial_printf("[VIRTIO] Submitting Sync [CMD: %lx, CMD PHYS: %lx, CMD SIZE: %lx]\n", (uint64_t)cmd, cmd_phys, cmd_size);
-    uint16_t head = kvc->virtq.free_head;
-    uint16_t next = (head + 1) % kvc->virtq.queue_size;
 
     uint64_t flags = spin_lock_irqsave(&kvc->virtq_lock);
+	uint16_t avail_idx = kvc->virtq.avail->idx;
+    uint16_t head = (avail_idx * 2) % kvc->virtq.queue_size;
+    uint16_t next = (head + 1) % kvc->virtq.queue_size;
+
     // Descriptor 1: The Command (Read-only)
     serial_print("[VIRTIO] Setting Descriptor 1\n");
     kvc->virtq.desc[head].addr = (uintptr_t)cmd_phys;
@@ -160,9 +165,10 @@ static void virtio_submit_sync(virtio_controller* kvc, void* cmd, uint64_t cmd_p
     kvc->virtq.desc[next].flags = VIRTQ_DESC_F_WRITE;
     kvc->virtq.desc[next].next = 0;
 
-    kvc->virtq.avail->ring[kvc->virtq.avail->idx % kvc->virtq.queue_size] = head;
-    __asm__ volatile("sfence" ::: "memory"); // Ensure GPU sees RAM update
+    kvc->virtq.avail->ring[avail_idx % kvc->virtq.queue_size] = head;
+    __asm__ volatile("mfence" ::: "memory"); // Ensure GPU sees RAM update
     kvc->virtq.avail->idx++;
+	__asm__ volatile("mfence" ::: "memory"); // Ensure GPU sees RAM update
     spin_unlock_irqrestore(&kvc->virtq_lock, flags);
 
     // Notify Doorbell
@@ -276,10 +282,12 @@ static aos_bool virtio_map(virtio_controller* kvc) {
 
 	kvc->common_cfg = (volatile struct virtio_common_cfg*)(AOS_DIRECT_MAP_BASE + bar_phys + common_cap.offset);
 	serial_printf("[VIRTIO] Mapped all VIRTIO COMMON CFG (Size: 0x%llx)\n", kvc->mapping_size);
+
 	return AOS_TRUE;
 }
 
 static void virtio_destroy(virtio_controller* kvc) {
+	if (kvc->common_cfg) kvc->common_cfg->device_status |= VIRTIO_STATUS_FAILED;
 	for (uint64_t i = 0; i < MAX_CMD_RESP_BUFS; i++) {
 		if (kvc->cmd_buf[i]) {
 			avmf_free((uint64_t)kvc->cmd_buf[i]);
@@ -297,6 +305,13 @@ static void virtio_destroy(virtio_controller* kvc) {
 		kvc->virtq.desc = NULL;
 	}
 
+	if (kvc->gpu_cmd_core != 0xFFFF) {
+		enum core_status graphics_core;
+		if (smp_get_core_status(kvc->gpu_cmd_core, &graphics_core)) {
+			if (graphics_core == CORE_STATUS_RESERVED) smp_unreserve_core(kvc->gpu_cmd_core);
+		}
+	}
+
 	kvc->valid = AOS_FALSE;
 	if (kvc->idx == controller_count-1) controller_count--;
 }
@@ -305,6 +320,7 @@ static aos_bool setup_queue(virtio_controller* kvc, gpu_device_t* gpu, uint16_t 
     serial_print("[VIRTIO] Setting Queues....\n");
 
     kvc->common_cfg->queue_select = q_idx;
+	
 	kvc->common_cfg->queue_msix_vector = 0xFFFF;
 	kdelay(1);
     uint16_t size = kvc->common_cfg->queue_size;
@@ -342,6 +358,8 @@ static aos_bool setup_queue(virtio_controller* kvc, gpu_device_t* gpu, uint16_t 
 		serial_print("[VIRTIO] Device rejected queue!\n");
 		return AOS_FALSE;
 	}
+
+	kvc->last_seen_used = 0;
 
     serial_print("[VIRTIO] Queues ready!\n");
 	return AOS_TRUE;
@@ -430,8 +448,8 @@ aos_bool virtio_init(struct AOS_Module* m) {
 		__asm__ volatile("pause");
 	}
     kvc->common_cfg->device_status |= VIRTIO_STATUS_ACKNOWLEDGE;
+	kdelay(1);
     kvc->common_cfg->device_status |= VIRTIO_STATUS_DRIVER;
-
 	kdelay(1);
 
     // Features
@@ -442,9 +460,21 @@ aos_bool virtio_init(struct AOS_Module* m) {
 	uint32_t dev_hi = kvc->common_cfg->device_feature;
 
 	uint64_t device_features = ((uint64_t)dev_hi << 32) | dev_lo;
+
+	if (device_features == 0x0 || device_features == 0xFFFFFFFFFFFFFFFFULL) {
+		serial_printf("[VIRTIO] Invalid features provided! (0x%llx)\n", device_features);
+		virtio_destroy(kvc);
+		return AOS_FALSE;
+	}
+
 	uint64_t driver_features = 0;
 
 	if (device_features & (1ULL << VIRTIO_F_VERSION_1)) driver_features |= 1ULL << VIRTIO_F_VERSION_1;
+	else {
+		serial_print("[VIRTIO] Device failed to provide VIRTIO_F_VERSION_1\n");
+		virtio_destroy(kvc);
+		return AOS_FALSE;
+	}
 	if (device_features & (1ULL << VIRTIO_GPU_F_VIRGL)) {
 		driver_features |= 1ULL << VIRTIO_GPU_F_VIRGL;
 		gpu->acceleration_present = 1;
@@ -499,7 +529,9 @@ aos_bool virtio_init(struct AOS_Module* m) {
     // Setup gpu core
     if (!smp_get_first_free_core(&kvc->gpu_cmd_core)) {
         kvc->gpu_cmd_core = 0xFFFF;
-    }
+    } else {
+		smp_reserve_core(kvc->gpu_cmd_core);
+	}
 
     // Get fb info
     while (kvc->main_buf_slot - kvc->worker_buf_slot >= MAX_CMD_RESP_BUFS) {
@@ -978,7 +1010,7 @@ void pyrion_flush_virtio(struct pyrion_ctx* ctx) {
     kvc->virtq.desc[next2].next = 0;
 
     kvc->virtq.avail->ring[kvc->virtq.avail->idx % kvc->virtq.queue_size] = head;
-    __asm__ volatile("sfence" ::: "memory");
+    __asm__ volatile("mfence" ::: "memory");
     kvc->virtq.avail->idx++;
 
     kvc->virtq.free_head = (next2 + 1) % kvc->virtq.queue_size;

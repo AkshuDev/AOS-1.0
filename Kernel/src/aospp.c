@@ -35,18 +35,20 @@ void aospp_start(void) {
         serial_print("[AOS++] Failed to find/detect any usable GPU!\n");
         return;
     }
-
 	gpu_device_t* gpu_device = &gpu_m->Modules.driver_module.DriverConnections.gpu_connector;
 
-    if (gpu_device->init_resources != NULL) gpu_device->init_resources(gpu_device, 1);
-    serial_print("[AOS++] Initializing Pyrion...\n");
+	if (gpu_device->init) gpu_device->init(gpu_m);
+    if (gpu_device->init_resources) gpu_device->init_resources(gpu_device, 1);
+    
+	serial_print("[AOS++] Initializing Pyrion...\n");
     pyrion_init(gpu_device);
-    serial_print("[AOS++] Creating main display Pyrion Context...\n");
-    display_ctx = pyrion_create_ctx();
-    if (display_ctx == NULL) return;
+    
+	serial_print("[AOS++] Creating main display Pyrion Context...\n");
+	display_ctx = pyrion_create_ctx();
+    if (!display_ctx) return;
 
     start_vshell(display_ctx);
 
-    for (;;) asm("hlt");
+	if (gpu_device->switch_off) gpu_device->switch_off(gpu_device);
 }
 

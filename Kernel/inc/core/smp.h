@@ -70,4 +70,10 @@ void smp_unreserve_core(uint32_t core_idx) __attribute__((used));
 void smp_timer_handler(void) __attribute__((used));
 void smp_ipi_handler(void) __attribute__((used));
 
+aos_bool smp_is_bsp_core(void) __attribute__((used));
+uint32_t smp_get_current_core(void) __attribute__((used));
+
+void smp_shutdown_core(uint32_t core_idx) __attribute__((used));
+void smp_reset_core(uint32_t core_idx) __attribute__((used));
+void smp_reset(void) __attribute__((used));
 void smp_shutdown(void) __attribute__((used));
