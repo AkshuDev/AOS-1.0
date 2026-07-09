@@ -90,7 +90,7 @@ static void virtio_sync_poll(void* kvc_raw) {
     kvc->worker_buf_slot++;
     spin_unlock_irqrestore(&kvc->virtq_lock, flags);
 
-    serial_print("[VIRTIO] Submitted Sync\n");
+    serial_print("[VIRTIO] Poll Completed\n");
 
     smp_yield();
 }
@@ -287,7 +287,11 @@ static aos_bool virtio_map(virtio_controller* kvc) {
 }
 
 static void virtio_destroy(virtio_controller* kvc) {
-	if (kvc->common_cfg) kvc->common_cfg->device_status |= VIRTIO_STATUS_FAILED;
+	if (kvc->common_cfg) {
+		kvc->common_cfg->device_status |= VIRTIO_STATUS_FAILED;
+		__asm__ volatile("mfence" ::: "memory");
+	}
+
 	for (uint64_t i = 0; i < MAX_CMD_RESP_BUFS; i++) {
 		if (kvc->cmd_buf[i]) {
 			avmf_free((uint64_t)kvc->cmd_buf[i]);
@@ -320,22 +324,25 @@ static aos_bool setup_queue(virtio_controller* kvc, gpu_device_t* gpu, uint16_t 
     serial_print("[VIRTIO] Setting Queues....\n");
 
     kvc->common_cfg->queue_select = q_idx;
-	
+	__asm__ volatile("mfence" ::: "memory");
+	kdelay_ns(300);
+
+	uint16_t size = kvc->common_cfg->queue_size;
 	kvc->common_cfg->queue_msix_vector = 0xFFFF;
-	kdelay(1);
-    uint16_t size = kvc->common_cfg->queue_size;
+	kvc->common_cfg->queue_size = size;
+	__asm__ volatile("mfence" ::: "memory");
 
 	if (size < 1) {
 		serial_print("[VIRTIO] CommonCFG Queue Size is less than 1, quiting...\n");
 		return AOS_FALSE;
 	}
 
-    size_t desc_t_size = size * sizeof(struct virtq_desc);
-    size_t avail_r_size = 6 + (2 * size);
-    size_t used_r_size = 6 + (8 * size);
+    size_t desc_t_size = ALIGN_UP(size * sizeof(struct virtq_desc), 16);
+    size_t avail_r_size = ALIGN_UP(6 + (2 * size), 2);
+    size_t used_r_size = ALIGN_UP(6 + (8 * size), 4);
 
     uint64_t phys = 0;
-    void* mem = (void*)avmf_alloc(desc_t_size + avail_r_size + used_r_size, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &phys);
+    void* mem = (void*)avmf_alloc(desc_t_size + avail_r_size + used_r_size, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &phys);
     if (!mem) {serial_print("[VIRTIO] Failed to Allocate Memory!\n"); return AOS_FALSE;}
     if (!phys) {serial_print("[VIRTIO] Failed to retrieve physical address!\n"); return AOS_FALSE;}
 
@@ -353,7 +360,9 @@ static aos_bool setup_queue(virtio_controller* kvc, gpu_device_t* gpu, uint16_t 
     kvc->common_cfg->queue_avail = phys + desc_t_size;
     kvc->common_cfg->queue_used = (uintptr_t)phys + avail_r_size + desc_t_size;
     kvc->common_cfg->queue_enable = 1;
-	kdelay(1);
+	__asm__ volatile("mfence" ::: "memory");
+	kdelay_ns(300);
+
 	if (kvc->common_cfg->queue_enable != 1) {
 		serial_print("[VIRTIO] Device rejected queue!\n");
 		return AOS_FALSE;
@@ -438,6 +447,7 @@ aos_bool virtio_init(struct AOS_Module* m) {
 
     // RESET
     kvc->common_cfg->device_status = 0;
+	__asm__ volatile("mfence" ::: "memory");
 	uint64_t timeout = kget_ms_passed();
     while (kvc->common_cfg->device_status != 0) {
 		if (kget_ms_passed() - timeout > 10000) {
@@ -448,15 +458,20 @@ aos_bool virtio_init(struct AOS_Module* m) {
 		__asm__ volatile("pause");
 	}
     kvc->common_cfg->device_status |= VIRTIO_STATUS_ACKNOWLEDGE;
-	kdelay(1);
+	__asm__ volatile("mfence" ::: "memory");
     kvc->common_cfg->device_status |= VIRTIO_STATUS_DRIVER;
-	kdelay(1);
+	__asm__ volatile("mfence" ::: "memory");
+	kdelay_ns(300);
 
     // Features
     kvc->common_cfg->device_feature_select = 0;
+	__asm__ volatile("mfence" ::: "memory");
+	kdelay_ns(300);
   	uint32_t dev_lo = kvc->common_cfg->device_feature;
 
 	kvc->common_cfg->device_feature_select = 1;
+	__asm__ volatile("mfence" ::: "memory");
+	kdelay_ns(300);
 	uint32_t dev_hi = kvc->common_cfg->device_feature;
 
 	uint64_t device_features = ((uint64_t)dev_hi << 32) | dev_lo;
@@ -485,13 +500,22 @@ aos_bool virtio_init(struct AOS_Module* m) {
 	}
 
 	kvc->common_cfg->driver_feature_select = 0;
+	__asm__ volatile("mfence" ::: "memory");
+	kdelay_ns(300);
 	kvc->common_cfg->driver_feature = (uint32_t)driver_features;
+	__asm__ volatile("mfence" ::: "memory");
+	kdelay_ns(300);
 
 	kvc->common_cfg->driver_feature_select = 1;
+	__asm__ volatile("mfence" ::: "memory");
+	kdelay_ns(300);
+
 	kvc->common_cfg->driver_feature = (uint32_t)(driver_features >> 32);
+	__asm__ volatile("mfence" ::: "memory");
 
     kvc->common_cfg->device_status |= VIRTIO_STATUS_FEATURES_OK;
-	kdelay(1);
+	__asm__ volatile("mfence" ::: "memory");
+	kdelay_ns(300);
     if (!(kvc->common_cfg->device_status & VIRTIO_STATUS_FEATURES_OK)) {
         serial_print("[VIRTIO] Failed to negotiate features!\n");
 		virtio_destroy(kvc);
@@ -514,8 +538,8 @@ aos_bool virtio_init(struct AOS_Module* m) {
     
     // setup buffers
     for (uint64_t i = 0; i < MAX_CMD_RESP_BUFS; i++) {
-        kvc->cmd_buf[i] = (struct virtio_gpu_ctrl_hdr*)avmf_alloc(0x1000, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &kvc->cmd_buf_phys[i]);
-        kvc->resp_buf[i] = (struct virtio_gpu_resp_display_info*)avmf_alloc(0x1000, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &kvc->resp_buf_phys[i]);
+        kvc->cmd_buf[i] = (struct virtio_gpu_ctrl_hdr*)avmf_alloc(0x1000, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &kvc->cmd_buf_phys[i]);
+        kvc->resp_buf[i] = (struct virtio_gpu_resp_display_info*)avmf_alloc(0x1000, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &kvc->resp_buf_phys[i]);
         if (!kvc->cmd_buf || !kvc->resp_buf) {
             serial_print("[VIRTIO] Failed to allocate command and response buffers!\n");
 			virtio_destroy(kvc);
@@ -524,7 +548,15 @@ aos_bool virtio_init(struct AOS_Module* m) {
     }
 
     kvc->common_cfg->device_status |= VIRTIO_STATUS_DRIVER_OK;
-	kdelay(1);
+	__asm__ volatile("mfence" ::: "memory");
+	kdelay_ns(300);
+
+	uint8_t final_status = kvc->common_cfg->device_status;
+	if ((final_status & VIRTIO_STATUS_FAILED) || !(final_status & VIRTIO_STATUS_DRIVER_OK)) {
+        serial_printf("[VIRTIO] Device rejected DRIVER_OK initialization status! (Status: 0x%x)\n", final_status);
+        virtio_destroy(kvc);
+        return AOS_FALSE;
+    }
 
     // Setup gpu core
     if (!smp_get_first_free_core(&kvc->gpu_cmd_core)) {
@@ -634,7 +666,16 @@ aos_bool virtio_switch_off(struct gpu_device* gpu) {
 
     serial_print("[VIRTIO] Switching Off...\n");
     kvc->common_cfg->device_status = 0; // Reset
-    while (kvc->common_cfg->device_status != 0) { __asm__ volatile("pause"); }
+	__asm__ volatile("mfence" ::: "memory");
+	kdelay_ns(300);
+	uint64_t timeout = kget_ms_passed();
+    while (kvc->common_cfg->device_status != 0) {
+		if (kget_ms_passed() - timeout > 10000) {
+			serial_print("[VIRTIO] GPU Reset Timed out!\n");
+			break;
+		}
+		__asm__ volatile("pause");
+	}
     serial_print("[VIRTIO] GPU Reset completed!\n[VIRTIO] Unmapping used memory!\n");
 
     // Unmap
@@ -775,7 +816,7 @@ struct pyrion_ctx* pyrion_create_ctx_virtio(void) {
     }
 
     struct pyrion_ctx* ctx = (struct pyrion_ctx*)p_contexts[slot];
-    ctx->driver_data = (void*)avmf_alloc(0x1000, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &ctx->driver_data_phys);
+    ctx->driver_data = (void*)avmf_alloc(0x1000, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &ctx->driver_data_phys);
     if (!ctx->driver_data) return NULL;
     memset(ctx->driver_data, 0, 0x1000);
 
@@ -829,7 +870,7 @@ void pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* viewport
     virtio_submit_sync(kvc, c3d, kvc->cmd_buf_phys[slot], sizeof(*c3d), kvc->resp_buf[slot], kvc->resp_buf_phys[slot], sizeof(struct virtio_gpu_ctrl_hdr));
 
     // Attach backing
-    ctx->driver_data2 = (void*)avmf_alloc(viewport->width * viewport->height * 4, MALLOC_TYPE_SENSITIVE, PAGE_PRESENT | PAGE_RW, &ctx->driver_data_phys2);
+    ctx->driver_data2 = (void*)avmf_alloc(viewport->width * viewport->height * 4, MALLOC_TYPE_SENSITIVE, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &ctx->driver_data_phys2);
     if (!ctx->driver_data2) {
         serial_print("[VIRTIO] Failed to allocate for backing!\n");
         return;
@@ -886,7 +927,7 @@ void pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* viewport
 
     if (kvc->acceleration_present != 1) {
         serial_print("[VIRTIO] No Acceleration in Viewport/Context!\n");
-        FB_Info_t* fb = (FB_Info_t*)avmf_alloc(viewport->width * viewport->height * sizeof(uint32_t), MALLOC_TYPE_SENSITIVE, PAGE_RW | PAGE_PRESENT, &ctx->fb.phys_addr);
+        FB_Info_t* fb = (FB_Info_t*)avmf_alloc(viewport->width * viewport->height * sizeof(uint32_t), MALLOC_TYPE_SENSITIVE, PAGE_RW | PAGE_PRESENT | PAGE_PCD, &ctx->fb.phys_addr);
         if (!fb) {
             serial_print("[VIRTIO] Failed to allocate framebuffer\n");
             return;

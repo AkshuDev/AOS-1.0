@@ -16,6 +16,7 @@ struct xhci_cap_regs {
     uint32_t hcc_params; // offset 0x10
     uint32_t dboff; // offset 0x14
     uint32_t rtsoff; // offset 0x18
+	uint32_t hcc_params2; // offset 0x1C
 } __attribute__((packed));
 
 struct xhci_op_regs {

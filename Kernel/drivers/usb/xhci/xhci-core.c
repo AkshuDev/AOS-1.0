@@ -48,10 +48,10 @@ typedef struct {
 
 	pcie_device_t xhci_controller;
 	volatile uint32_t* xhci_mmio;
-	struct xhci_cap_regs* cap;
-	struct xhci_op_regs* op_regs;
+	volatile struct xhci_cap_regs* cap;
+	volatile struct xhci_op_regs* op_regs;
 	volatile uint32_t* doorbells;
-	struct xhci_runtime_regs* runtime_regs;
+	volatile struct xhci_runtime_regs* runtime_regs;
 
 	uint64_t dcbaa;
 
@@ -144,22 +144,22 @@ static aos_bool map_xhci_mmio(xhci_controller* kxc) {
 	if (kxc->mapping_size < sizeof(struct xhci_cap_regs)) return AOS_FALSE;
 
 	pager_map_range(AOS_DIRECT_MAP_BASE + bar_phys, bar_phys, kxc->mapping_size, PAGE_PRESENT | PAGE_RW | PAGE_PCD);
-	if (((struct xhci_cap_regs*)(AOS_DIRECT_MAP_BASE + bar_phys))->hc_version <= 0) {
-		serial_print("[xHCI] HCVersion Invalid!\n");
-		return AOS_FALSE;
-	}
-
 	pcie_toggle_busmaster(bus, slot, func, AOS_TRUE);
 
     kxc->xhci_mmio = (volatile uint32_t*)(AOS_DIRECT_MAP_BASE + bar_phys);
-    kxc->cap = (struct xhci_cap_regs*)kxc->xhci_mmio;
-    kxc->op_regs = (struct xhci_op_regs*)((uint8_t*)kxc->xhci_mmio + kxc->cap->cap_length);
-	kxc->runtime_regs = (struct xhci_runtime_regs*)((uint8_t*)kxc->xhci_mmio + kxc->cap->rtsoff);
+    kxc->cap = (volatile struct xhci_cap_regs*)kxc->xhci_mmio;
+    kxc->op_regs = (volatile struct xhci_op_regs*)((uint8_t*)kxc->xhci_mmio + kxc->cap->cap_length);
+	kxc->runtime_regs = (volatile struct xhci_runtime_regs*)((uint8_t*)kxc->xhci_mmio + kxc->cap->rtsoff);
 	kxc->doorbells = (volatile uint32_t*)((uint8_t*)kxc->xhci_mmio + kxc->cap->dboff);
 
 	kxc->max_slots = kxc->cap->hcs_params1 & 0xFF;
 	kxc->max_ports = (kxc->cap->hcs_params1 >> 24) & 0xFF;
 	kxc->trbs_per_page = PAGE_SIZE / sizeof(struct xhci_trb);
+
+	if (kxc->cap->hc_version == 0) {
+        serial_print("[xHCI] HCVersion Invalid!\n");
+        return AOS_FALSE;
+    }
 
 	if (kxc->cap->cap_length > kxc->mapping_size) {
 		serial_print("[xHCI] Device Broken! (CAP Length)\n");
@@ -194,7 +194,8 @@ static struct xhci_trb* xhci_next_event(xhci_controller* kxc) {
         kxc->event_cycle ^= 1;
     }
     kxc->runtime_regs->intr_reg_set[0].erdp = (kxc->event_ring_phys + kxc->event_index * sizeof(struct xhci_trb)) | (1 << 3);
-    return result;
+    __asm__ volatile("mfence" ::: "memory");
+	return result;
 }
 
 static struct xhci_trb* xhci_wait_cmd(xhci_controller* kxc) {
@@ -223,8 +224,9 @@ static void xhci_send_cmd(xhci_controller* kxc, uint32_t type, uint64_t param) {
 		kxc->cmd_index = 0;
 		kxc->cmd_cycle ^= 1;
 	}
-
+	__asm__ volatile("mfence" ::: "memory");
 	kxc->doorbells[0] = 0;
+	__asm__ volatile("mfence" ::: "memory");
 }
 
 aos_bool xhci_init(struct AOS_Module* module) {
@@ -261,6 +263,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	// Reset
 	serial_print("[xHCI] Resetting Controller...\n");
 	kxc->op_regs->usbcmd &= ~1;
+	__asm__ volatile("mfence" ::: "memory");
 	uint64_t timeout = kget_ms_passed();
 	while (!(kxc->op_regs->usbsts & (1 << 0))) {
 		if (kget_ms_passed() - timeout >= 10000) {
@@ -273,6 +276,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 
 	serial_print("[xHCI] Setting HCRST...\n");
 	kxc->op_regs->usbcmd |= (1 << 1); // Set HCRST
+	__asm__ volatile("mfence" ::: "memory");
 	timeout = kget_ms_passed();
 	while (kxc->op_regs->usbcmd & (1 << 1)) {
 		if (kget_ms_passed() - timeout >= 10000) {
@@ -293,7 +297,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	}
 
 	serial_print("[xHCI] Allocating DCBAA...\n");
-	kxc->dcbaa = avmf_alloc(ALIGN_UP((kxc->max_slots + 1) * sizeof(uint64_t), 64), MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &kxc->op_regs->dcbaap);
+	kxc->dcbaa = avmf_alloc(ALIGN_UP((kxc->max_slots + 1) * sizeof(uint64_t), 64), MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &kxc->op_regs->dcbaap);
 	if (!kxc->dcbaa) {
 		serial_print("[xHCI] Failed to allocate DCBAA\n");
 		destroy_n_unmap_xhci(kxc);
@@ -302,7 +306,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	memset((void*)kxc->dcbaa, 0, (kxc->max_slots + 1) * sizeof(uint64_t));
 
 	serial_print("[xHCI] Allocating CMD Ring...\n");
-	kxc->cmd_ring = (struct xhci_trb*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &kxc->cmd_ring_phys);
+	kxc->cmd_ring = (struct xhci_trb*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &kxc->cmd_ring_phys);
 	if (!kxc->cmd_ring) {
 		serial_print("[xHCI] Failed to allocate CMD Ring\n");
 		destroy_n_unmap_xhci(kxc);
@@ -312,9 +316,10 @@ aos_bool xhci_init(struct AOS_Module* module) {
 
 	kxc->cmd_ring[kxc->trbs_per_page-1].param = kxc->cmd_ring_phys;
 	kxc->cmd_ring[kxc->trbs_per_page-1].control = 1 | (6 << 10) | (1 << 1); // Link TRB Type | Toggle Cycle
+	__asm__ volatile("mfence" ::: "memory");
 
 	serial_print("[xHCI] Allocating EVENT Ring...\n");
-	kxc->event_ring = (struct xhci_trb*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &kxc->event_ring_phys);
+	kxc->event_ring = (struct xhci_trb*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &kxc->event_ring_phys);
 	if (!kxc->event_ring) {
 		serial_print("[xHCI] Failed to allocate EVENT Ring\n");
 		destroy_n_unmap_xhci(kxc);
@@ -323,7 +328,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	memset(kxc->event_ring, 0, PAGE_SIZE);
 
 	serial_print("[xHCI] Allocating ERST...\n");
-	kxc->erst = (struct xhci_erst_entry*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, &kxc->erst_phys);
+	kxc->erst = (struct xhci_erst_entry*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &kxc->erst_phys);
 	if (!kxc->erst) {
 		serial_print("[xHCI] Failed to allocate ERST\n");
 		destroy_n_unmap_xhci(kxc);
@@ -348,6 +353,8 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	kxc->op_regs->config = kxc->max_slots;
 
 	kxc->op_regs->usbcmd |= 1;
+	__asm__ volatile("mfence" ::: "memory");
+
 	timeout = kget_ms_passed();
 	while (kxc->op_regs->usbsts & 1) {
 		if (kget_ms_passed() - timeout >= 10000) {
@@ -360,6 +367,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 
 	kxc->runtime_regs->intr_reg_set[0].iman |= (1 << 1); // Enable interrupts
 	kxc->op_regs->usbcmd |= (1 << 2); // Enable Global interrupts
+	__asm__ volatile("mfence" ::: "memory");
 
 	xhci_send_cmd(kxc, TRB_CMD_ENABLE_SLOT, 0);
 	struct xhci_trb* event = xhci_wait_cmd(kxc);
@@ -398,6 +406,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	portsc &= ~(0x7F << 17);
 	portsc |= (1 << 4); // PR
 	kxc->op_regs->ports[kxc->port].portsc = portsc;
+	__asm__ volatile("mfence" ::: "memory");
 
 	timeout = kget_ms_passed();
 	while (kxc->op_regs->ports[kxc->port].portsc & (1 << 4)) {

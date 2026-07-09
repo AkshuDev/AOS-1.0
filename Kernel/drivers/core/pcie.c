@@ -277,6 +277,7 @@ aos_bool pcie_write(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uin
             uint64_t virt_addr =(uint64_t)((AOS_DIRECT_MAP_BASE + e->base_addr) + ((uint64_t)e->pcie_segment << 28) + (((uint64_t)bus - e->start_bus) << 20) + ((uint64_t)slot << 15) + ((uint64_t)func << 12) + offset);
 
             *(volatile uint32_t*)virt_addr = value;
+			__asm__ volatile("mfence" ::: "memory");
             return AOS_TRUE;
         }
     }

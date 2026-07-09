@@ -553,7 +553,13 @@ void vmem_clear_screen(struct VMemDesign* design) {
 }
 
 void vmem_printc(struct VMemDesign* design, char c) {
-	if (design->serial_out) serial_printc(c);
+	if (design->serial_out) {
+		serial_printc(c);
+		if (c == '\b') {
+			serial_printc(' ');
+			serial_printc('\b');
+		}
+	}
 
 	if (design->x > IO_VMEM_MAX_COLS_true) design->x = IO_VMEM_MAX_COLS_true;
 	else if (design->x < 0) design->x = 0;

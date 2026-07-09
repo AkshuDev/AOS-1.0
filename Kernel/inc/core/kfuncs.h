@@ -26,7 +26,8 @@ void spin_unlock_irqrestore(spinlock_t* lock, uint64_t flags) __attribute__((use
 
 void ktimer_calibrate(void) __attribute__((used));
 uint64_t kget_ms_passed(void) __attribute__((used));
-void kdelay(uint32_t ms) __attribute__((used));
+void kdelay(uint64_t ms) __attribute__((used));
+void kdelay_ns(uint64_t ms) __attribute__((used));
 uint64_t kget_timestamp_seconds(void) __attribute__((used));
 uint64_t kget_timestamp_ms(void) __attribute__((used));
 

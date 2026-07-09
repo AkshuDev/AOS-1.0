@@ -63,6 +63,7 @@ static aos_bool sata_busy_wait(struct sata_hba_port* port) {
 
 static aos_bool sata_port_stop(struct sata_hba_port* port) {
     port->cmd &= ~((1 << 0) | (1 << 4)); // clear ST and FRE
+	__asm__ volatile("mfence" ::: "memory");
 
 	uint64_t timeout = kget_ms_passed();
 
@@ -129,6 +130,7 @@ static aos_bool sata_port_init(sata_controller* ksc, struct sata_hba_port* port,
 
     port->is = 0xFFFFFFFF;
     port->serr = 0xFFFFFFFF;
+	__asm__ volatile("mfence" ::: "memory");
 
     state->clb_virt = avmf_alloc(1024, MALLOC_TYPE_DRIVER, PAGE_RW | PAGE_PRESENT, &state->clb_phys);
     if (state->clb_virt == 0) {
@@ -162,6 +164,7 @@ static aos_bool sata_port_init(sata_controller* ksc, struct sata_hba_port* port,
         state->cmd_hdrs[i].prdtl = 0;
         state->cmd_hdrs[i].ctba = (uint32_t)(ct_phys & 0xFFFFFFFF);
         state->cmd_hdrs[i].ctbau = (uint32_t)(ct_phys >> 32);
+		__asm__ volatile("mfence" ::: "memory");
     }
 
     port->clb = (uint32_t)(state->clb_phys & 0xFFFFFFFF);
@@ -169,6 +172,7 @@ static aos_bool sata_port_init(sata_controller* ksc, struct sata_hba_port* port,
 
     port->fb = (uint32_t)(state->fis_phys & 0xFFFFFFFF);
     port->fbu = (uint32_t)(state->fis_phys >> 32);
+	__asm__ volatile("mfence" ::: "memory");
 
     state->port = port;
 
@@ -177,6 +181,7 @@ static aos_bool sata_port_init(sata_controller* ksc, struct sata_hba_port* port,
 
     port->is = 0xFFFFFFFF;
     port->serr = 0xFFFFFFFF;
+	__asm__ volatile("mfence" ::: "memory");
 
     state->active = AOS_TRUE;
     return AOS_TRUE;
@@ -341,6 +346,7 @@ static aos_bool sata_exec_cmd_internal(struct sata_port_state* state, uint8_t co
 	asm volatile("mfence" ::: "memory");
 	port->is = 0xFFFFFFFF;
     port->ci |= (1 << slot);
+	__asm__ volatile("mfence" ::: "memory");
     uint64_t timeout = kget_ms_passed();
 	aos_bool timed_out = AOS_FALSE;
     while (1) {
@@ -503,7 +509,7 @@ aos_bool sata_init(struct AOS_Module* m) {
 
             // Trigger a COMRESET
             port->sctl = (port->sctl & ~0x0F) | 1; 
-            kdelay(1);
+            kdelay_ns(360);
             port->sctl &= ~0x0F; // Clear the reset bit to allow comms
 
             // Re-enable FIS receiving
@@ -514,7 +520,7 @@ aos_bool sata_init(struct AOS_Module* m) {
                 // Give the FIS a tiny bit of time to arrive and update the signature
                 kdelay(10); 
                 if (port->sig != 0xFFFFFFFF) break;
-                kdelay(1);
+                kdelay_ns(360);
 				asm volatile("pause");
             }
 

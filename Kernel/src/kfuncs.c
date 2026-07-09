@@ -285,11 +285,24 @@ void ktimer_calibrate(void) {
 	serial_printf("Bootup Timestamp: %u\n", bootup_timestamp);
 }
 
-void kdelay(uint32_t ms) {
+void kdelay(uint64_t ms) {
     if (tsc_ticks_per_ms == 0) return;
 
     uint64_t start = ktimer_read_tsc();
     uint64_t ticks_needed = (uint64_t)ms * tsc_ticks_per_ms;
+	if (ticks_needed == 0) ticks_needed = 1;
+
+    while ((ktimer_read_tsc() - start) < ticks_needed) {
+        asm volatile("pause" ::: "memory");
+    }
+}
+
+void kdelay_ns(uint64_t ns) {
+	if (tsc_ticks_per_ms == 0) return;
+
+    uint64_t start = ktimer_read_tsc();
+    uint64_t ticks_needed = (uint64_t)ns * ((uint64_t)(tsc_ticks_per_ms / 1000));
+	if (ticks_needed == 0) ticks_needed = 1;
 
     while ((ktimer_read_tsc() - start) < ticks_needed) {
         asm volatile("pause" ::: "memory");
