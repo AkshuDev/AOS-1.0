@@ -11,6 +11,13 @@
 #define AMD_VENDORID 0x1002
 #define VirtIo_VENDORID 0x1AF4
 
+#define GPU_REFRESH_FLAG_CORE (1 << 0)
+#define GPU_REFRESH_FLAG_DEVICE (1 << 1)
+#define GPU_REFRESH_FLAG_BUFFERS (1 << 2)
+#define GPU_REFRESH_FLAG_QUEUES (1 << 3)
+
+#define GPU_REFRESH_ALL_FLAG (GPU_REFRESH_FLAG_CORE | GPU_REFRESH_FLAG_DEVICE | GPU_REFRESH_FLAG_BUFFERS | GPU_REFRESH_FLAG_QUEUES)
+
 // APIs
 #include <inc/drivers/gpu/apis/pyrion.h>
 
@@ -23,7 +30,7 @@ typedef struct gpu_device {
     pcie_device_t* pcie_device;
     PCIe_FB* framebuffer;
 
-    uint8_t acceleration_present;
+    aos_bool acceleration_present;
 
     // Function pointers
     aos_bool (*init)(struct AOS_Module* m);
@@ -36,7 +43,7 @@ typedef struct gpu_device {
     // API pointers
     struct pyrion_api pyrion;
 
-    uint8_t active;
+    aos_bool active;
 } gpu_device_t;
 
 void svga_write(uintptr_t mmio_base, uint32_t index, uint32_t value, uint32_t svga_index_port, uint32_t svga_value_port) __attribute__((used));

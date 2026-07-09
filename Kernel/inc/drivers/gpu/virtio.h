@@ -152,9 +152,9 @@ struct virtq_used {
 };
 
 struct virtqueue {
-    struct virtq_desc* desc;
-    struct virtq_avail* avail;
-    struct virtq_used* used;
+    volatile struct virtq_desc* desc;
+    volatile struct virtq_avail* avail;
+    volatile struct virtq_used* used;
     uint16_t queue_size;
     uint16_t free_head;
     uint16_t last_used_idx;
