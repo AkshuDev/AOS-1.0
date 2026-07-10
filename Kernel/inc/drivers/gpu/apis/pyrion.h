@@ -57,23 +57,23 @@ struct pyrion_ctx {
 };
 
 struct pyrion_api {
-    void (*init)(void);
+    aos_bool (*init)(void);
     void (*finish)(void);
     
     struct pyrion_ctx* (*create_ctx)(void);
     void (*destroy_ctx)(struct pyrion_ctx* ctx);
 
-    void (*flush)(struct pyrion_ctx* ctx);
-    void (*viewport)(struct pyrion_ctx* ctx, struct pyrion_rect* viewport);
+    aos_bool (*flush)(struct pyrion_ctx* ctx);
+    aos_bool (*viewport)(struct pyrion_ctx* ctx, struct pyrion_rect* viewport);
 
-    void (*clear)(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
-    void (*pixel)(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
-    void (*draw_rect)(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+    aos_bool (*clear)(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+    aos_bool (*pixel)(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+    aos_bool (*draw_rect)(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
 
     uint32_t (*upload_font)(struct pyrion_ctx* ctx, uint64_t atlas_phys, uint32_t* atlas, uint32_t atlas_w, uint32_t atlas_total_h);
     void (*destroy_font)(struct pyrion_ctx* ctx, uint32_t font_res_id, void* font_mem);
 
-    void (*draw_char)(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, uint32_t w, uint32_t h, uint32_t font_res_id);
+    aos_bool (*draw_char)(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, uint32_t w, uint32_t h, uint32_t font_res_id);
 };
 
 struct gpu_device;
