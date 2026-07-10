@@ -509,7 +509,7 @@ aos_bool sata_init(struct AOS_Module* m) {
 
             // Trigger a COMRESET
             port->sctl = (port->sctl & ~0x0F) | 1; 
-            kdelay_ns(360);
+            kdelay_us(360);
             port->sctl &= ~0x0F; // Clear the reset bit to allow comms
 
             // Re-enable FIS receiving
@@ -520,7 +520,7 @@ aos_bool sata_init(struct AOS_Module* m) {
                 // Give the FIS a tiny bit of time to arrive and update the signature
                 kdelay(10); 
                 if (port->sig != 0xFFFFFFFF) break;
-                kdelay_ns(360);
+                kdelay_us(360);
 				asm volatile("pause");
             }
 

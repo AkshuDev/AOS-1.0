@@ -32,30 +32,31 @@ aos_bool is_ascii(char c) {
     return (c >= 0x20 && c <= 0x7E);
 }
 
-static void vshell_cmd_sysinfo(void) {
+static aos_bool vshell_cmd_sysinfo(void) {
     aos_sysinfo_t* SystemInfo = kget_sysinfo();
 	if (!SystemInfo) {
-		pyrion_builtin_print(vshell_ctx, "No Information Available....\n");
-		return;
+		if (!pyrion_builtin_print(vshell_ctx, "No Information Available....\n")) return AOS_FALSE;
+		return AOS_TRUE;
 	}
 
-    pyrion_builtin_print(vshell_ctx, "Boot Information:\n");
-    pyrion_builtin_printf(vshell_ctx, "  Boot Drive: %d\n  Boot Mode: B=0x%x S=0x%x F=0x%x\n", SystemInfo->boot_drive.bus, SystemInfo->boot_drive.slot, SystemInfo->boot_drive.func, SystemInfo->boot_mode);
+    if (!pyrion_builtin_print(vshell_ctx, "Boot Information:\n")) return AOS_FALSE;
+    if (!pyrion_builtin_printf(vshell_ctx, "  Boot Drive: %d\n  Boot Mode: B=0x%x S=0x%x F=0x%x\n", SystemInfo->boot_drive.bus, SystemInfo->boot_drive.slot, SystemInfo->boot_drive.func, SystemInfo->boot_mode)) return AOS_FALSE;
 
     char cpu_vendor[14];
     memcpy(cpu_vendor, SystemInfo->cpu_vendor, 13);
     cpu_vendor[13] = '\0';
 
-    pyrion_builtin_print(vshell_ctx, "CPU Information:\n");
-    pyrion_builtin_printf(vshell_ctx, "  CPU Signature: 0x%x\n  CPU Vendor: %s\n", SystemInfo->cpu_signature, cpu_vendor);
+    if (!pyrion_builtin_print(vshell_ctx, "CPU Information:\n")) return AOS_FALSE;
+    if (!pyrion_builtin_printf(vshell_ctx, "  CPU Signature: 0x%x\n  CPU Vendor: %s\n", SystemInfo->cpu_signature, cpu_vendor)) return AOS_FALSE;
 
     char* apic_present = SystemInfo->apic_present ? "True" : "False";
 
-    pyrion_builtin_print(vshell_ctx, "Additional Information:\n");
-    pyrion_builtin_printf(vshell_ctx, "  APIC Present: %s\n  TSC Freq. : %llu Hz\n", apic_present, SystemInfo->tsc_freq_hz);
+    if (!pyrion_builtin_print(vshell_ctx, "Additional Information:\n")) return AOS_FALSE;
+    if (!pyrion_builtin_printf(vshell_ctx, "  APIC Present: %s\n  TSC Freq. : %llu Hz\n", apic_present, SystemInfo->tsc_freq_hz)) return AOS_FALSE;
     uint64_t ghz = SystemInfo->tsc_freq_hz / 1000000000;
     uint64_t mhz = (SystemInfo->tsc_freq_hz % 1000000000) / 1000000;
-    pyrion_builtin_printf(vshell_ctx, "  CPU Clock: %llu.%03llu GHz\n", ghz, mhz);
+    if (!pyrion_builtin_printf(vshell_ctx, "  CPU Clock: %llu.%03llu GHz\n", ghz, mhz)) return AOS_FALSE;
+	return AOS_TRUE;
 }
 
 static aos_bool vshell_handle_user_input(char* buf, int max_len, int* len) {
@@ -68,19 +69,19 @@ static aos_bool vshell_handle_user_input(char* buf, int max_len, int* len) {
     switch (key) {
         case '\b':
             if (chars_typed <= 0) break;
-            pyrion_builtin_printc(vshell_ctx, '\b');
+            if (!pyrion_builtin_printc(vshell_ctx, '\b')) return AOS_FALSE;
             chars_typed--;
             break;
 
         case '\n':
-            pyrion_builtin_printc(vshell_ctx, '\n');
+            if (!pyrion_builtin_printc(vshell_ctx, '\n')) return AOS_FALSE;
             *len = chars_typed;
             return AOS_TRUE;
 
         default:
             if (chars_typed == max_len || is_ascii(key) == 0) break;
             buf[chars_typed++] = key;
-            pyrion_builtin_printc(vshell_ctx, key);
+            if (!pyrion_builtin_printc(vshell_ctx, key)) return AOS_FALSE;
             break;
     }
 
@@ -88,11 +89,11 @@ static aos_bool vshell_handle_user_input(char* buf, int max_len, int* len) {
     return AOS_FALSE;
 }
 
-static void vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len) {
-    if (vshell_handle_user_input(cmd_buf, max_cmd_len - 1, cmd_len) == 0) return;
+static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len) {
+    if (!vshell_handle_user_input(cmd_buf, max_cmd_len - 1, cmd_len)) return AOS_TRUE;
     cmd_buf[max_cmd_len - 1] = '\0';
 
-    if (*cmd_len == 0) return;
+    if (*cmd_len == 0) return AOS_TRUE;
 
     cmd_buf[*cmd_len] = '\0';
 
@@ -102,59 +103,60 @@ static void vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len) {
                 vshell_running = AOS_FALSE;
                 asm("int $0x50");
             } else {
-                pyrion_builtin_print(vshell_ctx, "\nCancelled 'exit' Command!");
+                if (!pyrion_builtin_print(vshell_ctx, "\nCancelled 'exit' Command!")) return AOS_FALSE;
             }
-            pyrion_builtin_printc(vshell_ctx, '\n');
+            if (!pyrion_builtin_printc(vshell_ctx, '\n')) return AOS_FALSE;
             last_cmd = 0;
         } else {
-            pyrion_builtin_print(vshell_ctx, "'Exit' Will not shutdown the machine but rather start AOS Safety Shell\nSure (y/N): ");
+            if (!pyrion_builtin_print(vshell_ctx, "'Exit' Will not shutdown the machine but rather start AOS Safety Shell\nSure (y/N): ")) return AOS_FALSE;
             last_cmd = 1;
             *cmd_len = 0;
-            return;
+            return AOS_TRUE;
         }
     } else if (last_cmd == 2 || strcmp(cmd_buf, "reboot") == 0) {
         if (last_cmd == 2) {
             if ((cmd_buf[0] == 'y' || cmd_buf[0] == 'Y') && *cmd_len == 1) {
                 pager_destroy_table(4);
                 acpi_reboot();
-                pyrion_builtin_print(vshell_ctx, "\nFailed to reboot!");
+                if (!pyrion_builtin_print(vshell_ctx, "\nFailed to reboot!")) return AOS_FALSE;
             } else {
-                pyrion_builtin_print(vshell_ctx, "\nCancelled 'reboot' Command!");
+                if (!pyrion_builtin_print(vshell_ctx, "\nCancelled 'reboot' Command!")) return AOS_FALSE;
             }
-            pyrion_builtin_printc(vshell_ctx, '\n');
+            if (!pyrion_builtin_printc(vshell_ctx, '\n')) return AOS_FALSE;
             last_cmd = 0;
         } else {
-            pyrion_builtin_print(vshell_ctx, "Sure (y/N): ");
+            if (!pyrion_builtin_print(vshell_ctx, "Sure (y/N): ")) return AOS_FALSE;
             last_cmd = 2;
             *cmd_len = 0;
-            return;
+            return AOS_TRUE;
         }
     } else if (last_cmd == 0) {
         if (strcmp(cmd_buf, "sysinfo") == 0) {
-            vshell_cmd_sysinfo();
+            if (!vshell_cmd_sysinfo()) return AOS_FALSE;
         } else if (strncmp(cmd_buf, "echo", 4) == 0) {
             if (max_cmd_len > 5) {
-                pyrion_builtin_print(vshell_ctx, (char*)(&(cmd_buf[5])));
-                pyrion_builtin_printc(vshell_ctx, '\n');
+                if (!pyrion_builtin_print(vshell_ctx, (char*)(&(cmd_buf[5])))) return AOS_FALSE;
+                if (!pyrion_builtin_printc(vshell_ctx, '\n')) return AOS_FALSE;
             }
         } else if (strcmp(cmd_buf, "clear") == 0) {
-            pyrion_clear(vshell_ctx, vshell_ctx->fb_info.bg_color);
-            pyrion_set_cursor(vshell_ctx, 0, 0); 
+            if (!pyrion_clear(vshell_ctx, vshell_ctx->fb_info.bg_color)) return AOS_FALSE;
+            if (!pyrion_set_cursor(vshell_ctx, 0, 0)) return AOS_FALSE;
         } else {
-            pyrion_builtin_print(vshell_ctx, "Unknown Command: ");
-            pyrion_builtin_print(vshell_ctx, cmd_buf);
-            pyrion_builtin_printc(vshell_ctx, '\n');
+            if (!pyrion_builtin_print(vshell_ctx, "Unknown Command: ")) return AOS_FALSE;
+            if (!pyrion_builtin_print(vshell_ctx, cmd_buf)) return AOS_FALSE;
+            if (!pyrion_builtin_printc(vshell_ctx, '\n')) return AOS_FALSE;
         }
     } else {
         last_cmd = 0;
-        pyrion_builtin_print(vshell_ctx, "Unknown Command: ");
-        pyrion_builtin_print(vshell_ctx, cmd_buf);
-        pyrion_builtin_printc(vshell_ctx, '\n');
+        if (!pyrion_builtin_print(vshell_ctx, "Unknown Command: ")) return AOS_FALSE;
+        if (!pyrion_builtin_print(vshell_ctx, cmd_buf)) return AOS_FALSE;
+        if (!pyrion_builtin_printc(vshell_ctx, '\n')) return AOS_FALSE;
     }
 
     // Reset
     *cmd_len = 0;
-    pyrion_builtin_print(vshell_ctx, prompt);
+    if (!pyrion_builtin_print(vshell_ctx, prompt)) return AOS_FALSE;
+	return AOS_TRUE;
 }
 
 void start_vshell(struct pyrion_ctx* display_ctx) {
@@ -164,23 +166,38 @@ void start_vshell(struct pyrion_ctx* display_ctx) {
     if (!vshell_ctx) return;
 
     vshell_ctx->cformat = PYRION_COLORF_RGBA;
-    pyrion_viewport(vshell_ctx, &vshell_viewport);
-    pyrion_conf(vshell_ctx, 0, 0, 0xFFFFFFFF, 0x171717FF);
+    if (!pyrion_viewport(vshell_ctx, &vshell_viewport)) {
+		pyrion_destroy_ctx(vshell_ctx);
+		return;
+	}
+    if (!pyrion_conf(vshell_ctx, 0, 0, 0xFFFFFFFF, 0x171717FF)) {
+		pyrion_destroy_ctx(vshell_ctx);
+		return;
+	}
     serial_print("[VSHELL] Pyrion Enabled, and set, clearing....\n");
-    pyrion_clear(vshell_ctx, 0x171717FF);
+    if (!pyrion_clear(vshell_ctx, 0x171717FF)) {
+		pyrion_destroy_ctx(vshell_ctx);
+		return;
+	}
     serial_print("[VSHELL] Vshell initialized!\n");
-    pyrion_builtin_print(vshell_ctx, "Welcome to AOS++ Visible Shell!\n");
+    if (!pyrion_builtin_print(vshell_ctx, "Welcome to AOS++ Visible Shell!\n")) {
+		pyrion_destroy_ctx(vshell_ctx);
+		return;
+	}
     serial_print("[VSHELL] Vshell is active!\n");
 
     char cmd_buf[512];
     int cmd_len = 0;
 
-    pyrion_builtin_print(vshell_ctx, prompt);
+    if (!pyrion_builtin_print(vshell_ctx, prompt)) {
+		pyrion_destroy_ctx(vshell_ctx);
+		return;
+	}
 
     vshell_running = AOS_TRUE;
     while (vshell_running) { 
-        vshell_handle_shell((char*)cmd_buf, 512, &cmd_len);
-        pyrion_flush(vshell_ctx);
+        if (!vshell_handle_shell((char*)cmd_buf, 512, &cmd_len)) break;
+        if (!pyrion_flush(vshell_ctx)) break;
     }
 
     pyrion_destroy_ctx(vshell_ctx);

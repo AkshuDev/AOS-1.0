@@ -301,7 +301,19 @@ void kdelay_ns(uint64_t ns) {
 	if (tsc_ticks_per_ms == 0) return;
 
     uint64_t start = ktimer_read_tsc();
-    uint64_t ticks_needed = (uint64_t)ns * ((uint64_t)(tsc_ticks_per_ms / 1000));
+    uint64_t ticks_needed = (uint64_t)ns * ((uint64_t)(tsc_ticks_per_ms / 1000000));
+	if (ticks_needed == 0) ticks_needed = 1;
+
+    while ((ktimer_read_tsc() - start) < ticks_needed) {
+        asm volatile("pause" ::: "memory");
+    }
+}
+
+void kdelay_us(uint64_t us) {
+	if (tsc_ticks_per_ms == 0) return;
+
+    uint64_t start = ktimer_read_tsc();
+    uint64_t ticks_needed = (uint64_t)us * ((uint64_t)(tsc_ticks_per_ms / 1000));
 	if (ticks_needed == 0) ticks_needed = 1;
 
     while ((ktimer_read_tsc() - start) < ticks_needed) {

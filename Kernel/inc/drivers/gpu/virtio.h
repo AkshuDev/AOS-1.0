@@ -373,15 +373,15 @@ enum virtio_virgl_context_cmd {
 // Pyrion
 #include <inc/drivers/gpu/apis/pyrion.h>
 
-void pyrion_init_virtio(void) __attribute__((used));
+aos_bool pyrion_init_virtio(void) __attribute__((used));
 void pyrion_finish_virtio(void) __attribute__((used));
 struct pyrion_ctx* pyrion_create_ctx_virtio(void) __attribute__((used));
 void pyrion_destroy_ctx_virtio(struct pyrion_ctx* ctx) __attribute__((used));
-void pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* viewport) __attribute__((used));
-void pyrion_flush_virtio(struct pyrion_ctx* ctx) __attribute__((used));
-void pyrion_clear_virtio(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));
-void pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));
-void pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, uint32_t w, uint32_t h, uint32_t font_res_id) __attribute__((used));
+aos_bool pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* viewport) __attribute__((used));
+aos_bool pyrion_flush_virtio(struct pyrion_ctx* ctx) __attribute__((used));
+aos_bool pyrion_clear_virtio(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));
+aos_bool pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));
+aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, uint32_t w, uint32_t h, uint32_t font_res_id) __attribute__((used));
 void pyrion_destroy_font_virtio(struct pyrion_ctx* ctx, uint32_t font_res_id, void* font_mem) __attribute__((used));
 uint32_t pyrion_upload_font_virtio(struct pyrion_ctx* ctx, uint64_t atlas_phys, uint32_t* atlas, uint32_t atlas_w, uint32_t atlas_total_h) __attribute__((used));
-void pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));
+aos_bool pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));

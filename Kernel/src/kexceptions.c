@@ -36,8 +36,8 @@ static const char *exception_names[] = {
     "Reserved", "Reserved"
 };
 
-static volatile int panic_depth = 0;
-static volatile spinlock_t panic_lock = 0;
+static volatile uint8_t panic_depth[SMP_MAX_CORES];
+static volatile spinlock_t panic_lock;
 static void (*pre_halt_system)(void);
 
 void aos_system_exception_handler_init(void (*ppre_halt_system)(void)) {
@@ -47,26 +47,28 @@ void aos_system_exception_handler_init(void (*ppre_halt_system)(void)) {
 void aos_system_exception(struct reg_trap_frame *r) {
 	asm volatile("cli");
 
+	uint32_t core_idx = smp_get_current_core();
+
 	uint64_t rflags = spin_lock_irqsave(&panic_lock);
-	panic_depth++;
-	uint64_t lpanic = panic_depth;
+	panic_depth[core_idx]++;
+	uint64_t lpanic = panic_depth[core_idx];
 	spin_unlock_irqrestore(&panic_lock, rflags);
-	if (lpanic == 1) {
+	if (lpanic == 2) {
 		serial_print("\nNESTED PANIC - STAGE 1 (Full reboot)\n");
 		
 		pre_halt_system();
 
 		acpi_reboot();
         for(;;) asm volatile("hlt");
-	} else if (lpanic == 2) {
+	} else if (lpanic == 3) {
 		serial_print("\nNESTED PANIC - STAGE 2 (Emergency reboot)\n");
 
 		acpi_reboot();
         for(;;) asm volatile("hlt");
-	} else if (lpanic == 3) {
+	} else if (lpanic == 4) {
 		serial_print("\nNESTED PANIC - STAGE 3 (Direct halt)\n");
         for(;;) asm volatile("hlt");
-	} else {
+	} else if (lpanic > 4) {
         for(;;) asm volatile("hlt");
 	}
 

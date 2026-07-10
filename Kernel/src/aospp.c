@@ -37,11 +37,11 @@ void aospp_start(void) {
     }
 	gpu_device_t* gpu_device = &gpu_m->Modules.driver_module.DriverConnections.gpu_connector;
 
-	if (gpu_device->init) gpu_device->init(gpu_m);
-    if (gpu_device->init_resources) gpu_device->init_resources(gpu_device, 1);
+	if (!gpu_device->init(gpu_m)) return;
+    if (!gpu_device->init_resources(gpu_device, 1)) return;
     
 	serial_print("[AOS++] Initializing Pyrion...\n");
-    pyrion_init(gpu_device);
+    if (!pyrion_init(gpu_device)) return;
     
 	serial_print("[AOS++] Creating main display Pyrion Context...\n");
 	display_ctx = pyrion_create_ctx();

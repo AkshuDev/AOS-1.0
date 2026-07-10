@@ -5,6 +5,8 @@
 #include <inc/core/kfuncs.h>
 #include <inc/core/tss_gdt.h>
 
+#define SMP_MAX_CORES 256
+
 enum thread_status {
     THREAD_STATUS_READY,
     THREAD_STATUS_RUNNING,

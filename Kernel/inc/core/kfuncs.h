@@ -28,9 +28,9 @@ void ktimer_calibrate(void) __attribute__((used));
 uint64_t kget_ms_passed(void) __attribute__((used));
 void kdelay(uint64_t ms) __attribute__((used));
 void kdelay_ns(uint64_t ms) __attribute__((used));
+void kdelay_us(uint64_t us) __attribute__((used));
 uint64_t kget_timestamp_seconds(void) __attribute__((used));
 uint64_t kget_timestamp_ms(void) __attribute__((used));
-
 
 uint64_t kcompute_checksum(const uint8_t* data, uint32_t len) __attribute__((used));
 

@@ -77,7 +77,7 @@ static spinlock_t boot_lock = 0;
 static aos_bool ap_boot_flag = AOS_FALSE;
 static uint32_t bsp_core_idx = 0;
 
-static struct core_state* cores[256] = {0};
+static struct core_state* cores[SMP_MAX_CORES] = {0};
 
 static void send_ipi(uint8_t target_apic_id, uint8_t vector) {
     // init IPI
@@ -219,6 +219,11 @@ void smp_timer_handler(void) {
 void smp_yield(void) {
     struct core_state* core;
     asm("mov %%gs:0, %0" : "=r"(core));
+
+	if (core->core_idx == bsp_core_idx) {
+		serial_print("[SMP] Warning: Yield called by BSP Core? Blocked.\n");
+		return;
+	}
     
     struct thread_state* cur = core->cur_thread;
     struct thread_state* idle = core->idle_thread;
@@ -235,7 +240,12 @@ void smp_yield(void) {
 }
 
 void smp_push_task(uint32_t core_idx, void (*entry)(void*), void* arg) {
-    if (core_idx > 255 || cores[core_idx] == NULL) return;
+    if (core_idx >= SMP_MAX_CORES || cores[core_idx] == NULL) return;
+	
+	if (core_idx == bsp_core_idx && !smp_is_bsp_core()) {
+        serial_printf("[SMP] Warning: AP core tried to push a task to the BSP core! Blocked.\n");
+        return;
+    }
 
     struct core_state* target = cores[core_idx];
     struct thread_state* new_thread = create_thread(entry, arg, target->next_tid++);
@@ -254,25 +264,18 @@ void smp_push_task(uint32_t core_idx, void (*entry)(void*), void* arg) {
 }
 
 void smp_push_task_bsp(void (*entry)(void*), void* arg) {
-    uint32_t core_idx = bsp_core_idx;
-    if (core_idx > 255 || cores[core_idx] == NULL) return;
-
-    struct core_state* target = cores[core_idx];
-    struct thread_state* new_thread = create_thread(entry, arg, target->next_tid++);
-
-    spin_lock(&target->queue_lock);
-    new_thread->next = target->ready_list;
-    target->ready_list = new_thread;
-    spin_unlock(&target->queue_lock);
-
-    if (target->status != CORE_STATUS_RUNNING) {
-        send_wakeup_ipi(target->lapic_id, 0x40);
+	if (!smp_is_bsp_core()) {
+        serial_printf("[SMP] Warning: AP core tried to push a task to the BSP core! Blocked.\n");
+        return;
     }
+
+    entry(arg);
 }
 
 aos_bool smp_get_first_free_core(uint32_t* out) {
-    for (uint32_t i = 0; i < 256; i++){
+    for (uint32_t i = 0; i < SMP_MAX_CORES; i++){
         if (cores[i] == NULL) continue;
+		if (i == bsp_core_idx) continue;
 
         if (cores[i]->status == CORE_STATUS_READY) {
             *out = cores[i]->core_idx;
@@ -283,17 +286,25 @@ aos_bool smp_get_first_free_core(uint32_t* out) {
 }
 
 aos_bool smp_get_core_status(uint32_t core_idx, enum core_status *out) {
-    if (core_idx > 255 || cores[core_idx] == NULL) return AOS_FALSE;
+    if (core_idx >= SMP_MAX_CORES || cores[core_idx] == NULL) return AOS_FALSE;
     *out = cores[core_idx]->status;
     return AOS_TRUE;
 }
 
 aos_bool smp_is_bsp_core(void) {
-	return get_lapic_id() == bsp_core_idx;
+	struct core_state* core;
+    asm("mov %%gs:0, %0" : "=r"(core));
+
+	return core->lapic_id == bsp_core_idx;
 }
 
 void smp_reserve_core(uint32_t core_idx) {
-    if (core_idx > 255 || cores[core_idx] == NULL) return;
+    if (core_idx >= SMP_MAX_CORES || cores[core_idx] == NULL) return;
+	if (core_idx == bsp_core_idx) {
+		serial_print("[SMP] Warning: Reservation called on BSP Core! Blocked.\n");
+		return;
+	}
+	
     struct core_state* target = cores[core_idx];
     uint64_t flags = spin_lock_irqsave(&target->command_lock);
 
@@ -307,7 +318,12 @@ void smp_reserve_core(uint32_t core_idx) {
 }
 
 void smp_unreserve_core(uint32_t core_idx) {
-    if (core_idx > 255 || cores[core_idx] == NULL) return;
+    if (core_idx >= SMP_MAX_CORES || cores[core_idx] == NULL) return;
+	if (core_idx == bsp_core_idx) {
+		serial_print("[SMP] Warning: Unreservation called on BSP Core! Blocked.\n");
+		return;
+	}
+
     struct core_state* target = cores[core_idx];
     uint64_t flags = spin_lock_irqsave(&target->command_lock);
 
@@ -321,7 +337,7 @@ void smp_unreserve_core(uint32_t core_idx) {
 }
 
 void smp_init(void) {
-    uint8_t apic_ids[256];
+    uint8_t apic_ids[SMP_MAX_CORES];
     uint64_t core_count = 0;
     acpi_get_apic_info((uint8_t*)apic_ids, &core_count);
 
@@ -388,17 +404,16 @@ void smp_init(void) {
 
         cores[i] = ap_core_state;
 
+		__asm__ volatile("mfence" ::: "memory");
+
         serial_printf("[SMP] Sending SIPI to APIC ID %lld\n", id);
         send_ipi(id, 0x08);
-		if (!ap_boot_flag) {
-			kdelay(200);
-			if (!ap_boot_flag) {
-				send_wakeup_ipi(id, 0x08);
 
-				uint64_t timeout = kget_ms_passed();
-				while(!ap_boot_flag && kget_ms_passed() - timeout < 1000) { asm volatile("pause");}
-			}
-        }
+		kdelay_us(200);
+		if (!ap_boot_flag) send_ipi(id, 0x08);
+
+		uint64_t timeout = kget_ms_passed();
+		while(!ap_boot_flag && kget_ms_passed() - timeout < 1000) { asm volatile("pause");}
 
         if (!ap_boot_flag) {
             serial_printf("[SMP] Error: Core %lld failed to check in!\n", id);
@@ -440,11 +455,20 @@ void smp_init(void) {
 }
 
 uint32_t smp_get_current_core(void) {
-	return (uint32_t)get_lapic_id();
+	struct core_state* core;
+    asm("mov %%gs:0, %0" : "=r"(core));
+
+	return core->core_idx;
 }
 
 void smp_shutdown_core(uint32_t core_idx) {
-	if (core_idx > 255 || cores[core_idx] == NULL) return;
+	if (core_idx >= SMP_MAX_CORES || cores[core_idx] == NULL) return;
+
+	if (core_idx == bsp_core_idx) {
+		serial_print("[SMP] Warning: Shutdown called on BSP Core! Blocked.\n");
+		return;
+	}
+
     struct core_state* target = cores[core_idx];
 
     uint64_t flags = spin_lock_irqsave(&target->command_lock);
@@ -468,7 +492,13 @@ void smp_shutdown_core(uint32_t core_idx) {
 }
 
 void smp_reset_core(uint32_t core_idx) {
-	if (core_idx > 255 || cores[core_idx] == NULL) return;
+	if (core_idx >= SMP_MAX_CORES || cores[core_idx] == NULL) return;
+
+	if (core_idx == bsp_core_idx) {
+		serial_print("[SMP] Warning: Reset called on BSP Core! Blocked.\n");
+		return;
+	}
+
     struct core_state* target = cores[core_idx];
 
     uint64_t flags = spin_lock_irqsave(&target->command_lock);
@@ -510,17 +540,13 @@ void smp_reset_core(uint32_t core_idx) {
 	*(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x518) = (uintptr_t)ap_kernel_entry;
 	*(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x520) = (uintptr_t)target;
 
-	serial_printf("[SMP] Sending SIPI to APIC ID %lld\n", core_idx);
-	send_ipi(core_idx, 0x08);
-	if (!ap_boot_flag) {
-		kdelay(200);
-		if (!ap_boot_flag) {
-			send_wakeup_ipi(core_idx, 0x08);
+	serial_printf("[SMP] Sending SIPI to APIC ID %lld\n", target->lapic_id);
+	send_ipi(target->lapic_id, 0x08);
+	kdelay_us(200);
+	if (!ap_boot_flag) send_ipi(target->lapic_id, 0x08);
 
-			uint64_t timeout = kget_ms_passed();
-			while(!ap_boot_flag && kget_ms_passed() - timeout < 1000) { asm volatile("pause");}
-		}
-	}
+	uint64_t timeout = kget_ms_passed();
+	while(!ap_boot_flag && kget_ms_passed() - timeout < 1000) { asm volatile("pause");}
 
 	if (!ap_boot_flag) {
 		serial_printf("[SMP] Error: Core %lld failed to check in!\n", core_idx);
@@ -532,15 +558,17 @@ void smp_reset_core(uint32_t core_idx) {
 }
 
 void smp_reset(void) {
-	for (int i = 0; i < 256; i++) {
+	for (int i = 0; i < SMP_MAX_CORES; i++) {
         if (cores[i] == NULL) continue;
+		if (i == bsp_core_idx) continue;
         smp_reset_core(i);
     }
 }
 
 void smp_shutdown(void) {
-    for (int i = 0; i < 256; i++) {
+    for (int i = 0; i < SMP_MAX_CORES; i++) {
         if (cores[i] == NULL) continue;
+		if (i == bsp_core_idx) continue;
         smp_shutdown_core(i);
     }
 }
