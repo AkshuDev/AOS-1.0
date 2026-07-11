@@ -43,6 +43,7 @@ extern void aos_system_exception_asm_31(void);
 
 extern void aos_int_smp_timer(void);
 extern void aos_int_smp_ipi(void);
+extern void aos_int_smp_tlb_ipi(void);
 extern void aos_int_avmss(void); // AOS Video Memory Safety Shell
 extern void aos_int_gpu_switch_off(void);
 
@@ -128,6 +129,7 @@ void idt_init(void) {
     // Normal
     set_idt_entry(0x30, (uint64_t)aos_int_smp_timer, 0x08, 0x8E);
     set_idt_entry(0x40, (uint64_t)aos_int_smp_ipi, 0x08, 0x8E);
+	set_idt_entry(0x41, (uint64_t)aos_int_smp_tlb_ipi, 0x08, 0x8E);
     set_idt_entry(0x50, (uint64_t)aos_int_avmss, 0x08, 0x8E);
     set_idt_entry(0x51, (uint64_t)aos_int_gpu_switch_off, 0x08, 0x8E);
 

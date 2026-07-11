@@ -3,17 +3,44 @@
 #include <e820.h>
 
 #include <inc/core/kfuncs.h>
+#include <inc/core/smp.h>
 #include <inc/mm/pager.h>
 #include <inc/mm/avmf.h>
 #include <inc/drivers/io/io.h>
-
-#define PAGE_HUGE (1 << 7)
 
 static struct page_table* kernel_pml4 = NULL;
 static struct page_table* mapped_pml4 = NULL;
 static aos_bool pager_ready = AOS_FALSE;
 static uint64_t cpu_phys_bits = 0;
 static uint64_t cpu_virt_bits = 0;
+
+static void pager_dump_mapping(struct page_table *pml4, uint64_t virt) {
+    int pml4_i = (virt >> 39) & 0x1FF;
+    int pdpt_i = (virt >> 30) & 0x1FF;
+    int pd_i = (virt >> 21) & 0x1FF;
+    int pt_i = (virt >> 12) & 0x1FF;
+
+    serial_printf("=== VA 0x%x ===\n", virt);
+
+    serial_printf("PML4[%d] = 0x%x\n", pml4_i, pml4->entries[pml4_i]);
+    if (!(pml4->entries[pml4_i] & PAGE_PRESENT)) return;
+    struct page_table* pdpt = (struct page_table*)(pml4->entries[pml4_i] & ~0xFFFULL);
+
+    serial_printf("PDPT[%d] = 0x%x\n", pdpt_i, pdpt->entries[pdpt_i]);
+    if (!(pdpt->entries[pdpt_i] & PAGE_PRESENT)) return;
+    struct page_table* pd = (struct page_table*)(pdpt->entries[pdpt_i] & ~0xFFFULL);
+
+    serial_printf("PD[%d] = 0x%x\n", pd_i, pd->entries[pd_i]);
+    if (pd->entries[pd_i] & PAGE_HUGE) {
+        serial_print("2 MiB page\n");
+        return;
+    }
+
+    if (!(pd->entries[pd_i] & PAGE_PRESENT)) return;
+    struct page_table* pt = (struct page_table*)(pd->entries[pd_i] & ~0xFFFULL);
+
+    serial_printf("PT[%d] = 0x%x\n", pt_i, pt->entries[pt_i]);
+}
 
 static void* pager_phys_to_virt(uint64_t phys) {
     if (!pager_ready) {
@@ -41,6 +68,7 @@ static struct page_table* alloc_page_table(uint64_t* phys_out) {
     }
     if (!tbl) { serial_print("[PAGER] Failed to allocate page table\n"); return NULL; }
  
+	tbl->lock = 0;
     for (int i = 0; i < 512; i++) {
         tbl->entries[i] = 0;
     }
@@ -159,7 +187,9 @@ void pager_init(void) {
 }
 
 static void invlpg(uint64_t addr) {
-    asm volatile("invlpg (%0)" : : "r"(addr) : "memory");
+	if (!pager_ready) return;
+    asm volatile("invlpg (%0)" :: "r"(addr) : "memory");
+	smp_tlb(addr, AOS_FALSE);
 }
 
 struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags) {
@@ -177,6 +207,7 @@ struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags)
 
     struct page_table* pdpt, *pd, *pt = NULL;
 
+	uint64_t pml4_rflags = spin_lock_irqsave(&pml4->lock);
     if (!(pml4->entries[idx_pml4] & PAGE_PRESENT)) {
         uint64_t pdpt_phys = 0;
         pdpt = alloc_page_table(&pdpt_phys);
@@ -184,6 +215,10 @@ struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags)
     } else {
         pdpt = (struct page_table*)pager_phys_to_virt(pml4->entries[idx_pml4] & ~0xFFFULL);
     }
+	
+	uint64_t pdpt_rflags = spin_lock_irqsave(&pdpt->lock);
+	spin_unlock_irqrestore(&pml4->lock, pml4_rflags);
+
     if (!(pdpt->entries[idx_pdpt] & PAGE_PRESENT)) {
         uint64_t pd_phys = 0;
         pd = alloc_page_table(&pd_phys);
@@ -191,10 +226,50 @@ struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags)
     } else {
         pd = (struct page_table*)pager_phys_to_virt(pdpt->entries[idx_pdpt] & ~0xFFFULL);
     }
-    
+	
+	uint64_t pd_rflags = spin_lock_irqsave(&pd->lock);
+	spin_unlock_irqrestore(&pdpt->lock, pdpt_rflags);
+
     if (flags & PAGE_HUGE) {
-        pd->entries[idx_pd] = (phys & ~0x1FFFFFULL) | (flags & 0xFFFULL) | PAGE_PRESENT;
+		page_entry_t old = pd->entries[idx_pd];
+		if (old & PAGE_PRESENT) {
+			spin_unlock_irqrestore(&pd->lock, pd_rflags);
+			if (old & PAGE_HUGE) {
+				serial_printf(
+					"[PAGER] HUGE already mapped Virt=%p Phys(old)=%p Phys(new)=%p Flags=%llx\n",
+					virt,
+					old & ~0x1FFFFFULL,
+					phys & ~0x1FFFFFULL,
+					old
+				);
+				if ((old & ~0x1FFFFFULL) == (phys & ~0x1FFFFFULL)) return pml4;
+				return NULL;
+			}
+			serial_print("[PAGER] ERROR: PD entry already points to a PT!\n");
+			return NULL;
+		}
+        
+		pd->entries[idx_pd] = (phys & ~0x1FFFFFULL) | (flags & 0xFFFULL) | PAGE_PRESENT;
+		spin_unlock_irqrestore(&pd->lock, pd_rflags);
     } else {
+		if (pd->entries[idx_pd] & PAGE_HUGE) {
+			serial_printf(
+				"[PAGER] HUGE already mapped Virt=%p Phys(old)=%p Phys(new)=%p Flags=%llx\n",
+				virt,
+				pd->entries[idx_pd] & ~0x1FFFFFULL,
+				phys & ~0x1FFFFFULL,
+				pd->entries[idx_pd]
+			);
+
+			spin_unlock_irqrestore(&pd->lock, pd_rflags);
+
+			uint64_t old_phys = pd->entries[idx_pd] & ~0x1FFFFFULL;
+			if (old_phys == (phys & ~0x1FFFFFULL)) {
+				return pml4;
+			}
+			serial_print("[PAGER] ERROR: PD entry already points to a PT!\n");
+			return NULL;
+		}
         if (!(pd->entries[idx_pd] & PAGE_PRESENT)) {
             uint64_t pt_phys = 0;
             pt = alloc_page_table(&pt_phys);
@@ -202,16 +277,40 @@ struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags)
         } else {
             pt = (struct page_table*)pager_phys_to_virt(pd->entries[idx_pd] & ~0xFFFULL);
         }
-
+		
+		uint64_t pt_rflags = spin_lock_irqsave(&pt->lock);
+		spin_unlock_irqrestore(&pd->lock, pd_rflags);
         // Map the physical range
-        pt->entries[idx_pt] = (phys & ~0xFFFULL) | (flags & 0xFFFULL) | PAGE_PRESENT;
+		uint64_t old = pt->entries[idx_pt];
+		if (old & PAGE_PRESENT) {
+			serial_printf(
+				"[PAGER] Page already mapped Virt=%p Phys(old)=%p Phys(new)=%p Flags=%llx\n",
+				virt,
+				old & ~0x1FFFFFULL,
+				phys & ~0x1FFFFFULL,
+				old
+			);
+
+			uint64_t old_phys = old & ~0xFFFULL;
+			spin_unlock_irqrestore(&pt->lock, pt_rflags);
+
+			if (old_phys == (phys & ~0xFFFULL)) {
+				return pml4;
+			}
+    		serial_print("[PAGER] ERROR: Mapping already exists!\n");
+			return NULL;
+		}
+		pt->entries[idx_pt] = (phys & ~0xFFFULL) | (flags & 0xFFFULL) | PAGE_PRESENT;
+		spin_unlock_irqrestore(&pt->lock, pt_rflags);
     }
-	invlpg(virt);
+
     return pml4;
 }
 
-static void destroy_table(struct page_table* table, int level) {
+static void destroy_table(struct page_table* table, int level, uint64_t lock_rflags, aos_bool locked) {
     if (!table) return;
+
+	uint64_t rflags = locked ? lock_rflags : spin_lock_irqsave(&table->lock);
     if (level > 1) {
         for (int i = 0; i < 512; i++) {
             if (table->entries[i] & PAGE_PRESENT) {
@@ -219,16 +318,19 @@ static void destroy_table(struct page_table* table, int level) {
                 
                 uint64_t phys = table->entries[i] & ~0xFFFULL;
                 struct page_table* sub_table = (struct page_table*)pager_phys_to_virt(phys);
-                destroy_table(sub_table, level - 1); 
+
+                destroy_table(sub_table, level - 1, 0, AOS_FALSE);
+				table->entries[i] = 0; 
             }
         }
     }
+	spin_unlock_irqrestore(&table->lock, rflags);
     avmf_free_phys(avmf_virt_to_phys((uint64_t)table));
 }
 
 void pager_destroy_table(int level) {
     struct page_table* table = mapped_pml4;
-    return destroy_table(table, level);
+    return destroy_table(table, level, 0, AOS_FALSE);
 }
 
 void pager_unmap(uint64_t virt) {
@@ -240,21 +342,48 @@ void pager_unmap(uint64_t virt) {
     int idx_pd = (virt >> 21) & 0x1FF;
     int idx_pt = (virt >> 12) & 0x1FF;
 
-    if (!(pml4->entries[idx_pml4] & PAGE_PRESENT)) return;
+	uint64_t pml4_rflags = spin_lock_irqsave(&pml4->lock);
+    
+	if (!(pml4->entries[idx_pml4] & PAGE_PRESENT)) {
+		spin_unlock_irqrestore(&pml4->lock, pml4_rflags);
+		return;
+	}
     struct page_table* pdpt = (struct page_table*)pager_phys_to_virt(pml4->entries[idx_pml4] & ~0xFFFULL);
-    if (!(pdpt->entries[idx_pdpt] & PAGE_PRESENT)) return;
+	
+	uint64_t pdpt_rflags = spin_lock_irqsave(&pdpt->lock);
+	spin_unlock_irqrestore(&pml4->lock, pml4_rflags);
+    
+	if (!(pdpt->entries[idx_pdpt] & PAGE_PRESENT)) {
+		spin_unlock_irqrestore(&pdpt->lock, pdpt_rflags);
+		return;
+	}
     struct page_table* pd = (struct page_table*)pager_phys_to_virt(pdpt->entries[idx_pdpt] & ~0xFFFULL);
-
-    if (pd->entries[idx_pd] & PAGE_HUGE) {
+	
+	uint64_t pd_rflags = spin_lock_irqsave(&pd->lock);
+    spin_unlock_irqrestore(&pdpt->lock, pdpt_rflags);
+	
+	if (pd->entries[idx_pd] & PAGE_HUGE) {
         pd->entries[idx_pd] &= ~PAGE_PRESENT;
+
+		spin_unlock_irqrestore(&pd->lock, pd_rflags);
+
         invlpg(virt);
         return;
     }
 
-    if (!(pd->entries[idx_pd] & PAGE_PRESENT)) return;
+    if (!(pd->entries[idx_pd] & PAGE_PRESENT)) {
+		spin_unlock_irqrestore(&pd->lock, pd_rflags);
+		return;
+	}
     struct page_table* pt = (struct page_table*)pager_phys_to_virt(pd->entries[idx_pd] & ~0xFFFULL);
 
+	uint64_t pt_rflags = spin_lock_irqsave(&pt->lock);
+	spin_unlock_irqrestore(&pd->lock, pd_rflags);
+
     pt->entries[idx_pt] &= ~PAGE_PRESENT;
+
+	spin_unlock_irqrestore(&pt->lock, pt_rflags);
+
     invlpg(virt);
 }
 
@@ -266,6 +395,7 @@ void pager_load(struct page_table* pml4) {
             pml4_phys = (uint64_t)pml4;
     }
     
+
     load_cr3(pml4_phys);
     mapped_pml4 = pml4;
 }

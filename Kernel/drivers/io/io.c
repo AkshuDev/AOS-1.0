@@ -468,6 +468,7 @@ void vmem_init(aos_sysinfo_t* sysinfo) {
 		IO_VMEM_MAX_COLS_true = IO_VMEM_MAX_COLS;
 		IO_VMEM_MAX_ROWS_true = IO_VMEM_MAX_ROWS;
 		vmem_fbi = (FB_Info_t){0};
+
 		return;
 	}
 
@@ -483,6 +484,8 @@ void vmem_init(aos_sysinfo_t* sysinfo) {
 
 	vmem_fbi = sysinfo->fb_info;
 	vmem_fbi.addr = IO_VMEM_true;
+
+	pager_map_range(IO_VMEM_true, sysinfo->fb_info.phys_addr, sysinfo->fb_info.size > 0 ? sysinfo->fb_info.size : IO_VMEM_MAX_COLS_true * IO_VMEM_MAX_ROWS_true * sizeof(uint32_t), PAGE_PRESENT | PAGE_PCD | PAGE_RW);
 
 	serial_printf("[IO:VMEM] FB Mode: %u\n", sysinfo->fb_mode);
 	serial_printf("[IO:VMEM] FB Addr: 0x%llx\n", sysinfo->fb_info.addr);

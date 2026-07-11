@@ -1,6 +1,7 @@
 #pragma once
 #include <aos_inttypes.h>
 #include <stddef.h>
+#include <inc/core/kfuncs.h>
 
 #define PAGE_SIZE 4096
 #define PAGE_PRESENT 0x1 // Page Present
@@ -13,12 +14,14 @@
 #define PAGE_PAT 0x80 // Page Attribute Table
 #define PAGE_GLOBAL 0x100 // Global
 #define PAGE_XD 0x8000000000000000ULL // EXEC DISABLE
+#define PAGE_HUGE 0x80
 
 typedef uint64_t page_entry_t;
 typedef uint64_t phys_addr_t;
 typedef uint64_t virt_addr_t;
 
 struct page_table {
+	spinlock_t lock;
     page_entry_t entries[64];
 } __attribute__((aligned(4096)));
 

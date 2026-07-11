@@ -7,6 +7,9 @@
 
 #define SMP_MAX_CORES 256
 
+#define SMP_TLB_CMD_INVLPAGE (1 << 0)
+#define SMP_TLB_CMD_REFRESH_PAGES (1 << 1)
+
 enum thread_status {
     THREAD_STATUS_READY,
     THREAD_STATUS_RUNNING,
@@ -40,6 +43,10 @@ struct core_state {
     gdt_t gdt;
     tss_t tss;
     gdtr_t gdt_desc;
+
+	uint32_t tlb_cmd;
+	uint64_t tlb_addr;
+	aos_bool tlb_done;
 
     uint32_t lapic_id;
     uint32_t core_idx;
@@ -77,5 +84,7 @@ uint32_t smp_get_current_core(void) __attribute__((used));
 
 void smp_shutdown_core(uint32_t core_idx) __attribute__((used));
 void smp_reset_core(uint32_t core_idx) __attribute__((used));
+void smp_tlb_core(uint32_t core_idx, uint64_t virt, aos_bool full_flush) __attribute__((used));
 void smp_reset(void) __attribute__((used));
 void smp_shutdown(void) __attribute__((used));
+void smp_tlb(uint64_t virt, aos_bool full_flush) __attribute__((used));

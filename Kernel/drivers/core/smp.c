@@ -19,6 +19,9 @@
 #define LAPIC_TMR_DIV 0x03E0
 #define LAPIC_LVT_TMR 0x0320
 
+#define SMP_IPI_VECTOR 0x40
+#define SMP_TLB_IPI_VECTOR 0x41
+
 extern void thread_context_switch(struct thread_state* old, struct thread_state* new);
 
 static uintptr_t lapic_base_virt = 0;
@@ -85,7 +88,7 @@ static void send_ipi(uint8_t target_apic_id, uint8_t vector) {
     lapic_write(0x300, 0x0000C500); // ICR Low: INIT
     kdelay(10);
 
-    while (lapic_read(0x300) & (1 << 12)) { asm("pause"); }
+    while (lapic_read(0x300) & (1 << 12)) { __asm__ volatile("pause"); }
 
     // Startup IPI
     lapic_write(0x310, (target_apic_id << 24)); // ICR High
@@ -130,36 +133,36 @@ static struct thread_state* create_thread(void (*entry)(void*), void* arg, uint6
 static void ap_init_core_state(struct core_state* state) {
     uint32_t low = (uint32_t)((uintptr_t)state);
     uint32_t high = (uintptr_t)state >> 32;
-    asm volatile("wrmsr" : : "c"(0xC0000101), "a"(low), "d"(high) : "memory");
+    __asm__ volatile("wrmsr" : : "c"(0xC0000101), "a"(low), "d"(high) : "memory");
 }
 
 static void ap_kernel_entry(void) {
 	// Enable SSE
-	asm volatile("cld");
+	__asm__ volatile("cld");
     uint64_t cr;
-    asm volatile("mov %%cr0, %0" : "=r"(cr));
+    __asm__ volatile("mov %%cr0, %0" : "=r"(cr));
     cr &= ~(1 << 2); // Clear EM (Emulation) bit
     cr |= (1 << 1); // Set MP (Monitor Coproccessor) bit
-    asm volatile("mov %0, %%cr0" : : "r"(cr));
+    __asm__ volatile("mov %0, %%cr0" : : "r"(cr));
     cr = 0;
-    asm volatile("mov %%cr4, %0" : "=r"(cr));
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr));
     cr |= (1 << 9); // Set OSFXSR (FXSAVE/FXRSTOR support)
     cr |= (1 << 10); // Set OSXMMEXCPT (Unmasked Exception support)
-    asm volatile("mov %0, %%cr4" :: "r"(cr));
+    __asm__ volatile("mov %0, %%cr4" :: "r"(cr));
 
     uint32_t lapic_id = get_lapic_id();
     uint64_t kernel_stack = *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x510);
     struct core_state* core = *(struct core_state**)(AOS_DIRECT_MAP_BASE + 0x520);
 
 	if (!gdt_init_ex(&core->gdt, &core->gdt_desc, &core->tss)) {
-		asm volatile("cli");
-		asm volatile("wbinvd");
-		for (;;) { asm volatile("hlt"); }
+		__asm__ volatile("cli");
+		__asm__ volatile("wbinvd");
+		for (;;) { __asm__ volatile("hlt"); }
 	}
 	if (!tss_init_ex(&core->tss, MALLOC_TYPE_KERNEL, PAGE_RW | PAGE_PRESENT)) {
-		asm volatile("cli");
-		asm volatile("wbinvd");
-		for (;;) { asm volatile("hlt"); }
+		__asm__ volatile("cli");
+		__asm__ volatile("wbinvd");
+		for (;;) { __asm__ volatile("hlt"); }
 	}
 
     lapic_write(0xF0, 0x1FF); 
@@ -177,12 +180,12 @@ static void ap_kernel_entry(void) {
 
     ap_boot_flag = AOS_TRUE;
     while (1) {
-        asm volatile("" : : : "memory");
-        asm volatile("cli");
+        __asm__ volatile("" : : : "memory");
+        __asm__ volatile("cli");
         if (core->shutdown_core == 1) {
             break;
         } else if (*(struct thread_state* volatile*)&core->ready_list != NULL) {
-            asm volatile("sti");
+            __asm__ volatile("sti");
             spin_lock(&core->queue_lock);
             struct thread_state* next = core->ready_list;
             core->ready_list = next->next;
@@ -197,19 +200,36 @@ static void ap_kernel_entry(void) {
             thread_context_switch(prev, next);
         } else {
             core->status = core->reserve_core ? CORE_STATUS_RESERVED : CORE_STATUS_READY;
-            asm volatile("sti");
-            asm volatile("hlt");
+            __asm__ volatile("sti");
+            __asm__ volatile("hlt");
             core->status = CORE_STATUS_RUNNING;
         }
     }
 
-    asm volatile("cli");
-    asm volatile("wbinvd");
-    for (;;) { asm volatile("hlt"); }
+    __asm__ volatile("cli");
+    __asm__ volatile("wbinvd");
+    for (;;) { __asm__ volatile("hlt"); }
 }
 
 void smp_ipi_handler(void) {
     lapic_write(0xB0, 0);
+}
+
+void smp_tlb_ipi_handler(void) {
+	struct core_state* core;
+    __asm__ volatile("mov %%gs:0, %0" : "=r"(core));
+
+	if (core->tlb_cmd & SMP_TLB_CMD_INVLPAGE) {
+    	uint64_t addr = core->tlb_addr;
+		__asm__ volatile("invlpg (%0)" :: "r"(addr) : "memory");
+	} else if (core->tlb_cmd == SMP_TLB_CMD_REFRESH_PAGES) { // THIS COMMAND CANNOT BE USED WITH MULTIPLE COMMANDS
+		uint64_t addr = core->tlb_addr;
+		__asm__ volatile("mov %0, %%cr3" :: "r"(addr) : "memory");
+	}
+	__asm__ volatile("mfence" ::: "memory");
+
+    core->tlb_done = AOS_TRUE;
+	lapic_write(0xB0, 0);
 }
 
 void smp_timer_handler(void) {
@@ -218,7 +238,7 @@ void smp_timer_handler(void) {
 
 void smp_yield(void) {
     struct core_state* core;
-    asm("mov %%gs:0, %0" : "=r"(core));
+    __asm__ volatile("mov %%gs:0, %0" : "=r"(core));
 
 	if (core->core_idx == bsp_core_idx) {
 		serial_print("[SMP] Warning: Yield called by BSP Core? Blocked.\n");
@@ -259,7 +279,7 @@ void smp_push_task(uint32_t core_idx, void (*entry)(void*), void* arg) {
 
     if (target->status != CORE_STATUS_RUNNING) {
         serial_printf("[SMP] Sending Awake command for core %d\n", core_idx);
-        send_wakeup_ipi(target->lapic_id, 0x40);
+        send_wakeup_ipi(target->lapic_id, SMP_IPI_VECTOR);
     }
 }
 
@@ -293,7 +313,7 @@ aos_bool smp_get_core_status(uint32_t core_idx, enum core_status *out) {
 
 aos_bool smp_is_bsp_core(void) {
 	struct core_state* core;
-    asm("mov %%gs:0, %0" : "=r"(core));
+    __asm__ volatile("mov %%gs:0, %0" : "=r"(core));
 
 	return core->lapic_id == bsp_core_idx;
 }
@@ -311,7 +331,7 @@ void smp_reserve_core(uint32_t core_idx) {
     target->reserve_core = 1;
     if (target->status != CORE_STATUS_RUNNING) {
         serial_printf("[SMP] Sending Awake command for core %d\n", core_idx);
-        send_wakeup_ipi(target->lapic_id, 0x40);
+        send_wakeup_ipi(target->lapic_id, SMP_IPI_VECTOR);
     }
 
     spin_unlock_irqrestore(&target->command_lock, flags);
@@ -330,7 +350,7 @@ void smp_unreserve_core(uint32_t core_idx) {
     target->reserve_core = 0;
     if (target->status != CORE_STATUS_RUNNING) {
         serial_printf("[SMP] Sending Awake command for core %d\n", core_idx);
-        send_wakeup_ipi(target->lapic_id, 0x40);
+        send_wakeup_ipi(target->lapic_id, SMP_IPI_VECTOR);
     }
 
     spin_unlock_irqrestore(&target->command_lock, flags);
@@ -348,7 +368,7 @@ void smp_init(void) {
 
     uintptr_t trampoline_len = (uintptr_t)&smp_trampoline_end - (uintptr_t)&smp_trampoline_start;
     uint64_t current_cr3;
-    asm volatile("mov %%cr3, %0" : "=r"(current_cr3));
+    __asm__ volatile("mov %%cr3, %0" : "=r"(current_cr3));
 
     for (uint32_t i = 0; i < (uint32_t)core_count; i++) {
         if (cores[i] != NULL) {
@@ -413,7 +433,7 @@ void smp_init(void) {
 		if (!ap_boot_flag) send_ipi(id, 0x08);
 
 		uint64_t timeout = kget_ms_passed();
-		while(!ap_boot_flag && kget_ms_passed() - timeout < 1000) { asm volatile("pause");}
+		while(!ap_boot_flag && kget_ms_passed() - timeout < 1000) { __asm__ volatile("pause");}
 
         if (!ap_boot_flag) {
             serial_printf("[SMP] Error: Core %lld failed to check in!\n", id);
@@ -451,12 +471,12 @@ void smp_init(void) {
     lapic_timer_start(10);
     ap_init_core_state(bsp_state);
 
-    asm volatile("sti");
+    __asm__ volatile("sti");
 }
 
 uint32_t smp_get_current_core(void) {
 	struct core_state* core;
-    asm("mov %%gs:0, %0" : "=r"(core));
+    __asm__ volatile("mov %%gs:0, %0" : "=r"(core));
 
 	return core->core_idx;
 }
@@ -473,10 +493,12 @@ void smp_shutdown_core(uint32_t core_idx) {
 
     uint64_t flags = spin_lock_irqsave(&target->command_lock);
     target->shutdown_core = 1;
+	send_wakeup_ipi(target->lapic_id, SMP_IPI_VECTOR);
+	spin_unlock_irqrestore(&target->command_lock, flags);
+
 	if (target->stack) avmf_free((uint64_t)target->stack);
 	if (target->idle_thread) avmf_free((uint64_t)target->idle_thread);
 	if (target->ready_list) avmf_free((uint64_t)target->ready_list);
-    spin_unlock_irqrestore(&target->command_lock, flags);
 
 	// Broadcast INIT IPI to reset the AP
 	lapic_write(LAPIC_REG_ICR_HIGH, target->lapic_id << 24);
@@ -503,9 +525,10 @@ void smp_reset_core(uint32_t core_idx) {
 
     uint64_t flags = spin_lock_irqsave(&target->command_lock);
     target->shutdown_core = 1;
+	send_wakeup_ipi(target->lapic_id, SMP_IPI_VECTOR);
+    spin_unlock_irqrestore(&target->command_lock, flags);
 
 	if (target->ready_list) avmf_free((uint64_t)target->ready_list);
-    spin_unlock_irqrestore(&target->command_lock, flags);
 
 	// Broadcast INIT IPI to reset the AP
 	lapic_write(LAPIC_REG_ICR_HIGH, target->lapic_id << 24);
@@ -532,7 +555,7 @@ void smp_reset_core(uint32_t core_idx) {
 
 	uintptr_t trampoline_len = (uintptr_t)&smp_trampoline_end - (uintptr_t)&smp_trampoline_start;
     uint64_t current_cr3;
-    asm volatile("mov %%cr3, %0" : "=r"(current_cr3));
+    __asm__ volatile("mov %%cr3, %0" : "=r"(current_cr3));
 	
 	memcpy((void*)(AOS_DIRECT_MAP_BASE + 0x8000), &smp_trampoline_start, trampoline_len);
 	*(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x500) = current_cr3;
@@ -546,7 +569,7 @@ void smp_reset_core(uint32_t core_idx) {
 	if (!ap_boot_flag) send_ipi(target->lapic_id, 0x08);
 
 	uint64_t timeout = kget_ms_passed();
-	while(!ap_boot_flag && kget_ms_passed() - timeout < 1000) { asm volatile("pause");}
+	while(!ap_boot_flag && kget_ms_passed() - timeout < 1000) { __asm__ volatile("pause");}
 
 	if (!ap_boot_flag) {
 		serial_printf("[SMP] Error: Core %lld failed to check in!\n", core_idx);
@@ -555,6 +578,37 @@ void smp_reset_core(uint32_t core_idx) {
 	}
 
 	spin_unlock(&boot_lock);
+}
+
+void smp_tlb_core(uint32_t core_idx, uint64_t virt, aos_bool full_flush) {
+	if (core_idx >= SMP_MAX_CORES || cores[core_idx] == NULL) return;
+
+	if (core_idx == bsp_core_idx) {
+		serial_print("[SMP] Warning: TLB Flush/Invlpage called on BSP Core! Blocked.\n");
+		return;
+	}
+
+    struct core_state* target = cores[core_idx];
+
+    uint64_t flags = spin_lock_irqsave(&target->command_lock);
+
+	target->tlb_cmd = full_flush ? SMP_TLB_CMD_REFRESH_PAGES : SMP_TLB_CMD_INVLPAGE;
+    target->tlb_addr = virt;
+	target->tlb_done = AOS_FALSE;
+
+	serial_printf("[SMP] Sending TLB IPI to APIC ID %lld\n", target->lapic_id);
+	send_wakeup_ipi(target->lapic_id, SMP_TLB_IPI_VECTOR);
+
+	uint64_t timeout = kget_ms_passed();
+	while(!target->tlb_done && kget_ms_passed() - timeout < 1000) { __asm__ volatile("pause");}
+
+	spin_unlock_irqrestore(&target->command_lock, flags);
+
+	if (kget_ms_passed() - timeout > 1000) {
+		serial_printf("[SMP] Error: Core %lld failed to check in on TLB Flush/Invlpage!\n", core_idx);
+	} else {
+		serial_printf("[SMP] Core %lld checked in successfully on TLB Flush/Invlpage.\n", core_idx);
+	}
 }
 
 void smp_reset(void) {
@@ -570,5 +624,13 @@ void smp_shutdown(void) {
         if (cores[i] == NULL) continue;
 		if (i == bsp_core_idx) continue;
         smp_shutdown_core(i);
+    }
+}
+
+void smp_tlb(uint64_t virt, aos_bool full_flush) {
+	for (int i = 0; i < SMP_MAX_CORES; i++) {
+        if (cores[i] == NULL) continue;
+		if (i == bsp_core_idx) continue;
+        smp_tlb_core(i, virt, full_flush);
     }
 }
