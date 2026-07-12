@@ -132,13 +132,13 @@ static aos_bool sata_port_init(sata_controller* ksc, struct sata_hba_port* port,
     port->serr = 0xFFFFFFFF;
 	__asm__ volatile("mfence" ::: "memory");
 
-    state->clb_virt = avmf_alloc(1024, MALLOC_TYPE_DRIVER, PAGE_RW | PAGE_PRESENT, &state->clb_phys);
+    state->clb_virt = avmf_alloc(1024, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &state->clb_phys);
     if (state->clb_virt == 0) {
         serial_print("[AHCI] Could not allocate 1024 bytes!\n");
         return AOS_FALSE;
     }
     memset((void*)state->clb_virt, 0, 1024);
-    state->fis_virt = avmf_alloc(256, MALLOC_TYPE_DRIVER, PAGE_RW | PAGE_PRESENT, &state->fis_phys);
+    state->fis_virt = avmf_alloc(256, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &state->fis_phys);
     if (state->fis_virt == 0) {
         serial_print("[AHCI] Could not allocate 256 bytes!\n");
         avmf_free(state->clb_virt);
@@ -152,7 +152,7 @@ static aos_bool sata_port_init(sata_controller* ksc, struct sata_hba_port* port,
     serial_printf("[AHCI] Command slots: %d\n", slots);
     for (int i = 0; i < slots; i++) {
         uint64_t ct_phys = 0;
-        uint64_t ct_virt = avmf_alloc(256, MALLOC_TYPE_DRIVER, PAGE_RW | PAGE_PRESENT, &ct_phys);
+        uint64_t ct_virt = avmf_alloc(256, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &ct_phys);
         if (ct_virt == 0) {
             serial_print("[AHCI] Could not allocate 256 bytes for command table!\n");
             avmf_free(state->clb_virt);
@@ -294,7 +294,7 @@ static aos_bool sata_exec_cmd_internal(struct sata_port_state* state, uint8_t co
     uint64_t phys = 0;
     void* virt = NULL;
 	if (has_data) {
-		virt = (void*)avmf_alloc(bytes, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, &phys);
+		virt = (void*)avmf_alloc(bytes, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &phys);
     	if (!virt) return AOS_FALSE;
 		if (!phys) {
 			avmf_free((uint64_t)virt);
@@ -438,13 +438,13 @@ aos_bool sata_init(struct AOS_Module* m) {
     if (m->Modules.driver_module.type != MODULE_DRIVER_TYPE_SATA) return AOS_FALSE;
 
 	if (!controllers) {
-		controllers = (sata_controller*)avmf_alloc(sizeof(sata_controller) * KSATA_ALLOC_STEP, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, NULL);
+		controllers = (sata_controller*)avmf_alloc(sizeof(sata_controller) * KSATA_ALLOC_STEP, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW, NULL);
 		if (!controllers) return AOS_FALSE;
 		controller_cap = KSATA_ALLOC_STEP;
 		controller_count = 0;
 	} else if (controller_count >= controller_cap) {
 		if (controller_count >= KSATA_MAX_CONTROLLERS) return AOS_FALSE;
-		sata_controller* nptr = (sata_controller*)avmf_alloc(sizeof(sata_controller) * (controller_cap + KSATA_ALLOC_STEP), MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, NULL);
+		sata_controller* nptr = (sata_controller*)avmf_alloc(sizeof(sata_controller) * (controller_cap + KSATA_ALLOC_STEP), MALLOC_TYPE_DRIVER, AVMF_FLAG_RW, NULL);
 		if (!nptr) return AOS_FALSE;
 		memcpy(nptr, controllers, sizeof(sata_controller)*controller_count);
 		avmf_free((uint64_t)controllers);
@@ -708,7 +708,7 @@ aos_bool sata_get_block_device(uint64_t cidx, int port_id, struct block_device* 
     ((uint64_t)iden.lba_cap_48[0]);
     out->block_count = block_count;
     out->block_size = 512;
-    char* model = (char*)avmf_alloc(41, MALLOC_TYPE_DRIVER, PAGE_RW | PAGE_PRESENT, NULL);
+    char* model = (char*)avmf_alloc(41, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW, NULL);
     if (model == NULL) {
         out->name = NULL;
         return AOS_TRUE;

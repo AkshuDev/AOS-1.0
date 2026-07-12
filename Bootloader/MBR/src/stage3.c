@@ -111,7 +111,7 @@ void fb_printc(FB_Info_t* fb, FB_Cursor_t* cur, char c) {return;}
 
 // Real funcs again
 void* btl_malloc(size_t size) {
-	return (void*)avmf_alloc((uint64_t)size, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL);
+	return (void*)avmf_alloc((uint64_t)size, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
 }
 
 void btl_free(void* ptr) {

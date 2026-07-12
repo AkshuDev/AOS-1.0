@@ -85,7 +85,7 @@ static aos_bool klog_realloc(void) {
 
 	if (klog_cap - klog_pos >= 32) return AOS_TRUE;
 	size_t size = klog_cap;
-	char* nptr = (char*)avmf_alloc(size + 1024, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL); // +1KB
+	char* nptr = (char*)avmf_alloc(size + 1024, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL); // +1KB
 	if (!nptr) return AOS_FALSE;
 
 	memcpy(nptr, klog, klog_end);
@@ -183,7 +183,7 @@ void serial_init_klog(const char* path, struct pbfs_mount* mnt) {
 		klog_present = AOS_TRUE;
 	}
 
-	klog = (char*)avmf_alloc(size + klog_end + 4096, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL); // +4KB
+	klog = (char*)avmf_alloc(size + klog_end + 4096, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL); // +4KB
 	if (!klog) return;
 	if (preklog_present) memcpy(klog, preklog, klog_end);
 	if (data && size > 0) memcpy(klog + klog_end, data, size);

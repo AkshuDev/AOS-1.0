@@ -27,10 +27,17 @@ SECTIONS
         __bss_start = .;
         *(.bss*)
 		__bss_true_end = .;
-        . = ALIGN(16);
+        
+		. = ALIGN(16);
         stack_bottom__ = .;
         . += 0x10000; /* 64KB stack */
         stack_top__ = .;
+
+		. = ALIGN(16);
+		__first_pagemaps = .;
+		. += 0x8000;
+		__first_pagemaps_end = .;
+
         __bss_end = .;
     }
 

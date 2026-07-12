@@ -18,7 +18,7 @@ KERNEL := Kernel
 KERNEL_BUILD := $(KERNEL)/build
 KERNEL_BIN := $(KERNEL)/bin
 
-AOS_KERNEL := $(KERNEL_BIN)/aos.bin
+AOS_KERNEL := $(KERNEL_BIN)/aos.elf
 
 MAKE := make
 

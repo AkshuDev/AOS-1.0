@@ -64,6 +64,20 @@ static uint64_t avmf_alloc_phys_page(void) {
     return 0;
 }
 
+static uint32_t avmf_convert_flags_to_pager_flags(uint32_t flags) {
+	uint32_t out = PAGE_XD;
+	if (flags & AVMF_FLAG_WRITEABLE || flags & AVMF_FLAG_READABLE) out |= PAGE_RW;
+	if (flags & AVMF_FLAG_EXECUTABLE) out &= ~PAGE_XD;
+	
+	if (flags & AVMF_FLAG_NO_CACHE) out |= PAGE_PCD;
+
+	if (flags & AVMF_FLAG_USERMODE) out |= PAGE_USER;
+
+	if (flags & AVMF_FLAG_GLOBAL) out |= PAGE_GLOBAL;
+	if (flags & AVMF_FLAG_DIRTY) out |= PAGE_DIRTY;
+	return out;
+}
+
 uint64_t avmf_virt_to_phys(uint64_t virt) {
     if (virt >= AOS_DIRECT_MAP_BASE && virt < AOS_KERNEL_SPACE_BASE)
         return (uint64_t)(virt - AOS_DIRECT_MAP_BASE); // Present in Direct Map
@@ -74,16 +88,16 @@ uint64_t avmf_virt_to_phys(uint64_t virt) {
     return region->phys_addr + offset;
 }
 
-void* avmf_phys_to_virt(uint64_t phys) {
+uint64_t avmf_phys_to_virt(uint64_t phys) {
     avmf_header_t* cur = avmf_head;
     while (cur) {
         if (cur->phys_addr <= phys && phys < cur->phys_addr + cur->size) {
-            return (void*)(cur->virt_addr + (phys - cur->phys_addr));
+            return (uint64_t)(cur->virt_addr + (phys - cur->phys_addr));
         }
         cur = cur->next;
     }
     serial_print("[AVMF] Trying to get info on a unmapped region (virtual addr)!\n");
-    return NULL;
+    return 0;
 }
 
 uint64_t avmf_alloc_phys_contiguous(uint64_t size) {
@@ -159,7 +173,7 @@ uint64_t avmf_alloc_virt(uint64_t size, MemoryAllocType type) {
     return ptr;
 }
 
-uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, int flags, uint64_t* phys_out) {
+uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, uint32_t flags, uint64_t* phys_out) {
     uint64_t virt = avmf_alloc_virt(size, type);
     if (virt == 0) return 0;
     uint64_t true_size = align4k(size);
@@ -168,7 +182,10 @@ uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, int flags, uint64_t* ph
     if (!phys) {serial_printf("[AVMF] Unable to retrieve physical address of VMemory Allocation for Size: 0x%llx bytes\n", true_size); return 0;}
 
     if (!avmf_alloc_region((uint64_t)virt, phys, true_size, flags)) {serial_print("[AVMF] Failed to Allocate Internal Region for VMemory!\n"); return 0;}
-    pager_map_range((uint64_t)virt, phys, true_size, flags);
+
+	uint32_t f = avmf_convert_flags_to_pager_flags(flags);
+
+    pager_map_range((uint64_t)virt, phys, true_size, f);
     if (phys_out != NULL) *phys_out = phys;
     return virt;
 }
@@ -218,7 +235,7 @@ void avmf_init(uint64_t* base_phys, uint64_t* limit_phys, uint8_t entries) {
     spin_unlock_irqrestore(&avmf_lock, rflags);
 }
 
-uint8_t avmf_alloc_region(uint64_t virt, uint64_t phys, uint64_t size, uint32_t flags) {
+aos_bool avmf_alloc_region(uint64_t virt, uint64_t phys, uint64_t size, uint32_t flags) {
     size = align4k(size);
     avmf_header_t* last_node = NULL;
 
@@ -233,7 +250,7 @@ uint8_t avmf_alloc_region(uint64_t virt, uint64_t phys, uint64_t size, uint32_t 
 
     avmf_header_t* node = (avmf_header_t*)NULL;
  
-    if (header_index >= AVMF_STATIC_SIZE) return 0;
+    if (header_index >= AVMF_STATIC_SIZE) return AOS_FALSE;
     uint64_t rflags = spin_lock_irqsave(&avmf_lock2);
     node = &static_headers[header_index++];
     
@@ -254,21 +271,21 @@ uint8_t avmf_alloc_region(uint64_t virt, uint64_t phys, uint64_t size, uint32_t 
     }
     spin_unlock_irqrestore(&avmf_lock2, rflags);
 
-    return 1;
+    return AOS_TRUE;
 }
 
-int avmf_map(uint64_t virt, uint64_t phys, uint32_t flags) {
+aos_bool avmf_map(uint64_t virt, uint64_t phys, uint32_t flags) {
     avmf_header_t* region = avmf_find(virt);
-    if (!region) {serial_print("[AVMF] Did not find region for mapping!\n"); return 0;}
+    if (!region) {serial_print("[AVMF] Did not find region for mapping!\n"); return AOS_FALSE;}
 
     uint64_t rflags = spin_lock_irqsave(&avmf_lock);
     region->phys_addr = phys;
     region->flags |= flags;
     spin_unlock_irqrestore(&avmf_lock, rflags);
-    return 1;
+    return AOS_TRUE;
 }
 
-int avmf_map_identity_virt(uint64_t virt, uint64_t phys, uint32_t flags) { // Works for only Identity mapping and maps phys to virt without pager
+aos_bool avmf_map_identity_virt(uint64_t virt, uint64_t phys, uint32_t flags) { // Works for only Identity mapping and maps phys to virt without pager
     avmf_header_t* region = NULL;
     avmf_header_t* cur = avmf_head;
     while (cur) {
@@ -278,13 +295,13 @@ int avmf_map_identity_virt(uint64_t virt, uint64_t phys, uint32_t flags) { // Wo
         }
         cur = cur->next;
     }
-    if (!region) {serial_print("[AVMF] Did not find region for identity mapping!\n"); return 0;}
+    if (!region) {serial_print("[AVMF] Did not find region for identity mapping!\n"); return AOS_FALSE;}
 
     uint64_t rflags = spin_lock_irqsave(&avmf_lock);
     region->virt_addr = virt;
     region->flags |= flags;
     spin_unlock_irqrestore(&avmf_lock, rflags);
-    return 1;
+    return AOS_TRUE;
 }
 
 avmf_header_t* avmf_find(uint64_t virt) {

@@ -21,7 +21,7 @@ struct ambrc backup_ambrc = {
         .ambrc_fg_color = VMEM_COLOR_WHITE,
         .ambrc_selected_bg_color = VMEM_COLOR_WHITE,
         .ambrc_selected_fg_color = VMEM_COLOR_BLACK,
-        .splash_duration = 3,
+        .splash_duration = 1,
         .show_settings_at_top = AOS_FALSE
     },
     .boot_info=(struct ambrc_boot_info){
@@ -44,7 +44,7 @@ struct ambrc def_ambrc = {
         .ambrc_fg_color = VMEM_COLOR_WHITE,
         .ambrc_selected_bg_color = VMEM_COLOR_WHITE,
         .ambrc_selected_fg_color = VMEM_COLOR_BLACK,
-        .splash_duration = 3,
+        .splash_duration = 1,
         .show_settings_at_top = AOS_FALSE
     },
     .boot_info=(struct ambrc_boot_info){

@@ -22,8 +22,7 @@ SRC_DIR := src
 
 KERNEL := $(wildcard $(SRC_DIR)/*.c)
 KERNEL_O := $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(KERNEL))
-KERNEL_ELF := $(BUILD_DIR)/aos.elf
-KERNEL_BIN := $(BIN_DIR)/aos.bin
+KERNEL_ELF := $(BIN_DIR)/aos.elf
 
 DRIVERS_DIR := drivers
 DRIVERS := $(shell find $(DRIVERS_DIR)/ -name '*.c')
@@ -73,10 +72,6 @@ $(KERNEL_ELF): $(KERNEL_O) $(DRIVERS_O) $(MEMORY_FILES_O) $(ASM_x86_64_FILES_O)
 	@make -C ../PBFS/PBFS/src-fs
 	@echo "Linking Kernel..."
 	$(LD) $(LDFLAGS) $(KERNEL_O) $(MEMORY_FILES_O) $(ASM_x86_64_FILES_O) $(DRIVERS_O) $(LDPBFS) -o $(KERNEL_ELF)
-
-$(KERNEL_BIN): $(KERNEL_ELF)
-	@echo "Copying Kernel to binary..."
-	$(OBJCOPY) -O binary $(KERNEL_ELF) $(KERNEL_BIN)
 
 $(LDPBFS): ../PBFS/PBFS/src-fs/Makefile
 	@make -C ../PBFS/PBFS/src-fs

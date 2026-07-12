@@ -235,12 +235,12 @@ aos_bool xhci_init(struct AOS_Module* module) {
     if (module->Modules.driver_module.type != MODULE_DRIVER_TYPE_xHCI) return AOS_FALSE;
     
 	if (!controllers) {
-		controllers = (xhci_controller*)avmf_alloc(sizeof(xhci_controller) * KxHCI_ALLOC_STEP, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, NULL);
+		controllers = (xhci_controller*)avmf_alloc(sizeof(xhci_controller) * KxHCI_ALLOC_STEP, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW, NULL);
 		if (!controllers) return AOS_FALSE;
 		controller_cap = KxHCI_ALLOC_STEP;
 		controller_count = 0;
 	} else if (controller_count >= controller_cap) {
-		xhci_controller* nptr = (xhci_controller*)avmf_alloc(sizeof(xhci_controller) * (controller_cap + KxHCI_ALLOC_STEP), MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, NULL);
+		xhci_controller* nptr = (xhci_controller*)avmf_alloc(sizeof(xhci_controller) * (controller_cap + KxHCI_ALLOC_STEP), MALLOC_TYPE_DRIVER, AVMF_FLAG_RW, NULL);
 		if (!nptr) return AOS_FALSE;
 		memcpy(nptr, controllers, sizeof(xhci_controller)*controller_count);
 		avmf_free((uint64_t)controllers);
@@ -297,7 +297,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	}
 
 	serial_print("[xHCI] Allocating DCBAA...\n");
-	kxc->dcbaa = avmf_alloc(ALIGN_UP((kxc->max_slots + 1) * sizeof(uint64_t), 64), MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &kxc->op_regs->dcbaap);
+	kxc->dcbaa = avmf_alloc(ALIGN_UP((kxc->max_slots + 1) * sizeof(uint64_t), 64), MALLOC_TYPE_DRIVER, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &kxc->op_regs->dcbaap);
 	if (!kxc->dcbaa) {
 		serial_print("[xHCI] Failed to allocate DCBAA\n");
 		destroy_n_unmap_xhci(kxc);
@@ -306,7 +306,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	memset((void*)kxc->dcbaa, 0, (kxc->max_slots + 1) * sizeof(uint64_t));
 
 	serial_print("[xHCI] Allocating CMD Ring...\n");
-	kxc->cmd_ring = (struct xhci_trb*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &kxc->cmd_ring_phys);
+	kxc->cmd_ring = (struct xhci_trb*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &kxc->cmd_ring_phys);
 	if (!kxc->cmd_ring) {
 		serial_print("[xHCI] Failed to allocate CMD Ring\n");
 		destroy_n_unmap_xhci(kxc);
@@ -319,7 +319,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	__asm__ volatile("mfence" ::: "memory");
 
 	serial_print("[xHCI] Allocating EVENT Ring...\n");
-	kxc->event_ring = (struct xhci_trb*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &kxc->event_ring_phys);
+	kxc->event_ring = (struct xhci_trb*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &kxc->event_ring_phys);
 	if (!kxc->event_ring) {
 		serial_print("[xHCI] Failed to allocate EVENT Ring\n");
 		destroy_n_unmap_xhci(kxc);
@@ -328,7 +328,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	memset(kxc->event_ring, 0, PAGE_SIZE);
 
 	serial_print("[xHCI] Allocating ERST...\n");
-	kxc->erst = (struct xhci_erst_entry*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &kxc->erst_phys);
+	kxc->erst = (struct xhci_erst_entry*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &kxc->erst_phys);
 	if (!kxc->erst) {
 		serial_print("[xHCI] Failed to allocate ERST\n");
 		destroy_n_unmap_xhci(kxc);

@@ -242,7 +242,7 @@ aos_bool gdt_init_ex(gdt_t* gdt, gdtr_t* gdtr, tss_t* tss) {
 	return AOS_TRUE;
 }
 
-aos_bool tss_init_ex(tss_t* tss, MemoryAllocType mtype, int flags) {
+aos_bool tss_init_ex(tss_t* tss, MemoryAllocType mtype, uint32_t flags) {
 	memset(tss, 0, sizeof(tss_t));
 
 	#define STACK_SIZE 0x4000

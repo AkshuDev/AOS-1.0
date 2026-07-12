@@ -14,6 +14,17 @@ static aos_bool pager_ready = AOS_FALSE;
 static uint64_t cpu_phys_bits = 0;
 static uint64_t cpu_virt_bits = 0;
 
+static uint64_t first_pagemaps_ptr = 0;
+
+extern uint8_t __bss_end; // from linker script
+static uintptr_t bss_end = (uintptr_t)((uintptr_t)AOS_KERNEL_ADDR + (uintptr_t)&__bss_end);
+
+extern uint8_t __first_pagemaps; // from linker script
+static uintptr_t first_pagemaps = (uintptr_t)((uintptr_t)AOS_KERNEL_ADDR + (uintptr_t)&__first_pagemaps);
+
+extern uint8_t __first_pagemaps_end; // from linker script
+static uintptr_t first_pagemaps_end = (uintptr_t)((uintptr_t)AOS_KERNEL_ADDR + (uintptr_t)&__first_pagemaps_end);
+
 static void pager_dump_mapping(struct page_table *pml4, uint64_t virt) {
     int pml4_i = (virt >> 39) & 0x1FF;
     int pdpt_i = (virt >> 30) & 0x1FF;
@@ -50,33 +61,36 @@ static void* pager_phys_to_virt(uint64_t phys) {
 }
 
 static struct page_table* alloc_page_table(uint64_t* phys_out) {
-    uint64_t phys = avmf_alloc_phys_contiguous(PAGE_SIZE);
-    uint64_t virt = avmf_alloc_virt(PAGE_SIZE, MALLOC_TYPE_SENSITIVE);
+	volatile struct page_table* tbl = NULL;
+	uint64_t phys = 0;
+	uint64_t virt = 0;
 
-    if (!virt) {
-        serial_print("[PAGER] No virtual address?\n");
-        return NULL;
-    };
-    avmf_alloc_region(virt, phys, PAGE_SIZE, AVMF_FLAG_PRESENT | AVMF_FLAG_WRITEABLE);
+	if (pager_ready) {
+		phys = avmf_alloc_phys_contiguous(sizeof(struct page_table));
+		virt = avmf_alloc_virt(sizeof(struct page_table), MALLOC_TYPE_SENSITIVE);
 
-    volatile struct page_table* tbl = NULL;
-    
-    if (pager_ready != 1)
-        tbl = (volatile struct page_table*)phys;
-    else {
-        tbl = (volatile struct page_table*)(AOS_DIRECT_MAP_BASE + phys);
-    }
+		if (!virt) {
+			serial_print("[PAGER] No virtual address?\n");
+			return NULL;
+		};
+		avmf_alloc_region(virt, phys, sizeof(struct page_table), AVMF_FLAG_WRITEABLE);
+		tbl = (volatile struct page_table*)(AOS_DIRECT_MAP_BASE + phys);
+	} else {
+		phys = first_pagemaps + first_pagemaps_ptr;
+		if (phys > first_pagemaps_end) {
+			serial_print("[PAGER] No more space for pagemaps within kernel bss! Need full init of pager to continue\n");
+			return NULL;
+		}
+		virt = phys; // Kernel is identity mapped
+
+		first_pagemaps_ptr += sizeof(struct page_table);
+		tbl = (volatile struct page_table*)virt;
+	}
     if (!tbl) { serial_print("[PAGER] Failed to allocate page table\n"); return NULL; }
  
-	tbl->lock = 0;
-    for (int i = 0; i < 512; i++) {
-        tbl->entries[i] = 0;
-    }
+	memset(tbl, 0, sizeof(volatile struct page_table));
+	*phys_out = phys;
 
-    *phys_out = phys;
-
-	memset(tbl, 0, PAGE_SIZE);
-    
     return tbl;
 }
 
@@ -118,8 +132,7 @@ void pager_init(void) {
     uint64_t base_phys[256];
     uint64_t limit_phys[256];
     uint64_t phys_idx = 0;
-	extern uint8_t __bss_end; // from linker script
-	uintptr_t bss_end = (uintptr_t)((uintptr_t)AOS_KERNEL_ADDR + (uintptr_t)&__bss_end);
+	
 	for (int i = 0; i < e820->entry_count; i++) {
         struct bs1_e820_entry* e = &e820->entries[i];
         uint64_t end_addr = e->base + e->len;
@@ -389,13 +402,21 @@ void pager_unmap(uint64_t virt) {
 
 void pager_load(struct page_table* pml4) {
     uint64_t pml4_phys = (uint64_t)pml4;
-    if (pager_ready) {
+
+	uint64_t rflags = spin_lock_irqsave(&pml4->lock);
+
+	serial_printf("[PAGER] Loading PML4 at Phys - 0x%llx\n", pml4_phys);
+    
+	if (pager_ready) {
         pml4_phys = avmf_virt_to_phys((uint64_t)pml4);
         if (pml4_phys == 0)
             pml4_phys = (uint64_t)pml4;
     }
     
-
     load_cr3(pml4_phys);
+
+	spin_unlock_irqrestore(&pml4->lock, rflags);
     mapped_pml4 = pml4;
+
+	serial_printf("[PAGER] Loaded PML4 at Phys - 0x%llx\n", pml4_phys);
 }

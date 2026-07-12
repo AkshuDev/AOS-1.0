@@ -42,32 +42,35 @@ typedef enum {
     MALLOC_TYPE_SENSITIVE
 } MemoryAllocType;
 
-#define AVMF_FLAG_PRESENT (1 << 0)
+#define AVMF_FLAG_READABLE (1 << 0)
 #define AVMF_FLAG_WRITEABLE (1 << 1)
+#define AVMF_FLAG_RW (AVMF_FLAG_READABLE | AVMF_FLAG_WRITEABLE)
 #define AVMF_FLAG_EXECUTABLE (1 << 2)
 #define AVMF_FLAG_USERMODE (1 << 3)
-#define AVMF_FLAG_KERNEL (1 << 4)
+#define AVMF_FLAG_NO_CACHE (1 << 4)
+#define AVMF_FLAG_GLOBAL (1 << 5)
+#define AVMF_FLAG_DIRTY (1 << 6)
 
 #define AVMF_ATTR_CACHED (1 << 0)
 #define AVMF_ATTR_SHARED (1 << 1)
 #define AVMF_ATTR_LOCKED (1 << 2) // not swappable
 
 uint64_t avmf_virt_to_phys(uint64_t virt) __attribute__((used));
-void* avmf_phys_to_virt(uint64_t phys) __attribute__((used));
+uint64_t avmf_phys_to_virt(uint64_t phys) __attribute__((used));
 
 uint64_t avmf_alloc_phys_contiguous(uint64_t size) __attribute__((used));
 
 void avmf_init(uint64_t* base_phys, uint64_t* limit_phys, uint8_t entries) __attribute__((used));
 
 uint64_t avmf_alloc_virt(uint64_t size, MemoryAllocType type) __attribute__((used));
-uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, int flags, uint64_t* phys_out) __attribute__((used));
+uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, uint32_t flags, uint64_t* phys_out) __attribute__((used));
 aos_bool avmf_alloc_region(uint64_t virt, uint64_t phys, uint64_t size, uint32_t flags) __attribute__((used));
 
 void avmf_free(uint64_t virt) __attribute__((used));
 void avmf_free_phys(uint64_t virt) __attribute__((used));
 
-int avmf_map(uint64_t virt, uint64_t phys, uint32_t flags) __attribute__((used));
-int avmf_map_identity_virt(uint64_t virt, uint64_t phys, uint32_t flags) __attribute__((used));
+aos_bool avmf_map(uint64_t virt, uint64_t phys, uint32_t flags) __attribute__((used));
+aos_bool avmf_map_identity_virt(uint64_t virt, uint64_t phys, uint32_t flags) __attribute__((used));
 
 avmf_header_t* avmf_find(uint64_t virt) __attribute__((used));
 void avmf__debug__print_map() __attribute__((used));

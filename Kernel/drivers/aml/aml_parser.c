@@ -127,14 +127,14 @@ static aml_object_t* aml_eval_local(aml_frame_t* frame, uint8_t opcode) {
 
 static aml_object_t* get_new_object(void) {
 	if (!object_pool) {
-		object_pool = (aml_object_t*)avmf_alloc(sizeof(aml_object_t)*OBJECTS_PER_PAGE, MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL);
+		object_pool = (aml_object_t*)avmf_alloc(sizeof(aml_object_t)*OBJECTS_PER_PAGE, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
 		if (!object_pool) return NULL;
 		object_pool_cap = OBJECTS_PER_PAGE;
 		object_pool_count = 0;
 	} else {
 		if (object_pool_cap < object_pool_count) object_pool_count = object_pool_cap;
 		if (object_pool_count >= object_pool_cap) {
-			aml_object_t* nptr = (aml_object_t*)avmf_alloc(sizeof(aml_object_t)*(object_pool_cap + OBJECTS_PER_PAGE), MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL);
+			aml_object_t* nptr = (aml_object_t*)avmf_alloc(sizeof(aml_object_t)*(object_pool_cap + OBJECTS_PER_PAGE), MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
 			if (!nptr) return NULL;
 			memcpy(nptr, object_pool, sizeof(aml_object_t)*object_pool_count);
 			avmf_free((uint64_t)object_pool);

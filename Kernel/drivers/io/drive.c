@@ -42,7 +42,7 @@ aos_bool legacy_ata_get_block_device(uint64_t cidx, int port_id, struct block_de
 	out->block_size = iden.block_size;
 	size_t len = strlen(iden.model);
 	if (len > 0) {
-		out->name = (char*)avmf_alloc(len + 1, MALLOC_TYPE_KERNEL, PAGE_RW | PAGE_PRESENT, NULL);
+		out->name = (char*)avmf_alloc(len + 1, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
 		if (out->name == NULL) return 0;
 		memcpy(out->name, (const void*)iden.model, len);
 		((char*)out->name)[len] = '\0';	

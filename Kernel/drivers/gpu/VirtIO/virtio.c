@@ -210,7 +210,7 @@ static aos_bool virtio_setup_queues(virtio_controller* kvc, uint16_t q_idx) {
     size_t used_r_size = ALIGN_UP(6 + (8 * size), 4);
 
     uint64_t phys = 0;
-    void* mem = (void*)avmf_alloc(desc_t_size + avail_r_size + used_r_size, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &phys);
+    void* mem = (void*)avmf_alloc(desc_t_size + avail_r_size + used_r_size, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &phys);
     if (!mem) {serial_print("[VirtIO:GPU] Failed to Allocate Memory!\n"); return AOS_FALSE;}
     if (!phys) {serial_print("[VirtIO:GPU] Failed to retrieve physical address!\n"); return AOS_FALSE;}
 
@@ -235,7 +235,7 @@ static aos_bool virtio_setup_queues(virtio_controller* kvc, uint16_t q_idx) {
 
     spin_unlock_irqrestore(&kvc->virtq_lock, flags);
 
-	kvc->desc_to_buf = (uint8_t*)avmf_alloc(sizeof(uint8_t) * desc_count, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, NULL);
+	kvc->desc_to_buf = (uint8_t*)avmf_alloc(sizeof(uint8_t) * desc_count, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW, NULL);
     if (!kvc->desc_to_buf) {serial_print("[VirtIO:GPU] Failed to Allocate Memory!\n"); return AOS_FALSE;}
     
     kvc->common_cfg->queue_desc = phys;
@@ -273,8 +273,8 @@ static aos_bool virtio_setup_buffers(virtio_controller* kvc) {
 
 	uint64_t cmd_phys = 0;
 	uint64_t resp_phys = 0;
-	kvc->cmd_buf = (struct virtio_gpu_ctrl_hdr*)avmf_alloc(0x1000, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &cmd_phys);
-	kvc->resp_buf = (struct virtio_gpu_resp_display_info*)avmf_alloc(0x1000, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &resp_phys);
+	kvc->cmd_buf = (struct virtio_gpu_ctrl_hdr*)avmf_alloc(0x1000, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &cmd_phys);
+	kvc->resp_buf = (struct virtio_gpu_resp_display_info*)avmf_alloc(0x1000, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &resp_phys);
 	if (!kvc->cmd_buf || !kvc->resp_buf || !cmd_phys || !resp_phys) {
 		serial_print("[VirtIO:GPU] Failed to allocate command and response buffers!\n");
 		return AOS_FALSE;
@@ -771,12 +771,12 @@ aos_bool virtio_init(struct AOS_Module* m) {
     if (m->Modules.driver_module.type != MODULE_DRIVER_TYPE_GPU) return AOS_FALSE;
 
 	if (!controllers) {
-		controllers = (virtio_controller*)avmf_alloc(sizeof(virtio_controller) * KVIRTIO_ALLOC_STEP, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, NULL);
+		controllers = (virtio_controller*)avmf_alloc(sizeof(virtio_controller) * KVIRTIO_ALLOC_STEP, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW, NULL);
 		if (!controllers) return AOS_FALSE;
 		controller_cap = KVIRTIO_ALLOC_STEP;
 		controller_count = 0;
 	} else if (controller_count >= controller_cap) {
-		virtio_controller* nptr = (virtio_controller*)avmf_alloc(sizeof(virtio_controller) * (controller_cap + KVIRTIO_ALLOC_STEP), MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW, NULL);
+		virtio_controller* nptr = (virtio_controller*)avmf_alloc(sizeof(virtio_controller) * (controller_cap + KVIRTIO_ALLOC_STEP), MALLOC_TYPE_DRIVER, AVMF_FLAG_RW, NULL);
 		if (!nptr) return AOS_FALSE;
 		memcpy(nptr, controllers, sizeof(virtio_controller)*controller_count);
 		avmf_free((uint64_t)controllers);
@@ -868,7 +868,7 @@ aos_bool virtio_init(struct AOS_Module* m) {
     gpu->framebuffer->pitch = gpu->framebuffer->w * (gpu->framebuffer->bpp / 8);
     gpu->framebuffer->size = gpu->framebuffer->pitch * gpu->framebuffer->h;
 
-	gpu->framebuffer->virt = avmf_alloc(gpu->framebuffer->size, MALLOC_TYPE_SENSITIVE, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &gpu->framebuffer->phys);
+	gpu->framebuffer->virt = avmf_alloc(gpu->framebuffer->size, MALLOC_TYPE_SENSITIVE, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &gpu->framebuffer->phys);
 
     gpu->active = AOS_TRUE;
     serial_print("[VirtIO:GPU] Initialization completed!\n");
@@ -971,7 +971,7 @@ aos_bool virtio_refresh(struct gpu_device* gpu_, uint64_t flags) {
 	// Now refresh device
 	if (flags & GPU_REFRESH_FLAG_BUFFERS) {
 		uint64_t phys = 0;
-		struct virtio_gpu_ctrl_hdr* buf = (struct virtio_gpu_ctrl_hdr*)avmf_alloc(MAX_CMD_RESP_BUFS * sizeof(struct virtio_gpu_ctrl_hdr), MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &phys);
+		struct virtio_gpu_ctrl_hdr* buf = (struct virtio_gpu_ctrl_hdr*)avmf_alloc(MAX_CMD_RESP_BUFS * sizeof(struct virtio_gpu_ctrl_hdr), MALLOC_TYPE_DRIVER, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &phys);
 		if (buf && phys) {
 			avmf_free((uint64_t)kvc->cmd_buf);
 			kvc->cmd_buf = buf;
@@ -981,7 +981,7 @@ aos_bool virtio_refresh(struct gpu_device* gpu_, uint64_t flags) {
 		}
 
 		phys = 0;
-		struct virtio_gpu_resp_display_info* buf2 = (struct virtio_gpu_resp_display_info*)avmf_alloc(MAX_CMD_RESP_BUFS * sizeof(struct virtio_gpu_ctrl_hdr), MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &phys);
+		struct virtio_gpu_resp_display_info* buf2 = (struct virtio_gpu_resp_display_info*)avmf_alloc(MAX_CMD_RESP_BUFS * sizeof(struct virtio_gpu_ctrl_hdr), MALLOC_TYPE_DRIVER, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &phys);
 		if (buf2 && phys) {
 			avmf_free((uint64_t)kvc->resp_buf);
 			kvc->resp_buf = buf2;
@@ -1054,7 +1054,7 @@ aos_bool virtio_refresh(struct gpu_device* gpu_, uint64_t flags) {
 		if (gpu->framebuffer->pitch * gpu->framebuffer->h != gpu->framebuffer->size) {
 			gpu->framebuffer->size = gpu->framebuffer->pitch * gpu->framebuffer->h;
 			if (gpu->framebuffer->virt) avmf_free(gpu->framebuffer->virt);
-			gpu->framebuffer->virt = avmf_alloc(gpu->framebuffer->size, MALLOC_TYPE_SENSITIVE, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &gpu->framebuffer->phys);
+			gpu->framebuffer->virt = avmf_alloc(gpu->framebuffer->size, MALLOC_TYPE_SENSITIVE, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &gpu->framebuffer->phys);
 		}
 
 		gpu->active = AOS_TRUE;
@@ -1102,7 +1102,7 @@ aos_bool pyrion_init_virtio(void) {
 	uint64_t init = 0;
     for (uint64_t i = 0; i < MAX_PYRION_CONTEXTS; i++) {
         uint64_t ctx_phys = 0;
-        uint64_t ctx_virt = (uint64_t)avmf_alloc(sizeof(struct pyrion_ctx), MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, &ctx_phys);
+        uint64_t ctx_virt = (uint64_t)avmf_alloc(sizeof(struct pyrion_ctx), MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, &ctx_phys);
         if (!ctx_phys || !ctx_virt) continue;
 
         struct pyrion_ctx* ctx = (struct pyrion_ctx*)ctx_virt;
@@ -1184,7 +1184,7 @@ struct pyrion_ctx* pyrion_create_ctx_virtio(void) {
     }
 
     struct pyrion_ctx* ctx = (struct pyrion_ctx*)p_contexts[slot];
-    ctx->driver_data = (void*)avmf_alloc(0x1000, MALLOC_TYPE_DRIVER, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &ctx->driver_data_phys);
+    ctx->driver_data = (void*)avmf_alloc(0x1000, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &ctx->driver_data_phys);
     if (!ctx->driver_data) return NULL;
     memset(ctx->driver_data, 0, 0x1000);
 
@@ -1232,7 +1232,7 @@ aos_bool pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* view
     if (!virtio_submit_sync(kvc, slot, sizeof(*c2d), sizeof(struct virtio_gpu_ctrl_hdr))) return AOS_FALSE;
 
 	// Attach backing
-    ctx->driver_data2 = (void*)avmf_alloc(viewport->width * viewport->height * 4, MALLOC_TYPE_SENSITIVE, PAGE_PRESENT | PAGE_RW | PAGE_PCD, &ctx->driver_data_phys2);
+    ctx->driver_data2 = (void*)avmf_alloc(viewport->width * viewport->height * 4, MALLOC_TYPE_SENSITIVE, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &ctx->driver_data_phys2);
     if (!ctx->driver_data2) {
         serial_print("[VirtIO:GPU] Failed to allocate for backing!\n");
         return AOS_FALSE;

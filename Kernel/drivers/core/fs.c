@@ -32,14 +32,14 @@ static uint8_t setup_ifndone_handler_list(uint64_t extra_entries_needed) {
 	}
 
 	if (handler_list) {
-		struct aos_dmm_handler* nptr = (struct aos_dmm_handler*)avmf_alloc(sizeof(struct aos_dmm_handler)*step, MALLOC_TYPE_KERNEL, PAGE_PRESENT|PAGE_RW, NULL);
+		struct aos_dmm_handler* nptr = (struct aos_dmm_handler*)avmf_alloc(sizeof(struct aos_dmm_handler)*step, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
 		if (!nptr) return 0;
 		avmf_free((uint64_t)handler_list);
 		handler_list = nptr;
 		handler_list_cap = step;
 		handler_list_count = 0;
 	} else {
-		struct aos_dmm_handler* nptr = (struct aos_dmm_handler*)avmf_alloc(sizeof(struct aos_dmm_handler)*(handler_list_cap + step), MALLOC_TYPE_KERNEL, PAGE_PRESENT|PAGE_RW, NULL);
+		struct aos_dmm_handler* nptr = (struct aos_dmm_handler*)avmf_alloc(sizeof(struct aos_dmm_handler)*(handler_list_cap + step), MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
 		if (!nptr) return 0;
 		memcpy(nptr, handler_list, handler_list_count*sizeof(struct aos_dmm_handler));
 		avmf_free((uint64_t)handler_list);
@@ -114,7 +114,7 @@ uint64_t fs_open(const char* path) {
 		return 0;
 	}
 
-	struct aos_file* file = (struct aos_file*)avmf_alloc(sizeof(struct aos_file), MALLOC_TYPE_KERNEL, PAGE_PRESENT | PAGE_RW, NULL);
+	struct aos_file* file = (struct aos_file*)avmf_alloc(sizeof(struct aos_file), MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
 	if (!file) return 0;
 
 	uint64_t rflags = spin_lock_irqsave(&fs_lock);

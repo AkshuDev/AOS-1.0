@@ -29,7 +29,7 @@ static size_t registered_module_cap = 0;
 
 aos_bool modules_init(void) {
     // Loads core modules and more
-    modules = (struct AOS_Module*)avmf_alloc(sizeof(struct AOS_Module)*16, MALLOC_TYPE_KERNEL, PAGE_RW | PAGE_PRESENT, NULL);
+    modules = (struct AOS_Module*)avmf_alloc(sizeof(struct AOS_Module)*16, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
     if (!modules) {
         serial_print("[Module-System] Allocation failed!\n");
         return AOS_FALSE;
@@ -174,7 +174,7 @@ aos_bool module_register(struct AOS_Module* module) {
     }
 
     if (!registered_modules || registered_module_count >= registered_module_cap) {
-        struct AOS_Module** nptr = (struct AOS_Module**)avmf_alloc(sizeof(struct AOS_Module*)*(registered_module_cap + 16), MALLOC_TYPE_KERNEL, PAGE_RW | PAGE_PRESENT, NULL);
+        struct AOS_Module** nptr = (struct AOS_Module**)avmf_alloc(sizeof(struct AOS_Module*)*(registered_module_cap + 16), MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
         if (!nptr) {
             serial_print("[Module-System] Reallocation of registered modules failed!\n");
             return AOS_FALSE;
@@ -286,7 +286,7 @@ struct AOS_Module* module_get_applicable_driver_alloced(uint64_t loop_idx, uint8
 
 			if (loop_idx != found_count++) continue;
 
-			struct AOS_Module* nmod = (struct AOS_Module*)avmf_alloc(sizeof(struct AOS_Module), MALLOC_TYPE_KERNEL, PAGE_RW | PAGE_PRESENT, NULL);
+			struct AOS_Module* nmod = (struct AOS_Module*)avmf_alloc(sizeof(struct AOS_Module), MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
 			if (!nmod) return NULL;
 
 			memcpy(nmod, mod, sizeof(struct AOS_Module));
@@ -316,7 +316,7 @@ struct AOS_Module* module_get_applicable_registered_driver_alloced(uint64_t loop
 
 			if (loop_idx != found_count++) continue;
 			
-            struct AOS_Module* nmod = (struct AOS_Module*)avmf_alloc(sizeof(struct AOS_Module), MALLOC_TYPE_KERNEL, PAGE_RW | PAGE_PRESENT, NULL);
+            struct AOS_Module* nmod = (struct AOS_Module*)avmf_alloc(sizeof(struct AOS_Module), MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
 			if (!nmod) return NULL;
 
 			memcpy(nmod, mod, sizeof(struct AOS_Module));

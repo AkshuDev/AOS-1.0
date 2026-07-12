@@ -354,7 +354,7 @@ struct alloc_hdr {
 };
 
 void* kmalloc(size_t size) {
-    void* out = (void*)avmf_alloc(size + sizeof(struct alloc_hdr), MALLOC_TYPE_USER, PAGE_PRESENT | PAGE_RW, NULL);
+    void* out = (void*)avmf_alloc(size + sizeof(struct alloc_hdr), MALLOC_TYPE_USER, AVMF_FLAG_RW | AVMF_FLAG_USERMODE, NULL);
     if (!out) return out;
     void* ret = out + sizeof(struct alloc_hdr);
     
