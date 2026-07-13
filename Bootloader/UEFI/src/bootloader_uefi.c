@@ -25,7 +25,7 @@
 #include <panic_shell.h>
 
 #include <system.h>
-#include <e820.h>
+#include <uniboot.h>
 
 #define MEDIA_DEVICE_PATH 0x04
 #define MEDIA_HARDDRIVE_DP 0x01
@@ -430,7 +430,7 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     }
     g_RBIP = get_physical_disk_io();
 
-    pefi_print(SystemTable, u"Updating SysInfo...\r\n");
+    pefi_print(SystemTable, u"Updating UniBoot Structures...\r\n");
 
     init_backup_ambrc();
     struct ambrc* ambrc = get_ambrc();
@@ -443,9 +443,9 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
         .serial_out = 0
     };
 
-	EFI_PHYSICAL_ADDRESS SystemInfoPhys = AOS_SYS_INFO_ADDR;
-	if (EFI_ERROR(SystemTable->BootServices->AllocatePages(AllocateAddress, EfiLoaderData, (ALIGN_UP(sizeof(aos_sysinfo_t), 0x1000))/0x1000, &SystemInfoPhys))) {
-		vmem_print(&cursor, "Failed to allocate System Information Structure!\n");
+	EFI_PHYSICAL_ADDRESS UniBootPhys = 0;
+	if (EFI_ERROR(SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, (ALIGN_UP(sizeof(uniboot_boot_info), 0x1000))/0x1000, &UniBootPhys))) {
+		vmem_print(&cursor, "Failed to allocate UniBoot Core Structure!\n");
 		return ENCODE_ERROR(EFI_OUT_OF_RESOURCES);
 	}
 
@@ -482,7 +482,7 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 	}
 
 	EFI_DEVICE_PATH_PROTOCOL* Node = DevicePath;
-	struct aos_sysinfo_pcie boot_drive = {0};
+	uniboot_pcie boot_drive = {0};
 	while (!IS_DEVICE_PATH_END(Node)) {
 		if (Node->Type == HARDWARE_DEVICE_PATH && Node->SubType == HW_PCI_DP) {
 			EFI_PCI_DEVICE_PATH *PciNode = (EFI_PCI_DEVICE_PATH*)Node;
@@ -528,36 +528,41 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 		return ENCODE_ERROR(EFI_LOAD_ERROR);
 	}
 
-    aos_sysinfo_t* SystemInfo = (aos_sysinfo_t*)AOS_SYS_INFO_LOC;
-	read_blk(&cur_drive.block_dev, mnt.header64.sysinfo_lba, SystemInfo);
+    uniboot_boot_info* UniBootCore = (uniboot_boot_info*)UniBootPhys;
+	read_blk(&cur_drive.block_dev, mnt.header64.sysinfo_lba, UniBootCore);
 
-	memset(&SystemInfo->fb_info, 0, sizeof(SystemInfo->fb_info));
+	memcpy((char*)UniBootCore->hdr.magic, UNIBOOT_MAGIC, UNIBOOT_MAGIC_SIZE);
+	memcpy((char*)UniBootCore->hdr.submagic, UNIBOOT_SUBMAGIC_BOOT_INFO, UNIBOOT_MAGIC_SIZE);
+	UniBootCore->hdr.version = UNIBOOT_CVERSION;
+	UniBootCore->hdr.revision = UNIBOOT_CREVISION;
+	UniBootCore->hdr.vendor = UNIBOOT_VENDOR_PHEONIX_STUDIOS;
+	UniBootCore->hdr.architecture = UNIBOOT_ARCHITECTURE_x64;
+	UniBootCore->hdr.next = NULL;
+	UniBootCore->hdr.root = &UniBootCore.hdr;
+	UniBootCore->hdr.prev = NULL;
 
 	if (EFI_ERROR(pefi_init_gop(SystemTable))) {
-		SystemInfo->fb_mode = AOS_SYSINFO_FB_MODE_VGA;
-
-		SystemInfo->fb_info.phys_addr = IO_VMEM;
-		SystemInfo->fb_info.width = IO_VMEM_MAX_COLS;
-		SystemInfo->fb_info.height = IO_VMEM_MAX_ROWS;
+		vmem_print(&cursor, "Failed to initialize UEFI GOP!\n");
+		return ENCODE_ERROR(EFI_LOAD_ERROR);
 	} else {
-		SystemInfo->fb_mode = AOS_SYSINFO_FB_MODE_FB;
-		SystemInfo->fb_info.phys_addr = (uint64_t)GOP->Mode->FrameBufferBase;
-		SystemInfo->fb_info.addr = (uint64_t)GOP->Mode->FrameBufferBase;
-		SystemInfo->fb_info.width = GOP->Mode->Info->HorizontalResolution;
-		SystemInfo->fb_info.height = GOP->Mode->Info->VerticalResolution;
-		SystemInfo->fb_info.bpp = sizeof(uint32_t)*8;
-		SystemInfo->fb_info.pitch = GOP->Mode->Info->PixelsPerScanLine * (SystemInfo->fb_info.bpp / 8);
-		SystemInfo->fb_info.size = GOP->Mode->FrameBufferSize;
+		UniBootCore->fb_mode = UNIBOOT_FB_MODE_UEFI_GOP;
+		UniBootCore->fb_info.phys_addr = (uint64_t)GOP->Mode->FrameBufferBase;
+		UniBootCore->fb_info.addr = (uint64_t)GOP->Mode->FrameBufferBase;
+		UniBootCore->fb_info.width = GOP->Mode->Info->HorizontalResolution;
+		UniBootCore->fb_info.height = GOP->Mode->Info->VerticalResolution;
+		UniBootCore->fb_info.bpp = sizeof(uint32_t)*8;
+		UniBootCore->fb_info.pitch = GOP->Mode->Info->PixelsPerScanLine * (UniBootCore->fb_info.bpp / 8);
+		UniBootCore->fb_info.size = GOP->Mode->FrameBufferSize;
 
 		switch (GOP->Mode->Info->PixelFormat) {
 			case PixelRedGreenBlueReserved8BitPerColor:
 				// R G B A
-				SystemInfo->fb_info.cformat = PYRION_COLORF_RGBA;
+				UniBootCore->fb_info.color_format = UNIBOOT_CFORMAT_RGBA;
 				break;
 
 			case PixelBlueGreenRedReserved8BitPerColor:
 				// B G R A
-				SystemInfo->fb_info.cformat = PYRION_COLORF_BGRA;
+				UniBootCore->fb_info.color_format = UNIBOOT_CFORMAT_BGRA;
 				break;
 
 			case PixelBitMask: {
@@ -568,15 +573,15 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 					mask->GreenMask == 0x00FF0000 &&
 					mask->BlueMask == 0x0000FF00
 				) {
-					SystemInfo->fb_info.cformat = PYRION_COLORF_RGBA;
+					UniBootCore->fb_info.color_format = UNIBOOT_CFORMAT_RGBA;
 				} else if (
 					mask->RedMask == 0x00FF0000 &&
 					mask->GreenMask == 0x0000FF00 &&
 					mask->BlueMask == 0x000000FF
 				) {
-					SystemInfo->fb_info.cformat = PYRION_COLORF_ARGB;
+					UniBootCore->fb_info.color_format = UNIBOOT_CFORMAT_ARGB;
 				} else {
-					SystemInfo->fb_info.cformat = PYRION_COLORF_BGRA;
+					UniBootCore->fb_info.color_format = UNIBOOT_CFORMAT_BGRA;
 				}
 
 				break;
@@ -584,17 +589,27 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
 			case PixelBltOnly:
 			default:
-				SystemInfo->fb_info.cformat = PYRION_COLORF_BGRA;
+				UniBootCore->fb_info.color_format = UNIBOOT_CFORMAT_BGRA;
 				break;
 		}
 	}
 
-    SystemInfo->boot_drive = boot_drive;
-	SystemInfo->boot_drive_raw = 0;
-    SystemInfo->boot_mode = 0;
-    SystemInfo->reserved0 = 0;
-    SystemInfo->cpu_signature = cpuid_signature();
-    cpuid_get_vendor(SystemInfo->cpu_vendor);
+	UniBootCore->provided_features = (uniboot_bitmask){
+		.bitmask = (
+			UNIBOOT_BITMASK_FEATURES_PAGING | UNIBOOT_BITMASK_FEATURES_64BIT |
+			UNIBOOT_BITMASK_FEATURES_KERNEL_SPACE_PRESENT | UNIBOOT_BITMASK_FEATURES_FRAMEBUFFER_PRESENT |
+			UNIBOOT_BITMASK_FEATURES_X86F_SSE
+		),
+		.next = NULL,
+		.prev = NULL,
+		.root = &UniBootCore->provided_features
+	};
+
+    UniBootCore->boot_drive = boot_drive;
+    UniBootCore->boot_mode = UNIBOOT_BOOT_MODE_NORMAL;
+    UniBootCore->cpu_info.timer_freq = cycles_per_ms * 1000; // in Hz
+	UniBootCore->cpu_info.model = "";
+	cpuid_get_vendor((char*)UniBootCore->cpu_info.vendor);
 
 	aos_bool tsc_is_fine = 0;
 	aos_bool kernel_is_fine = 0;
@@ -604,11 +619,11 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
             current_mode = (uint64_t)(tsc_start / cycles_per_ms) > 64000 ? 2 : 0;
             break;
         case 2:
-            current_mode = SystemInfo->kernel_info & AOS_BOOTLOADER_KERNEL_ACTIVE_FLAG ? 2 : 0;
+            current_mode = UniBootCore->kflag == UNIBOOT_TRUE ? 2 : 0;
             break;
         case 3:
             tsc_is_fine = (uint64_t)(tsc_start / cycles_per_ms) > 64000 ? 0 : 1;
-            kernel_is_fine = !(SystemInfo->kernel_info & AOS_BOOTLOADER_KERNEL_ACTIVE_FLAG);
+            kernel_is_fine = !(UniBootCore->kflag == UNIBOOT_TRUE);
             current_mode = !tsc_is_fine && !kernel_is_fine ? 2 : tsc_is_fine && kernel_is_fine ? 0 : 1;
             break;
         default: break;
@@ -820,12 +835,15 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
         switch (current_mode) {
             case 0:
                 final_kernel_idx = ambrc->boot_info.default_os_idx - 1;
+				UniBootCore->boot_mode = UNIBOOT_BOOT_MODE_NORMAL;
                 break;
             case 1:
                 final_kernel_idx = ambrc->boot_info.safe_os_idx - 1;
+				UniBootCore->boot_mode = UNIBOOT_BOOT_MODE_RECOVERY;
                 break;
             case 2:
                 final_kernel_idx = ambrc->boot_info.panic_os_idx - 1;
+				UniBootCore->boot_mode = UNIBOOT_BOOT_MODE_PANIC;
                 break;
             default: break;
         }
@@ -845,11 +863,11 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 		return ENCODE_ERROR(EFI_LOAD_ERROR);
     }
 
-	SystemInfo->kernel_info = AOS_BOOTLOADER_KERNEL_ACTIVE_FLAG;
-    SystemInfo->checksum = 0;
-    SystemInfo->checksum = compute_checksum((uint8_t*)SystemInfo, sizeof(aos_sysinfo_t));
+	UniBootCore->kflag = UNIBOOT_TRUE;
+    UniBootCore->checksum = 0;
+    UniBootCore->checksum = compute_checksum((uint8_t*)UniBootCore, sizeof(uniboot_boot_info));
 
-	write_blk(&cur_drive.block_dev, mnt.header64.sysinfo_lba, SystemInfo);
+	write_blk(&cur_drive.block_dev, mnt.header64.sysinfo_lba, (const void*)UniBootCore);
 	flush_f(&cur_drive.block_dev);
 	btl_free(dev.driver_data);
 
@@ -890,19 +908,22 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 		return status;
 	}
 
-	vmem_print(&cursor, "Initializing E820 Map...\n");
-	EFI_PHYSICAL_ADDRESS E820MapPhys = AOS_E820_INFO_ADDR;
-	if (EFI_ERROR(SystemTable->BootServices->AllocatePages(AllocateAddress, EfiLoaderData, (ALIGN_UP(sizeof(struct bs1_e820) + (sizeof(struct bs1_e820_entry)*(map_size / desc_size)), 0x1000))/0x1000, &E820MapPhys))) {
-		vmem_print(&cursor, "Failed to allocate E820 Map Structure!\n");
+	vmem_print(&cursor, "Initializing UniBoot System Memory Map...\n");
+	EFI_PHYSICAL_ADDRESS SMMAP_Phys = 0;
+	if (EFI_ERROR(SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, (ALIGN_UP(sizeof(uniboot_smmap) + (sizeof(uniboot_smmap_entry)*(map_size / desc_size)), 0x1000))/0x1000, &SMMAP_Phys))) {
+		vmem_print(&cursor, "Failed to allocate UniBoot System Memory Map Structure!\n");
 		return ENCODE_ERROR(EFI_OUT_OF_RESOURCES);
 	}
-	struct bs1_e820* e820_m = (struct bs1_e820*)AOS_E820_INFO_ADDR;
-	struct bs1_e820_entry* e820 = (struct bs1_e820_entry*)e820_m->entries;
-	uint32_t e820_count = 0;
+	uniboot_smmap* m = (uniboot_smmap*)SMMAP_Phys;
+	if (!m) {
+		vmem_print(&cursor, "Failed to allocate UniBoot System Memory Map Structure!\n");
+		return ENCODE_ERROR(EFI_OUT_OF_RESOURCES);
+	}
+	uniboot_smmap_entry* map = (uniboot_smmap_entry*)(SMMAP_Phys + sizeof(uniboot_smmap));
+	uint32_t mcount = 0;
 
 	struct bs1_e820_entry* last_entry = NULL;
 	for (UINTN off = 0; off < map_size; off += desc_size) {
-		if (e820_count >= E820_MAX_ENT) break;
 		EFI_MEMORY_DESCRIPTOR* desc = (EFI_MEMORY_DESCRIPTOR*)((uint8_t*)map + off);
 		struct bs1_e820_entry* e = &e820[e820_count];
 		e->base = desc->PhysicalStart;
