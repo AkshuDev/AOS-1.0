@@ -59,8 +59,9 @@ EFIAPI static aos_bool elf_make_ctx(uint8_t* data, uint64_t size, ELF_CTX* out) 
 	out->valid = AOS_FALSE;
 
 	Elf32_Ehdr* ehdr32 = (Elf32_Ehdr*)data;
-	if (size < sizeof(ehdr32->e_ident)) return AOS_FALSE;
+	if (size < sizeof(Elf32_Ehdr)) return AOS_FALSE;
 	if (memcmp(ehdr32->e_ident, ELFMAG, SELFMAG) != 0) return AOS_FALSE;
+	if (ehdr->e_ident[EI_VERSION] != EV_CURRENT) return AOS_FALSE;
 
 	switch (ehdr32->e_ident[EI_CLASS]) {
 		case ELFCLASS64: out->b64 = AOS_TRUE; break;
@@ -82,6 +83,7 @@ EFIAPI static aos_bool elf_make_ctx(uint8_t* data, uint64_t size, ELF_CTX* out) 
 	if (ehdr->e_entry < 1) return AOS_FALSE;
 
 	if (out->b64) {
+		if (size < sizeof(Elf64_Ehdr)) return AOS_FALSE;
 		if (!elf64_verify(ehdr64, size)) return AOS_FALSE;
 	} else {
 		if (!elf32_verify(ehdr32, size)) return AOS_FALSE;
@@ -99,6 +101,9 @@ EFIAPI static aos_bool elf_make_ctx(uint8_t* data, uint64_t size, ELF_CTX* out) 
 	out->entry = (uint64_t)ehdr->e_entry;
 
 	out->valid = AOS_TRUE;
+
+	#undef ehdr
+
 	return AOS_TRUE;
 }
 
@@ -189,7 +194,7 @@ EFIAPI static aos_bool elf_load(ELF_CTX* ctx) {
 	}
 }
 
-EFIAPI aos_bool elf_load(uint8_t* data, uint64_t size, uint64_t* entry) {
+EFIAPI aos_bool try_load_elf(uint8_t* data, uint64_t size, uint64_t* entry) {
 	if (pefi_state.initialized != 1) return AOS_FALSE;
 
 	ELF_CTX ctx = {0};

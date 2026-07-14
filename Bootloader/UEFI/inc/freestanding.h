@@ -4,6 +4,8 @@
 #include <pefi_simple_text_in.h>
 #include <pefilib.h>
 
+#include <uniboot.h>
+
 #include <inc/drivers/io/io.h>
 
 #define ALIGN_UP(x, align) (((x) + ((align) - 1)) & ~((align) - 1))
@@ -23,6 +25,7 @@ EFIAPI uint64_t kget_ms_passed(void) __attribute__((used));
 EFIAPI uint64_t kget_timestamp_seconds(void) __attribute__((used));
 EFIAPI uint64_t kget_timestamp_ms(void) __attribute__((used));
 EFIAPI void ktimer_calibrate(void) __attribute__((used));
+EFIAPI void uniboot_debug_dump(uniboot_hdr* header, struct VMemDesign* cursor) __attribute__((used));
 
 #define vmem_set_cursor(x, y) pefi_state.system_table->ConOut->SetCursorPosition(pefi_state.system_table->ConOut, (x), (y))
 #define vmem_enable_cursor() pefi_state.system_table->ConOut->EnableCursor(pefi_state.system_table->ConOut, TRUE)

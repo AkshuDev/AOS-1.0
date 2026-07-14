@@ -4,6 +4,7 @@
 #include <stdarg.h>
 
 #include <system.h>
+#include <uniboot.h>
 
 #include <pefi.h>
 #include <pefilib.h>
@@ -525,3 +526,170 @@ EFIAPI void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
     va_end(args);
 }
 
+EFIAPI static inline const char* ub_arch_to_str(uniboot_architecture arch) {
+    switch (arch) {
+        case UNIBOOT_ARCHITECTURE_x86_16: return "x86-16";
+        case UNIBOOT_ARCHITECTURE_x86: return "x86";
+        case UNIBOOT_ARCHITECTURE_x64: return "x64";
+        case UNIBOOT_ARCHITECTURE_PVCPU: return "PVCPU";
+        case UNIBOOT_ARCHITECTURE_ARM32: return "ARM32";
+        case UNIBOOT_ARCHITECTURE_ARM64: return "ARM64";
+        case UNIBOOT_ARCHITECTURE_RISCV32: return "RISCV32";
+        case UNIBOOT_ARCHITECTURE_RISCV64: return "RISCV64";
+        default: return "Unknown";
+    }
+}
+
+EFIAPI static inline const char* ub_fbmode_to_str(uniboot_fb_mode mode) {
+    switch (mode) {
+        case UNIBOOT_FB_MODE_NONE: return "None";
+        case UNIBOOT_FB_MODE_UEFI_GOP: return "UEFI GOP";
+        case UNIBOOT_FB_MODE_VGA: return "VGA";
+        default: return "Unknown";
+    }
+}
+
+EFIAPI static inline const char* ub_color_to_str(uniboot_cformat fmt) {
+    switch (fmt) {
+        case UNIBOOT_CFORMAT_RGBA: return "RGBA";
+        case UNIBOOT_CFORMAT_BGRA: return "BGRA";
+        case UNIBOOT_CFORMAT_ABGR: return "ABGR";
+        case UNIBOOT_CFORMAT_ARGB: return "ARGB";
+        case UNIBOOT_CFORMAT_RGB: return "RGB";
+        case UNIBOOT_CFORMAT_BGR: return "BGR";
+        default: return "Unknown";
+    }
+}
+
+EFIAPI static inline const char* ub_bootmode_to_str(uniboot_boot_mode mode) {
+    switch (mode) {
+        case UNIBOOT_BOOT_MODE_NORMAL: return "Normal";
+        case UNIBOOT_BOOT_MODE_RECOVERY: return "Recovery";
+        case UNIBOOT_BOOT_MODE_PANIC: return "Panic";
+        default: return "Unknown";
+    }
+}
+
+EFIAPI static inline const char* ub_memtype_to_str(uniboot_smmap_type type) {
+    switch (type) {
+        case UNIBOOT_SMMAP_TYPE_UNUSABLE: return "Unusable";
+        case UNIBOOT_SMMAP_TYPE_RESERVED: return "Reserved";
+        case UNIBOOT_SMMAP_TYPE_ACPI_NVS: return "ACPI NVS";
+        case UNIBOOT_SMMAP_TYPE_ACPI_RECLAIM: return "ACPI Reclaim";
+        case UNIBOOT_SMMAP_TYPE_FREE: return "Free";
+        default: return "Unknown";
+    }
+}
+
+EFIAPI static inline void ub_print_features(uint64_t features, struct VMemDesign* cursor) {
+    vmem_printf(cursor, "Features: 0x%lx\n", features);
+
+    if (features & UNIBOOT_BITMASK_FEATURES_X86F_SSE) vmem_print(cursor, "  - x86 Family:SSE\n");
+    if (features & UNIBOOT_BITMASK_FEATURES_X86F_AVX) vmem_print(cursor, "  - x86 Family:AVX\n");
+
+    if (features & UNIBOOT_BITMASK_FEATURES_PAGING) vmem_print(cursor, "  - Paging\n");
+    if (features & UNIBOOT_BITMASK_FEATURES_64BIT) vmem_print(cursor, "  - 64-bit\n");
+    if (features & UNIBOOT_BITMASK_FEATURES_KERNEL_SPACE_PRESENT) vmem_print(cursor, "  - Kernel Space Present\n");
+    if (features & UNIBOOT_BITMASK_FEATURES_EXTENSIONS_PRESENT) vmem_print(cursor, "  - Extensions Present\n");
+    if (features & UNIBOOT_BITMASK_FEATURES_FRAMEBUFFER_PRESENT) vmem_print(cursor, "  - Framebuffer Present\n");
+}
+
+EFIAPI static inline aos_bool is_printable_ascii(char c) {
+    return (c >= 32 && c <= 126);
+}
+
+EFIAPI static inline void ub_print_full_string(char* s, size_t sz, struct VMemDesign* cursor) {
+	for (size_t i = 0; i < sz; i++) {
+		if (!is_printable_ascii(s[i])) {
+			vmem_printf(cursor, "\\x%x", (uint8_t)s[i]);
+			continue;
+		}
+		vmem_printc(cursor, s[i]);
+	}
+	vmem_flush();
+}
+
+EFIAPI void uniboot_debug_dump(uniboot_hdr* header_r, struct VMemDesign* cursor) {
+    if (!header_r) {
+        vmem_print(cursor, "UniBoot: NULL header\n");
+        return;
+    }
+
+    uniboot_hdr* header = header_r->root ? header_r->root : header_r;
+
+    vmem_print(cursor, "=========== UniBoot Dump ===========\n");
+    while (header) {
+		char* smagic = (char*)&header->submagic;
+        vmem_print(cursor, "-----------------------------------\n");
+        
+		vmem_print(cursor, "Magic      : ");
+		ub_print_full_string((char*)&header->magic, UNIBOOT_MAGIC_SIZE, cursor);
+		vmem_printc(cursor, '\n');
+        
+		vmem_print(cursor, "SubMagic   : ");
+		ub_print_full_string(smagic, UNIBOOT_MAGIC_SIZE, cursor);
+		vmem_printc(cursor, '\n');
+		
+        vmem_printf(cursor, "Version    : 0x%llx\n", header->version);
+        vmem_printf(cursor, "Revision   : 0x%llx\n", header->revision);
+        vmem_printf(cursor, "Vendor     : 0x%llx\n", header->vendor);
+        vmem_printf(cursor, "Arch       : %s\n", ub_arch_to_str(header->architecture));
+		vmem_flush();
+
+        if (memcmp(smagic, UNIBOOT_SUBMAGIC_BOOT_INFO, UNIBOOT_MAGIC_SIZE) == 0) {
+            uniboot_boot_info* boot = (uniboot_boot_info*)header;
+
+            vmem_print(cursor, "\n== Boot Info ==\n");
+            vmem_printf(cursor, "Boot Mode      : %s\n", ub_bootmode_to_str(boot->boot_mode));
+            vmem_printf(cursor, "Kernel Flag    : %s\n", boot->kflag ? "True" : "False");
+            vmem_printf(cursor, "Checksum       : 0x%llx\n", boot->checksum);
+
+            vmem_print(cursor, "\nBoot Drive\n");
+            vmem_printf(cursor, "  Bus      : %u\n", boot->boot_drive.bus);
+            vmem_printf(cursor, "  Slot     : %u\n", boot->boot_drive.slot);
+            vmem_printf(cursor, "  Function : %u\n", boot->boot_drive.func);
+
+            vmem_print(cursor, "\nCPU\n");
+            vmem_printf(cursor, "  Model    : %s\n", boot->cpu_info.model);
+            vmem_printf(cursor, "  Vendor   : %s\n", boot->cpu_info.vendor);
+            vmem_printf(cursor, "  Timer    : %llu Hz (%llu GHz)\n", boot->cpu_info.timer_freq, (uint64_t)(boot->cpu_info.timer_freq / 1000 / 1000 / 1000));
+
+            vmem_print(cursor, "\nFramebuffer\n");
+            vmem_printf(cursor, "  Mode     : %s\n", ub_fbmode_to_str(boot->fb_info.mode));
+            vmem_printf(cursor, "  Address  : 0x%llx\n", boot->fb_info.addr);
+            vmem_printf(cursor, "  PhysAddr : 0x%llx\n", boot->fb_info.phys_addr);
+            vmem_printf(cursor, "  Width    : 0x%llx\n", boot->fb_info.width);
+            vmem_printf(cursor, "  Height   : 0x%llx\n", boot->fb_info.height);
+            vmem_printf(cursor, "  Pitch    : 0x%llx\n", boot->fb_info.pitch);
+            vmem_printf(cursor, "  Size     : 0x%llx\n", boot->fb_info.size);
+            vmem_printf(cursor, "  BPP      : %u\n", boot->fb_info.bpp);
+            vmem_printf(cursor, "  Format   : %s\n\n", ub_color_to_str(boot->fb_info.color_format));
+			
+			vmem_flush();
+            ub_print_features(boot->provided_features.bitmask, cursor);
+			vmem_flush();
+        } else if (memcmp(smagic, UNIBOOT_SUBMAGIC_SYSTEM_MEM_MAP, UNIBOOT_MAGIC_SIZE) == 0) {
+            uniboot_smmap* map = (uniboot_smmap*)header;
+
+            vmem_print(cursor, "\n== Memory Map ==\n");
+            vmem_printf(cursor, "Entries : 0x%llx\n", map->count);
+
+            for (uint64_t i = 0; i < map->count; i++) {
+                uniboot_smmap_entry* e = &map->entries[i];
+
+                vmem_printf(cursor, "\nEntry %llu\n", i);
+                vmem_printf(cursor, "  Type      : %s\n", ub_memtype_to_str(e->type));
+                vmem_printf(cursor, "  PhysStart : 0x%llx\n", e->phys_start);
+                vmem_printf(cursor, "  VirtStart : 0x%llx\n", e->virt_start);
+                vmem_printf(cursor, "  Size      : 0x%llx\n", e->size);
+				vmem_flush();
+            }
+        } else {
+			vmem_print(cursor, "Unknown UniBoot entry.\n");
+        }
+        header = header->next;
+    }
+
+    vmem_print(cursor, "=========== End UniBoot Dump =======\n");
+	vmem_flush();
+}

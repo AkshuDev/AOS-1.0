@@ -89,7 +89,7 @@ typedef struct {
 } blockio_pair_t;
 
 __attribute__((noreturn, naked))
-EFIAPI static void stage3_jump_to_kernel(void (*kernel)(void), uint64_t stack_top){
+EFIAPI static void stage3_jump_to_kernel(void (*kernel)(void), uint64_t stack_top, uniboot_boot_info* boot_into_core){
     __asm__ __volatile__(
         "movq %0, %%rsp\n\t"
         "movq %0, %%rbp\n\t"
@@ -102,9 +102,10 @@ EFIAPI static void stage3_jump_to_kernel(void (*kernel)(void), uint64_t stack_to
 
 	__asm__ __volatile__(
 		"jmp *%0\n\t"
+		"movq %1, %%rax\n\t"
 		:
-		: "r"(kernel)
-		: "memory"
+		: "r"(kernel), "r"(boot_into_core)
+		: "memory", "rax"
 	);
 
 	__builtin_unreachable();
@@ -531,6 +532,25 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     uniboot_boot_info* UniBootCore = (uniboot_boot_info*)UniBootPhys;
 	read_blk(&cur_drive.block_dev, mnt.header64.sysinfo_lba, UniBootCore);
 
+	aos_bool tsc_is_fine = 0;
+	aos_bool kernel_is_fine = 0;
+	switch (ambrc->boot_info.crash_verification_mode) {
+        case 0: break;
+        case 1: 
+            current_mode = (uint64_t)(tsc_start / cycles_per_ms) > 64000 ? 2 : 0;
+            break;
+        case 2:
+            current_mode = (UniBootCore->kflag == UNIBOOT_TRUE && memcmp(UniBootCore->hdr.magic, UNIBOOT_MAGIC, UNIBOOT_MAGIC_SIZE) == 0) ? 2 : 0;
+            break;
+        case 3:
+            tsc_is_fine = (uint64_t)(tsc_start / cycles_per_ms) > 64000 ? 0 : 1;
+            kernel_is_fine = !(UniBootCore->kflag == UNIBOOT_TRUE && memcmp(UniBootCore->hdr.magic, UNIBOOT_MAGIC, UNIBOOT_MAGIC_SIZE) == 0);
+            current_mode = !tsc_is_fine && !kernel_is_fine ? 2 : tsc_is_fine && kernel_is_fine ? 0 : 1;
+            break;
+        default: break;
+    }
+
+	memset(UniBootCore, 0, sizeof(uniboot_boot_info));
 	memcpy((char*)UniBootCore->hdr.magic, UNIBOOT_MAGIC, UNIBOOT_MAGIC_SIZE);
 	memcpy((char*)UniBootCore->hdr.submagic, UNIBOOT_SUBMAGIC_BOOT_INFO, UNIBOOT_MAGIC_SIZE);
 	UniBootCore->hdr.version = UNIBOOT_CVERSION;
@@ -538,14 +558,14 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 	UniBootCore->hdr.vendor = UNIBOOT_VENDOR_PHEONIX_STUDIOS;
 	UniBootCore->hdr.architecture = UNIBOOT_ARCHITECTURE_x64;
 	UniBootCore->hdr.next = NULL;
-	UniBootCore->hdr.root = &UniBootCore.hdr;
+	UniBootCore->hdr.root = &UniBootCore->hdr;
 	UniBootCore->hdr.prev = NULL;
 
 	if (EFI_ERROR(pefi_init_gop(SystemTable))) {
 		vmem_print(&cursor, "Failed to initialize UEFI GOP!\n");
 		return ENCODE_ERROR(EFI_LOAD_ERROR);
 	} else {
-		UniBootCore->fb_mode = UNIBOOT_FB_MODE_UEFI_GOP;
+		UniBootCore->fb_info.mode = UNIBOOT_FB_MODE_UEFI_GOP;
 		UniBootCore->fb_info.phys_addr = (uint64_t)GOP->Mode->FrameBufferBase;
 		UniBootCore->fb_info.addr = (uint64_t)GOP->Mode->FrameBufferBase;
 		UniBootCore->fb_info.width = GOP->Mode->Info->HorizontalResolution;
@@ -608,26 +628,8 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     UniBootCore->boot_drive = boot_drive;
     UniBootCore->boot_mode = UNIBOOT_BOOT_MODE_NORMAL;
     UniBootCore->cpu_info.timer_freq = cycles_per_ms * 1000; // in Hz
-	UniBootCore->cpu_info.model = "";
+	//UniBootCore->cpu_info.model = "";
 	cpuid_get_vendor((char*)UniBootCore->cpu_info.vendor);
-
-	aos_bool tsc_is_fine = 0;
-	aos_bool kernel_is_fine = 0;
-	switch (ambrc->boot_info.crash_verification_mode) {
-        case 0: break;
-        case 1: 
-            current_mode = (uint64_t)(tsc_start / cycles_per_ms) > 64000 ? 2 : 0;
-            break;
-        case 2:
-            current_mode = UniBootCore->kflag == UNIBOOT_TRUE ? 2 : 0;
-            break;
-        case 3:
-            tsc_is_fine = (uint64_t)(tsc_start / cycles_per_ms) > 64000 ? 0 : 1;
-            kernel_is_fine = !(UniBootCore->kflag == UNIBOOT_TRUE);
-            current_mode = !tsc_is_fine && !kernel_is_fine ? 2 : tsc_is_fine && kernel_is_fine ? 0 : 1;
-            break;
-        default: break;
-    }
 
     PBFS_Kernel_Entry os_entries[20];
     uint64_t entry_count = 0;
@@ -919,15 +921,26 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 		vmem_print(&cursor, "Failed to allocate UniBoot System Memory Map Structure!\n");
 		return ENCODE_ERROR(EFI_OUT_OF_RESOURCES);
 	}
-	uniboot_smmap_entry* map = (uniboot_smmap_entry*)(SMMAP_Phys + sizeof(uniboot_smmap));
+	memcpy((char*)m->hdr.magic, UNIBOOT_MAGIC, UNIBOOT_MAGIC_SIZE);
+	memcpy((char*)m->hdr.submagic, UNIBOOT_SUBMAGIC_SYSTEM_MEM_MAP, UNIBOOT_MAGIC_SIZE);
+	m->hdr.version = UNIBOOT_CVERSION;
+	m->hdr.revision = UNIBOOT_CREVISION;
+	m->hdr.vendor = UNIBOOT_VENDOR_PHEONIX_STUDIOS;
+	m->hdr.architecture = UNIBOOT_ARCHITECTURE_x64;
+	m->hdr.next = NULL;
+	m->hdr.root = &UniBootCore->hdr;
+	m->hdr.prev = &UniBootCore->hdr;
+
+	uniboot_smmap_entry* mmap = (uniboot_smmap_entry*)(SMMAP_Phys + sizeof(uniboot_smmap));
 	uint32_t mcount = 0;
 
-	struct bs1_e820_entry* last_entry = NULL;
+	uniboot_smmap_entry* last_entry = NULL;
 	for (UINTN off = 0; off < map_size; off += desc_size) {
 		EFI_MEMORY_DESCRIPTOR* desc = (EFI_MEMORY_DESCRIPTOR*)((uint8_t*)map + off);
-		struct bs1_e820_entry* e = &e820[e820_count];
-		e->base = desc->PhysicalStart;
-		e->len = desc->NumberOfPages * 0x1000ULL;
+		uniboot_smmap_entry* e = &mmap[mcount];
+		e->phys_start = desc->PhysicalStart;
+		e->virt_start = desc->VirtualStart;
+		e->size = desc->NumberOfPages * 0x1000ULL;
 		switch (desc->Type) {
 			case EfiConventionalMemory:
 			case EfiLoaderCode:
@@ -935,47 +948,51 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 			case EfiBootServicesCode:
 			case EfiBootServicesData:
 			case EfiPersistentMemory:
-				e->type = E820_TYPE_RAM;
+				e->type = UNIBOOT_SMMAP_TYPE_FREE;
 				break;
 
 			case EfiACPIReclaimMemory:
-				e->type = E820_TYPE_ACPI_RECLAIM;
+				e->type = UNIBOOT_SMMAP_TYPE_ACPI_RECLAIM;
 				break;
 
 			case EfiACPIMemoryNVS:
-				e->type = E820_TYPE_ACPI_NVS;
+				e->type = UNIBOOT_SMMAP_TYPE_ACPI_NVS;
 				break;
 
 			case EfiUnusableMemory:
-				e->type = E820_TYPE_BAD;
+				e->type = UNIBOOT_SMMAP_TYPE_UNUSABLE;
 				break;
 
 			default:
-				e->type = E820_TYPE_RESERVED;
+				e->type = UNIBOOT_SMMAP_TYPE_RESERVED;
 				break;
 		}
-		e->ext = 1;
 
 		if (last_entry) {
 			if (
-				e->base == (last_entry->base + last_entry->len) &&
-				e->type == last_entry->type &&
-				e->ext == last_entry->ext
+				e->phys_start == (last_entry->phys_start + last_entry->size) &&
+				e->virt_start == (last_entry->virt_start + last_entry->size) &&
+				e->type == last_entry->type
 			) {
-				last_entry->len += e->len;
+				last_entry->size += e->size;
 			} else {
 				last_entry = e;
-				e820_count++;
+				mcount++;
 			}
 		} else {
 			last_entry = e;
-			e820_count++;
+			mcount++;
 		}
 	}
 
-	e820_m->entry_count = e820_count;
+	m->count = mcount;
+	m->entries = mmap;
+
+	UniBootCore->hdr.next = (uniboot_hdr*)m;
 
 	vmem_print(&cursor, "Jumping to Kernel...\n");
+	uniboot_debug_dump((uniboot_hdr*)UniBootCore, &cursor);
+	for (;;) __asm__ volatile("hlt");
 	vmem_flush();
 	status = SystemTable->BootServices->ExitBootServices(ImageHandle, map_key);
 	while (status == ENCODE_ERROR(EFI_INVALID_PARAMETER)) {
@@ -997,7 +1014,7 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 		}
 	}
 
-	stage3_jump_to_kernel((void(*)(void))((void*)ambrc->kernel_info[final_kernel_idx].entry_point), AOS_KERNEL_STACK_TOP);
+	stage3_jump_to_kernel((void(*)(void))((void*)ambrc->kernel_info[final_kernel_idx].entry_point), AOS_KERNEL_STACK_TOP, UniBootCore);
 
     __builtin_unreachable(); // Tell GCC control never returns 
 }
