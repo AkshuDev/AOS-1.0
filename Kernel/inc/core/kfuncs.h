@@ -3,6 +3,7 @@
 #include <aos_inttypes.h>
 #include <stddef.h>
 #include <system.h>
+#include <uniboot.h>
 
 #define ALIGN_UP(x, align) (((x) + ((align) - 1)) & ~((align) - 1))
 
@@ -40,7 +41,9 @@ void kfree(void* ptr) __attribute__((used));
 void* kcalloc(size_t nmemb, size_t size) __attribute__((used));
 void* krealloc(void* ptr, size_t new_size) __attribute__((used));
 
-aos_sysinfo_t* kget_sysinfo(void) __attribute__((used));
+aos_bool kinit_bootinfo(uniboot_boot_info* boot_info) __attribute__((used));
+uniboot_boot_info* kget_sysinfo(void) __attribute__((used));
+uniboot_smmap* kget_sysmap(void) __attribute__((used));
 
 aos_bool kc_is_alpha(char c) __attribute__((used));
 aos_bool kc_is_digit(char c) __attribute__((used));

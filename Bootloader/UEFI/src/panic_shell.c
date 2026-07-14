@@ -64,11 +64,6 @@ EFIAPI static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, a
             if (!strcmp(c, "about")) {
                 vmem_print(design, "\nAOS Bootloader Panic Shell\nA place where you can debug crashes and fix them!\n");
                 valid = AOS_TRUE;
-            } else if (!strcmp(c, "acpi")) {
-                aos_sysinfo_t* sysinfo = AOS_SYS_INFO_LOC;
-                vmem_print(design, "\nUsing ACPI, Info:\n");
-                vmem_print(design, sysinfo->apic_present == 1 ? "\tAPIC: Available\n" : "\tAPIC: Unavailable\n");
-                valid = AOS_TRUE;
             }
             break;
 
@@ -80,7 +75,7 @@ EFIAPI static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, a
                 valid = AOS_TRUE;
             } else if (!strcmp(c, "cpu")) {
                 uint32_t eax, ebx, ecx, edx;
-                asm volatile (
+                __asm__ volatile (
                     "cpuid"
                     : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
                     : "a"(0), "c"(0)
@@ -97,7 +92,7 @@ EFIAPI static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, a
                 char brand[49];
                 for (int i = 0; i < 3; i++) {
                     uint32_t eax, ebx, ecx, edx;
-                    asm volatile (
+                    __asm__ volatile (
                         "cpuid"
                         : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
                         : "a"(0x80000002 + i), "c"(0)
@@ -179,7 +174,6 @@ EFIAPI static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, a
                 
                 vmem_print(design, "System Commands:\n");
                 vmem_print(design, "\tinfo     - Display AOS system information & checksums\n");
-                vmem_print(design, "\tacpi     - Show ACPI/APIC status\n");
                 vmem_print(design, "\treboot   - Restart the computer via ACPI\n");
                 vmem_print(design, "\tshutdown - Shutdown the Computer\n");
                 vmem_print(design, "\texit     - Close the panic shell\n");
@@ -202,44 +196,44 @@ EFIAPI static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, a
             break;
 
         case 'i':
-            if (!strcmp(c, "info")) {
-                aos_sysinfo_t* sysinfo = AOS_SYS_INFO_LOC;
-                vmem_printf(design, "Sysinfo:\n");
-                vmem_printf(design, "Sysinfo:\n");
-                vmem_printf(design, "--------------------------------\n");
+            // if (!strcmp(c, "info")) {
+            //     aos_sysinfo_t* sysinfo = AOS_SYS_INFO_LOC;
+            //     vmem_printf(design, "Sysinfo:\n");
+            //     vmem_printf(design, "Sysinfo:\n");
+            //     vmem_printf(design, "--------------------------------\n");
 
-                vmem_printf(design, "Boot Drive      : B=0x%02x S=%02x F=0x%02x\n", sysinfo->boot_drive.bus, sysinfo->boot_drive.slot, sysinfo->boot_drive.func);
+            //     vmem_printf(design, "Boot Drive      : B=0x%02x S=%02x F=0x%02x\n", sysinfo->boot_drive.bus, sysinfo->boot_drive.slot, sysinfo->boot_drive.func);
 
-                vmem_printf(design, "Boot Mode       : ");
-                switch (sysinfo->boot_mode) {
-                    case 0: vmem_print(design, "Normal\n"); break;
-                    case 1: vmem_print(design, "Recovery\n"); break;
-                    case 2: vmem_print(design, "Shell\n"); break;
-                    case 3: vmem_print(design, "VGA\n"); break;
-                    case 4: vmem_print(design, "VGA+Shell\n"); break;
-                    default: vmem_print(design, "Unknown\n"); break;
-                }
+            //     vmem_printf(design, "Boot Mode       : ");
+            //     switch (sysinfo->boot_mode) {
+            //         case 0: vmem_print(design, "Normal\n"); break;
+            //         case 1: vmem_print(design, "Recovery\n"); break;
+            //         case 2: vmem_print(design, "Shell\n"); break;
+            //         case 3: vmem_print(design, "VGA\n"); break;
+            //         case 4: vmem_print(design, "VGA+Shell\n"); break;
+            //         default: vmem_print(design, "Unknown\n"); break;
+            //     }
 
-                vmem_printf(design, "CPU Vendor      : %s\n", sysinfo->cpu_vendor);
-                vmem_printf(design, "CPU Signature   : 0x%08x\n", sysinfo->cpu_signature);
+            //     vmem_printf(design, "CPU Vendor      : %s\n", sysinfo->cpu_vendor);
+            //     vmem_printf(design, "CPU Signature   : 0x%08x\n", sysinfo->cpu_signature);
 
-                vmem_printf(design, "APIC Present    : %s\n", sysinfo->apic_present ? "Yes" : "No");
+            //     vmem_printf(design, "APIC Present    : %s\n", sysinfo->apic_present ? "Yes" : "No");
 
-                vmem_printf(design, "TSC Frequency   : %lu Hz\n", sysinfo->tsc_freq_hz);
+            //     vmem_printf(design, "TSC Frequency   : %lu Hz\n", sysinfo->tsc_freq_hz);
 
-                vmem_printf(design, "TSC (MHz)       : %lu MHz\n", sysinfo->tsc_freq_hz / 1000000);
+            //     vmem_printf(design, "TSC (MHz)       : %lu MHz\n", sysinfo->tsc_freq_hz / 1000000);
 
-                aos_sysinfo_t sysinfo_cpy = *sysinfo;
-                uint64_t sum = compute_checksum((uint8_t*)&sysinfo_cpy, sizeof(aos_sysinfo_t));
+            //     aos_sysinfo_t sysinfo_cpy = *sysinfo;
+            //     uint64_t sum = compute_checksum((uint8_t*)&sysinfo_cpy, sizeof(aos_sysinfo_t));
 
-                vmem_printf(design, "Checksum Stored : 0x%02llx\n", sysinfo->checksum);
-                vmem_printf(design, "Checksum Calc   : 0x%02llx\n", sum);
-                vmem_printf(design, "Checksum Valid  : %s\n", (sum == sysinfo->checksum) ? "Yes" : "No");
+            //     vmem_printf(design, "Checksum Stored : 0x%02llx\n", sysinfo->checksum);
+            //     vmem_printf(design, "Checksum Calc   : 0x%02llx\n", sum);
+            //     vmem_printf(design, "Checksum Valid  : %s\n", (sum == sysinfo->checksum) ? "Yes" : "No");
 
-                vmem_printf(design, "--------------------------------\n");
+            //     vmem_printf(design, "--------------------------------\n");
 
-                valid = AOS_TRUE;
-            }
+            //     valid = AOS_TRUE;
+            // }
             break;
 
         case 'm':
@@ -283,7 +277,7 @@ EFIAPI static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, a
 				vmem_flush();
                 valid = AOS_TRUE;
                 pefi_state.runtime_services->ResetSystem(EfiResetCold, EFI_SUCCESS, 0, NULL);
-				for (;;) asm volatile("hlt");
+				for (;;) __asm__ volatile("hlt");
             }
             break;
 
@@ -293,7 +287,7 @@ EFIAPI static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, a
 				vmem_flush();
                 valid = AOS_TRUE;
                 pefi_state.runtime_services->ResetSystem(EfiResetShutdown, EFI_SUCCESS, 0, NULL);
-				for (;;) asm volatile("hlt"); 
+				for (;;) __asm__ volatile("hlt"); 
             }
             break;
 

@@ -1,6 +1,7 @@
 #pragma once
 #include <asm.h>
 #include <system.h>
+#include <uniboot.h>
 
 #ifdef PBFS_WDRIVERS
 #undef PBFS_WDRIVERS
@@ -65,7 +66,7 @@ void serial_print(const char* str) __attribute__((used));
 int serial_is_transmit_empty(void) __attribute__((used));
 void serial_printf(const char* fmt, ...) __attribute__((used));
 
-void vmem_init(aos_sysinfo_t* sysinfo) __attribute__((used));
+void vmem_init(uniboot_boot_info* sysinfo) __attribute__((used));
 void vmem_set_cursor(uint16_t x, uint16_t y) __attribute__((used));
 void vmem_disable_cursor(void) __attribute__((used));
 void vmem_clear_screen(struct VMemDesign* design) __attribute__((used));

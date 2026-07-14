@@ -1,6 +1,6 @@
 #include <asm.h>
 #include <system.h>
-#include <e820.h>
+#include <uniboot.h>
 
 #include <inc/core/acpi.h>
 #include <inc/core/kfuncs.h>
@@ -99,7 +99,7 @@ void acpi_mdelay(uint64_t ms) {
             elapsed += (current - last);
         }
         last = current;
-        asm volatile("pause");
+        __asm__ volatile("pause");
     }
 
     spin_unlock_irqrestore(&acpi_lock, rflags);
@@ -115,15 +115,15 @@ static uint8_t acpi_checksum(void* table, uint32_t len) {
 }
 
 static struct acpi_rsdp_descriptor* acpi_find_rsdp(void) {
-	// Try E820 Map
-	struct bs1_e820* e820 = (struct bs1_e820*)(AOS_DIRECT_MAP_BASE + AOS_E820_INFO_ADDR);
-	if (e820->entry_count <= E820_MAX_ENT) {
-		for (int i = 0; i < e820->entry_count; i++) {
-			struct bs1_e820_entry* entry = &e820->entries[i];
-			if (entry->type != E820_TYPE_RESERVED && entry->type != E820_TYPE_ACPI_RECLAIM && entry->type != E820_TYPE_ACPI_NVS)
+	// Try Map
+	uniboot_smmap* m = kget_sysmap();
+	if (m) {
+		for (uint64_t i = 0; i < m->count; i++) {
+			uniboot_smmap_entry* entry = &m->entries[i];
+			if (entry->type != UNIBOOT_SMMAP_TYPE_RESERVED && entry->type != UNIBOOT_SMMAP_TYPE_ACPI_RECLAIM && entry->type != UNIBOOT_SMMAP_TYPE_ACPI_NVS)
 				continue;
-			uint64_t base = AOS_DIRECT_MAP_BASE + entry->base;
-			uint64_t limit = AOS_DIRECT_MAP_BASE + entry->base + entry->len;
+			uint64_t base = entry->virt_start;
+			uint64_t limit = entry->virt_start + entry->size;
 
 			for (uint64_t addr = base; addr < limit; addr += 16) {
 				if (memcmp((char*)addr, "RSD PTR ", 8) == 0) {
@@ -193,9 +193,6 @@ static void acpi_parse_madt(struct acpi_madt* madt) {
         ptr += len;
     }
     serial_printf("[ACPI : SMP] Total APIC IDs: %d\n", apic_id_count);
-
-    aos_sysinfo_t* sysinfo = kget_sysinfo();
-    if (sysinfo) sysinfo->apic_present = AOS_TRUE;
 }
 
 static void acpi_timer_init(struct acpi_fadt* fadt) {
@@ -351,26 +348,19 @@ static void acpi_pci_reboot(void) {
 
 static void acpi_triple_fault_reboot(void) {
     idt_ptr_t idt = {0};
-    asm volatile("lidt %0" : : "m"(idt));
-    asm volatile("int $3");
+    __asm__ volatile("lidt %0" : : "m"(idt));
+    __asm__ volatile("int $3");
 }
 
 void acpi_reboot(void) {
     smp_shutdown();
-
-	// #ifndef AOS_BOOTLOADER
-	// aos_sysinfo_t* sinfo = kget_sysinfo();
-	// if (sinfo) {
-	// 	sinfo->kernel_info = 0;
-	// }
-	// #endif
 
     if (!fadt_table) {
         acpi_8042_reboot();
         acpi_pci_reboot();
         acpi_triple_fault_reboot();
 
-        for (;;) {asm volatile("hlt");}
+        for (;;) {__asm__ volatile("hlt");}
     }
 
     uint64_t virt = avmf_alloc_virt(1, MALLOC_TYPE_KERNEL);
@@ -379,7 +369,7 @@ void acpi_reboot(void) {
         acpi_pci_reboot();
         acpi_triple_fault_reboot();
 
-        for (;;) {asm volatile("hlt");}
+        for (;;) {__asm__ volatile("hlt");}
     }
 
     if (fadt_table->reset_reg.address_space == 0) {
@@ -393,18 +383,18 @@ void acpi_reboot(void) {
     acpi_pci_reboot();
     acpi_triple_fault_reboot();
 
-    for (;;) {asm volatile("hlt");}
+    for (;;) {__asm__ volatile("hlt");}
 }
 
 void acpi_shutdown() {;
     smp_shutdown();
 	
-	asm volatile("cli");
+	__asm__ volatile("cli");
 	
 	asm_outb(0x21,0xFF);
 	asm_outb(0xA1,0xFF);
 
 	// AML Comming soon
 
-	for (;;) asm volatile("hlt");
+	for (;;) __asm__ volatile("hlt");
 }

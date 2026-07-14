@@ -238,13 +238,13 @@ static const uint8_t month_days[12] = {
 
 EFIAPI static inline uint64_t kread_cntvct(void) {
     uint64_t v;
-    asm volatile("mrs %0, cntvct_el0" : "=r"(v));
+    __asm__ volatile("mrs %0, cntvct_el0" : "=r"(v));
     return v;
 }
 
 static inline uint64_t ktimer_frequency(void) {
     uint64_t f;
-    asm volatile("mrs %0, cntfrq_el0" : "=r"(f));
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(f));
     return f;
 }
 
@@ -283,7 +283,7 @@ EFIAPI void kdelay(uint32_t ms) {
     uint64_t ticks_needed = (uint64_t)ms * ticks_per_ms;
 
     while ((kread_cntvct() - start) < ticks_needed) {
-        asm volatile("yield");
+        __asm__ volatile("yield");
     }
 }
 

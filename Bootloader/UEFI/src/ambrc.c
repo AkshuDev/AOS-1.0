@@ -36,7 +36,8 @@ struct ambrc backup_ambrc = {
         .safe_os_idx=0,
         .panic_os_idx=0,
         .crash_verification_mode=3
-    }
+    },
+	.kernel_info=(struct ambrc_kernel_info){0}
 };
 
 struct ambrc def_ambrc = {
@@ -59,7 +60,8 @@ struct ambrc def_ambrc = {
         .safe_os_idx=0,
         .panic_os_idx=0,
         .crash_verification_mode=3
-    }
+    },
+	.kernel_info=(struct ambrc_kernel_info){0}
 };
 
 static uint32_t crc32_table[256];
@@ -111,18 +113,7 @@ EFIAPI uint32_t calculate_crc32(const uint8_t *data, size_t length) {
 }
 
 EFIAPI void init_backup_ambrc(void) {
-    struct ambrc_kernel_info kinfo = {
-        .load_addr=AOS_KERNEL_ADDR,
-        .entry_point=AOS_KERNEL_ADDR,
-        .safe_mode_flags=0
-    };
-    
-    for (int i = 0; i < AMBRC_MAX_KERNELS; i++) memcpy(&backup_ambrc.kernel_info[i], &kinfo, sizeof(struct ambrc_kernel_info));
-
     backup_ambrc.crc32 = calculate_crc32((const uint8_t*)&backup_ambrc, sizeof(struct ambrc));
-
-    for (int i = 0; i < AMBRC_MAX_KERNELS; i++) memcpy(&def_ambrc.kernel_info[i], &kinfo, sizeof(struct ambrc_kernel_info));
-
     def_ambrc.crc32 = calculate_crc32((const uint8_t*)&def_ambrc, sizeof(struct ambrc));
 }
 

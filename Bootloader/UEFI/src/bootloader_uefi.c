@@ -23,6 +23,7 @@
 #include <freestanding.h>
 #include <ambrc.h>
 #include <panic_shell.h>
+#include <elf_uefi.h>
 
 #include <system.h>
 #include <uniboot.h>
@@ -50,7 +51,7 @@ static UINTN uefi_height = 0;
 EFIAPI static void cpuid_get_vendor(char *vendor_out) {
     uint32_t eax, ebx, ecx, edx;
     eax = 0;
-    asm volatile(
+    __asm__ volatile(
 		"cpuid"
 		: "+a"(eax),
 		"=b"(ebx),
@@ -83,6 +84,13 @@ EFIAPI static uint64_t compute_checksum(const uint8_t* data, uint32_t len) {
     return sum;
 }
 
+EFIAPI static aos_bool load_kernel(uint64_t* entry_out, EFI_PHYSICAL_ADDRESS* stack_base_out, uint64_t* stack_top_out, uint8_t* data, size_t size) {
+	if (try_load_elf(data, size, entry_out, stack_base_out, stack_top_out)) {
+		return AOS_TRUE;
+	}
+	return AOS_FALSE;
+}
+
 typedef struct {
     EFI_BLOCK_IO_PROTOCOL *raw;
     EFI_BLOCK_IO_PROTOCOL *partition;
@@ -101,8 +109,8 @@ EFIAPI static void stage3_jump_to_kernel(void (*kernel)(void), uint64_t stack_to
     );
 
 	__asm__ __volatile__(
-		"jmp *%0\n\t"
 		"movq %1, %%rax\n\t"
+		"jmp *%0\n\t"
 		:
 		: "r"(kernel), "r"(boot_into_core)
 		: "memory", "rax"
@@ -379,10 +387,10 @@ EFIAPI static inline uint64_t timer_read_tsc(void) {
     uint32_t low = 0;
     uint32_t high = 0;
     if (rdtscp_supported) {
-        asm volatile("rdtscp" : "=a"(low), "=d"(high) : : "rcx");
+        __asm__ volatile("rdtscp" : "=a"(low), "=d"(high) : : "rcx");
     }
     else {
-        asm volatile("lfence\n\t" "rdtsc" : "=a"(low), "=d"(high) : : "memory");
+        __asm__ volatile("lfence\n\t" "rdtsc" : "=a"(low), "=d"(high) : : "memory");
     }
     return ((uint64_t)high << 32) | low;
 }
@@ -390,7 +398,7 @@ EFIAPI static inline uint64_t timer_read_tsc(void) {
 EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
 	uint32_t eax, ebx, ecx, edx;
     eax = 0x80000001;
-    asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
     if (edx & (1 << 27)) {
         rdtscp_supported = AOS_TRUE;
     } else {
@@ -558,7 +566,7 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 	UniBootCore->hdr.vendor = UNIBOOT_VENDOR_PHEONIX_STUDIOS;
 	UniBootCore->hdr.architecture = UNIBOOT_ARCHITECTURE_x64;
 	UniBootCore->hdr.next = NULL;
-	UniBootCore->hdr.root = &UniBootCore->hdr;
+	UniBootCore->hdr.root = (uniboot_hdr*)UniBootCore;
 	UniBootCore->hdr.prev = NULL;
 
 	if (EFI_ERROR(pefi_init_gop(SystemTable))) {
@@ -617,8 +625,8 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 	UniBootCore->provided_features = (uniboot_bitmask){
 		.bitmask = (
 			UNIBOOT_BITMASK_FEATURES_PAGING | UNIBOOT_BITMASK_FEATURES_64BIT |
-			UNIBOOT_BITMASK_FEATURES_KERNEL_SPACE_PRESENT | UNIBOOT_BITMASK_FEATURES_FRAMEBUFFER_PRESENT |
-			UNIBOOT_BITMASK_FEATURES_X86F_SSE
+			UNIBOOT_BITMASK_FEATURES_KERNEL_SPACE_PRESENT |
+			UNIBOOT_BITMASK_FEATURES_FRAMEBUFFER_PRESENT | UNIBOOT_BITMASK_FEATURES_X86F_SSE
 		),
 		.next = NULL,
 		.prev = NULL,
@@ -630,6 +638,11 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     UniBootCore->cpu_info.timer_freq = cycles_per_ms * 1000; // in Hz
 	//UniBootCore->cpu_info.model = "";
 	cpuid_get_vendor((char*)UniBootCore->cpu_info.vendor);
+
+	if (EFI_ERROR(SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 16, (EFI_PHYSICAL_ADDRESS*)&UniBootCore->kernel_space))) {
+		vmem_print(&cursor, "Failed to allocate kernel space!\n");
+		return ENCODE_ERROR(EFI_OUT_OF_RESOURCES);
+	}
 
     PBFS_Kernel_Entry os_entries[20];
     uint64_t entry_count = 0;
@@ -854,16 +867,27 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
 	UINTN pages = ((uint128_to_u64(os_entries[final_kernel_idx].count) * dev.block_size) + 0x1000 - 1) / 0x1000;
 	EFI_PHYSICAL_ADDRESS load_addr = (EFI_PHYSICAL_ADDRESS)ambrc->kernel_info[final_kernel_idx].load_addr;
-    EFI_STATUS status = SystemTable->BootServices->AllocatePages(AllocateAddress, EfiLoaderCode, pages, (EFI_PHYSICAL_ADDRESS*)&load_addr);
-	if (EFI_ERROR(status)) {
-		vmem_printf(&cursor, "Failed to allocate kernel! : %llu\n", status);
+    EFI_STATUS status = SystemTable->BootServices->AllocatePages(load_addr > 0 ? AllocateAddress : AllocateAnyPages, EfiLoaderCode, pages, (EFI_PHYSICAL_ADDRESS*)&load_addr);
+	if (EFI_ERROR(status) || (ambrc->kernel_info[final_kernel_idx].load_addr > 0 && load_addr != ambrc->kernel_info[final_kernel_idx].load_addr)) {
+		vmem_printf(&cursor, "Failed to allocate kernel! (Could be caused by allocated address mismatch) : %llu\n", status);
 		return status;
 	}
 
-    if (!read_f(&cur_drive.block_dev, uint128_to_u64(os_entries[final_kernel_idx].lba), uint128_to_u32(os_entries[final_kernel_idx].count), (void*)ambrc->kernel_info[final_kernel_idx].load_addr)) {
+    if (!read_f(&cur_drive.block_dev, uint128_to_u64(os_entries[final_kernel_idx].lba), uint128_to_u64(os_entries[final_kernel_idx].count), (void*)load_addr)) {
         vmem_print(&cursor, "Failed to read kernel, Disk error!\n");
 		return ENCODE_ERROR(EFI_LOAD_ERROR);
     }
+
+	EFI_PHYSICAL_ADDRESS stack_base = AOS_KERNEL_STACK_TOP - 0x10000; // 64 KB stack
+	uint64_t stack_top = AOS_KERNEL_STACK_TOP;
+	uint64_t kentry_point = ambrc->kernel_info[final_kernel_idx].entry_point;
+	if (
+		!load_kernel(&kentry_point, &stack_base, &stack_top, (uint8_t*)load_addr, uint128_to_u64(os_entries[final_kernel_idx].count)*dev.block_size) ||
+		stack_top <= stack_base
+	) {
+		vmem_print(&cursor, "Invalid/Unsupported Kernel!\n");
+		return ENCODE_ERROR(EFI_LOAD_ERROR);
+	}
 
 	UniBootCore->kflag = UNIBOOT_TRUE;
     UniBootCore->checksum = 0;
@@ -873,11 +897,10 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 	flush_f(&cur_drive.block_dev);
 	btl_free(dev.driver_data);
 
-	EFI_PHYSICAL_ADDRESS stack_base = AOS_KERNEL_STACK_TOP - 0x10000; // 64 KB stack
 	status = SystemTable->BootServices->AllocatePages(
 		AllocateAddress,
 		EfiLoaderData,
-		16, // 16 pages = 64 KB
+		ALIGN_UP(stack_top - stack_base, 0x1000) / 0x1000,
 		&stack_base
 	);
 
@@ -991,8 +1014,6 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 	UniBootCore->hdr.next = (uniboot_hdr*)m;
 
 	vmem_print(&cursor, "Jumping to Kernel...\n");
-	uniboot_debug_dump((uniboot_hdr*)UniBootCore, &cursor);
-	for (;;) __asm__ volatile("hlt");
 	vmem_flush();
 	status = SystemTable->BootServices->ExitBootServices(ImageHandle, map_key);
 	while (status == ENCODE_ERROR(EFI_INVALID_PARAMETER)) {
@@ -1014,7 +1035,7 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 		}
 	}
 
-	stage3_jump_to_kernel((void(*)(void))((void*)ambrc->kernel_info[final_kernel_idx].entry_point), AOS_KERNEL_STACK_TOP, UniBootCore);
+	stage3_jump_to_kernel((void(*)(void))((void*)kentry_point), stack_top, UniBootCore);
 
     __builtin_unreachable(); // Tell GCC control never returns 
 }

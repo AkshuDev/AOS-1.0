@@ -50,7 +50,7 @@ static aos_bool sata_busy_wait(struct sata_hba_port* port) {
     uint64_t timeout = kget_ms_passed();
 	uint64_t ctime = kget_ms_passed();
     while ((port->tfd & (0x80 | 0x08)) && ctime - timeout < 1000) { // 1 second accurate timeout
-        asm volatile("pause");
+        __asm__ volatile("pause");
 		ctime = kget_ms_passed();
 	}
 
@@ -69,11 +69,11 @@ static aos_bool sata_port_stop(struct sata_hba_port* port) {
 
     // Wait until CR (15) and FR (14) clear
     while ((port->cmd & (1 << 15)) && kget_ms_passed() - timeout < 1000)
-        asm volatile("pause");
+        __asm__ volatile("pause");
 
     timeout = kget_ms_passed();;
     while ((port->cmd & (1 << 14)) && kget_ms_passed() - timeout < 1000)
-        asm volatile("pause");
+        __asm__ volatile("pause");
 
     return AOS_TRUE;
 }
@@ -82,11 +82,11 @@ static void sata_port_start(struct sata_hba_port* port) {
     port->cmd |= (1 << 2); // POD
     port->cmd |= (1 << 1); // SUD
 
-    asm volatile("mfence" ::: "memory");
+    __asm__ volatile("mfence" ::: "memory");
     port->cmd |= (1 << 4); // FRE
-    asm volatile("mfence" ::: "memory");
+    __asm__ volatile("mfence" ::: "memory");
     port->cmd |= (1 << 0); // ST
-    asm volatile("mfence" ::: "memory");
+    __asm__ volatile("mfence" ::: "memory");
 }
 
 static int sata_find_cmdslot(struct sata_hba_port* port) {
@@ -343,7 +343,7 @@ static aos_bool sata_exec_cmd_internal(struct sata_port_state* state, uint8_t co
 		fis->counth = (count >> 8) & 0xFF;
 	}
 
-	asm volatile("mfence" ::: "memory");
+	__asm__ volatile("mfence" ::: "memory");
 	port->is = 0xFFFFFFFF;
     port->ci |= (1 << slot);
 	__asm__ volatile("mfence" ::: "memory");
@@ -521,7 +521,7 @@ aos_bool sata_init(struct AOS_Module* m) {
                 kdelay(10); 
                 if (port->sig != 0xFFFFFFFF) break;
                 kdelay_us(360);
-				asm volatile("pause");
+				__asm__ volatile("pause");
             }
 
             serial_printf("[AHCI] Port with signature [%x] found\n", port->sig);

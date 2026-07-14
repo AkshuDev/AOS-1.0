@@ -1,6 +1,7 @@
 #include <aos_inttypes.h>
 #include <asm.h>
 #include <system.h>
+#include <uniboot.h>
 
 #include <stdarg.h>
 
@@ -379,6 +380,18 @@ void serial_printf(const char* fmt, ...) {
 }
 
 // VMem
+static enum pyrion_color_format uniboot_convert_color_to_pyrion(uniboot_cformat fmt){
+    switch (fmt) {
+        case UNIBOOT_CFORMAT_RGBA: return PYRION_COLORF_RGBA;
+        case UNIBOOT_CFORMAT_BGRA: return PYRION_COLORF_BGRA;
+        case UNIBOOT_CFORMAT_ABGR: return PYRION_COLORF_ABGR;
+        case UNIBOOT_CFORMAT_ARGB: return PYRION_COLORF_ARGB;
+        case UNIBOOT_CFORMAT_RGB: return PYRION_COLORF_RGB;
+        case UNIBOOT_CFORMAT_BGR: return PYRION_COLORF_BGR;
+        default: return PYRION_COLORF_RGBA;
+    }
+}
+
 static uint32_t pyrion_convert_color(uint8_t r, uint8_t g, uint8_t b, uint8_t a, enum pyrion_color_format fmt){
     switch (fmt) {
         case PYRION_COLORF_RGBA:
@@ -460,10 +473,10 @@ static uint32_t vmem_convert_color_to_rgba(enum VMemColors color){
     }
 }
 
-void vmem_init(aos_sysinfo_t* sysinfo) {
+void vmem_init(uniboot_boot_info* sysinfo) {
 	vmem_fbc = (FB_Cursor_t){0};
 	if (!sysinfo) {
-		vmem_mode = AOS_SYSINFO_FB_MODE_VGA;
+		vmem_mode = UNIBOOT_FB_MODE_VGA;
 		IO_VMEM_true = IO_VMEM;
 		IO_VMEM_MAX_COLS_true = IO_VMEM_MAX_COLS;
 		IO_VMEM_MAX_ROWS_true = IO_VMEM_MAX_ROWS;
@@ -472,22 +485,28 @@ void vmem_init(aos_sysinfo_t* sysinfo) {
 		return;
 	}
 
-	vmem_mode = sysinfo->fb_mode;
+	vmem_mode = sysinfo->fb_info.mode;
 	switch (vmem_mode) {
-		case AOS_SYSINFO_FB_MODE_VGA:
-		case AOS_SYSINFO_FB_MODE_FB: break;
-		default: vmem_mode = AOS_SYSINFO_FB_MODE_VGA; break;
+		case UNIBOOT_FB_MODE_VGA:
+		case UNIBOOT_FB_MODE_UEFI_GOP: break;
+		default: vmem_mode = UNIBOOT_FB_MODE_VGA; break;
 	}
 	IO_VMEM_true = AOS_DIRECT_MAP_BASE + sysinfo->fb_info.phys_addr;
 	IO_VMEM_MAX_COLS_true = sysinfo->fb_info.width;
 	IO_VMEM_MAX_ROWS_true = sysinfo->fb_info.height;
 
-	vmem_fbi = sysinfo->fb_info;
 	vmem_fbi.addr = IO_VMEM_true;
+	vmem_fbi.phys_addr = sysinfo->fb_info.phys_addr;
+	vmem_fbi.width = sysinfo->fb_info.width;
+	vmem_fbi.height = sysinfo->fb_info.height;
+	vmem_fbi.pitch = sysinfo->fb_info.pitch;
+	vmem_fbi.bpp = sysinfo->fb_info.bpp;
+	vmem_fbi.size = sysinfo->fb_info.size;
+	vmem_fbi.cformat = uniboot_convert_color_to_pyrion(sysinfo->fb_info.color_format);
 
-	pager_map_range(IO_VMEM_true, sysinfo->fb_info.phys_addr, sysinfo->fb_info.size > 0 ? sysinfo->fb_info.size : IO_VMEM_MAX_COLS_true * IO_VMEM_MAX_ROWS_true * sizeof(uint32_t), PAGE_PRESENT | PAGE_PCD | PAGE_RW);
+	pager_map_range(IO_VMEM_true, sysinfo->fb_info.phys_addr, sysinfo->fb_info.size > 0 ? sysinfo->fb_info.size : IO_VMEM_MAX_COLS_true * IO_VMEM_MAX_ROWS_true * (sysinfo->fb_info.bpp / 8), PAGE_PRESENT | PAGE_PCD | PAGE_RW);
 
-	serial_printf("[IO:VMEM] FB Mode: %u\n", sysinfo->fb_mode);
+	serial_printf("[IO:VMEM] FB Mode: %u\n", sysinfo->fb_info.mode);
 	serial_printf("[IO:VMEM] FB Addr: 0x%llx\n", sysinfo->fb_info.addr);
 	serial_printf("[IO:VMEM] FB Width: %u\n", sysinfo->fb_info.width);
 	serial_printf("[IO:VMEM] FB Height: %u\n", sysinfo->fb_info.height);
@@ -498,7 +517,7 @@ void vmem_init(aos_sysinfo_t* sysinfo) {
 void vmem_set_cursor(uint16_t x, uint16_t y) {
     uint64_t rflags = spin_lock_irqsave(&vmem_cur_lock);
 
-	if (vmem_mode == AOS_SYSINFO_FB_MODE_FB) {
+	if (vmem_mode == UNIBOOT_FB_MODE_UEFI_GOP) {
 		vmem_fbc.x = x;
 		vmem_fbc.y = y;
 
@@ -516,7 +535,7 @@ void vmem_set_cursor(uint16_t x, uint16_t y) {
 }
 
 void vmem_disable_cursor(void) {
-	if (vmem_mode != AOS_SYSINFO_FB_MODE_VGA) return;
+	if (vmem_mode != UNIBOOT_FB_MODE_VGA) return;
 
     uint64_t rflags = spin_lock_irqsave(&vmem_cur_lock);
 
@@ -529,7 +548,7 @@ void vmem_disable_cursor(void) {
 void vmem_clear_screen(struct VMemDesign* design) {
     uint64_t rflags = spin_lock_irqsave(&vmem_lock);
 
-	if (vmem_mode == AOS_SYSINFO_FB_MODE_FB) {
+	if (vmem_mode == UNIBOOT_FB_MODE_UEFI_GOP) {
 		vmem_fbc.x = design->x;
 		vmem_fbc.y = design->y;
 		vmem_fbc.bg_color = vmem_convert_color_to_rgba(design->bg);
@@ -573,7 +592,7 @@ void vmem_printc(struct VMemDesign* design, char c) {
 
     uint64_t rflags = spin_lock_irqsave(&vmemc_lock);
 
-	if (vmem_mode == AOS_SYSINFO_FB_MODE_FB) {
+	if (vmem_mode == UNIBOOT_FB_MODE_UEFI_GOP) {
 		vmem_fbc.bg_color = vmem_convert_color_to_rgba(design->bg);
 		vmem_fbc.fg_color = vmem_convert_color_to_rgba(design->fg);
 		
@@ -743,7 +762,7 @@ void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
     spin_unlock_irqrestore(&vmemf_lock, rflags);
 }
 void vmem_scroll_up(struct VMemDesign* design, uint32_t top, uint32_t bottom, uint32_t width) {
-	if (vmem_mode == AOS_SYSINFO_FB_MODE_FB) {
+	if (vmem_mode == UNIBOOT_FB_MODE_UEFI_GOP) {
 		design->x = 0;
 		design->y = 0;
 		return;
@@ -1054,12 +1073,12 @@ int is_ps2_present(void) {
 
 static void ps2_wait_input_empty(void) {
     while (asm_inb(0x64) & 0x02)
-        asm volatile("pause");
+        __asm__ volatile("pause");
 }
 
 static void ps2_wait_output_full(void) {
     while (!(asm_inb(0x64) & 0x01))
-        asm volatile("pause");
+        __asm__ volatile("pause");
 }
 
 static void keyboard_send(uint8_t val) {

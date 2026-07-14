@@ -346,7 +346,7 @@ EFIAPI static EFI_BLOCK_IO_PROTOCOL* get_physical_disk_io(void) {
 
 EFIAPI static inline uint64_t timer_read_cntvct(void) {
     uint64_t v;
-    asm volatile("mrs %0, cntvct_el0" : "=r"(v));
+    __asm__ volatile("mrs %0, cntvct_el0" : "=r"(v));
     return v;
 }
 

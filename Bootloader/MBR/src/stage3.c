@@ -58,7 +58,7 @@ uint32_t cpuid_signature(void) {
 }
 
 void enable_a20(void) {
-    asm volatile(
+    __asm__ volatile(
         "inb $0x92, %%al\n\t"
         "orb $0x02, %%al\n\t"
         "outb %%al, $0x92\n\t"
@@ -299,10 +299,10 @@ uint64_t read_tsc(void) {
     uint32_t low = 0;
     uint32_t high = 0;
     if (rdtscp_supported) {
-        asm volatile("rdtscp" : "=a"(low), "=d"(high) : : "rcx");
+        __asm__ volatile("rdtscp" : "=a"(low), "=d"(high) : : "rcx");
     }
     else {
-        asm volatile("lfence\n\t" "rdtsc" : "=a"(low), "=d"(high) : : "memory");
+        __asm__ volatile("lfence\n\t" "rdtsc" : "=a"(low), "=d"(high) : : "memory");
     }
     return ((uint64_t)high << 32) | low;
 }
@@ -337,19 +337,19 @@ void stage3(void) __attribute__((section(".entry"), used, force_align_arg_pointe
 void stage3(void) {
 	// Enable SSE
     uint64_t cr;
-    asm volatile("mov %%cr0, %0" : "=r"(cr));
+    __asm__ volatile("mov %%cr0, %0" : "=r"(cr));
     cr &= ~(1 << 2); // Clear EM (Emulation) bit
     cr |= (1 << 1); // Set MP (Monitor Coproccessor) bit
-    asm volatile("mov %0, %%cr0" : : "r"(cr));
+    __asm__ volatile("mov %0, %%cr0" : : "r"(cr));
     cr = 0;
-    asm volatile("mov %%cr4, %0" : "=r"(cr));
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr));
     cr |= (1 << 9); // Set OSFXSR (FXSAVE/FXRSTOR support)
     cr |= (1 << 10); // Set OSXMMEXCPT (Unmasked Exception support)
-    asm volatile("mov %0, %%cr4" :: "r"(cr));
+    __asm__ volatile("mov %0, %%cr4" :: "r"(cr));
 	
     uint32_t eax, ebx, ecx, edx;
     eax = 0x80000001;
-    asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
     if (edx & (1 << 27)) {
         rdtscp_supported = AOS_TRUE;
     } else {
@@ -402,7 +402,7 @@ void stage3(void) {
     if (*mem != 0xAA) {
         cursor.fg = ambrc->display.error_fg_color;
         vmem_print(&cursor, "A20 line disabled!\n");
-        for (;;) asm("hlt");
+        for (;;) __asm__("hlt");
     }
     
     struct pbfs_funcs funcs = {
@@ -728,4 +728,4 @@ void stage3(void) {
     __builtin_unreachable(); // Tell GCC control never returns 
 }
 
-asm(".globl stage3");
+__asm__(".globl stage3");

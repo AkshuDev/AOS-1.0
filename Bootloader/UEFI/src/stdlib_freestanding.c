@@ -14,7 +14,7 @@
 #include <freestanding.h>
 
 EFIAPI void* memcpy(void* dest, const void* src, size_t n) {
-    asm volatile(
+    __asm__ volatile(
         "rep movsb"
         :
         : "D"(dest), "S"(src), "c"(n)
@@ -24,7 +24,7 @@ EFIAPI void* memcpy(void* dest, const void* src, size_t n) {
 }
 
 EFIAPI void* memset(void* s, int c, size_t n) {
-    asm volatile(
+    __asm__ volatile(
         "rep stosb"
         :
         : "D"(s), "a"((uint8_t)c), "c"(n)
@@ -36,7 +36,7 @@ EFIAPI void* memset(void* s, int c, size_t n) {
 EFIAPI int memcmp(const void* s1, const void* s2, size_t n) {
     int res = 0;
 
-	asm volatile(
+	__asm__ volatile(
         "repe cmpsb\n\t"
         "je 1f\n\t"
         "movzbl -1(%%rsi), %%eax\n\t"
@@ -60,7 +60,7 @@ EFIAPI int memcmp(const void* s1, const void* s2, size_t n) {
 EFIAPI size_t strlen(const char* s) {
     size_t len;
 
-    asm volatile(
+    __asm__ volatile(
         "xor %%al, %%al\n\t"
         "mov $-1, %%rcx\n\t"
         "repne scasb\n\t"
@@ -277,10 +277,10 @@ EFIAPI static inline uint64_t ktimer_read_tsc(void) {
     uint32_t low = 0;
     uint32_t high = 0;
     if (rdtscp_supported) {
-        asm volatile("rdtscp" : "=a"(low), "=d"(high) : : "rcx");
+        __asm__ volatile("rdtscp" : "=a"(low), "=d"(high) : : "rcx");
     }
     else {
-        asm volatile("lfence\n\t" "rdtsc" : "=a"(low), "=d"(high) : : "memory");
+        __asm__ volatile("lfence\n\t" "rdtsc" : "=a"(low), "=d"(high) : : "memory");
     }
     return ((uint64_t)high << 32) | low;
 }
@@ -306,7 +306,7 @@ EFIAPI static uint64_t rtc_to_timestamp(uint32_t year, uint32_t month, uint32_t 
 EFIAPI void ktimer_calibrate(void) {
     uint32_t eax, ebx, ecx, edx;
     eax = 0x80000001;
-    asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
     if (edx & (1 << 27)) {
         rdtscp_supported = AOS_TRUE;
     } else {
@@ -324,7 +324,7 @@ EFIAPI void ktimer_calibrate(void) {
 	for (; kget_ms_passed() - timeout < 10000;) {
 		asm_outb(0x70, 0x0A);
 		if (!(asm_inb(0x71) & 0x1)) break;
-		asm volatile("pause" ::: "memory");
+		__asm__ volatile("pause" ::: "memory");
 	}
 
 	// Read CMOS RTC (0x00=s, 0x02=min, 0x04=hrs, 0x07=day, 0x08=month, 0x09=year, 0x32=century)
@@ -358,7 +358,7 @@ EFIAPI void kdelay(uint32_t ms) {
     uint64_t ticks_needed = (uint64_t)ms * tsc_ticks_per_ms;
 
     while ((ktimer_read_tsc() - start) < ticks_needed) {
-        asm volatile("pause" ::: "memory");
+        __asm__ volatile("pause" ::: "memory");
     }
 }
 

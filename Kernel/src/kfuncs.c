@@ -1,6 +1,7 @@
 #include <aos_inttypes.h>
 #include <asm.h>
 #include <system.h>
+#include <uniboot.h>
 
 #include <stddef.h>
 #include <limits.h>
@@ -19,7 +20,7 @@ void* memset(void* s, int c, size_t n) {
 	void* ptr = s;
 	if (n > 8) {
 		size_t size = remaining / 8;
-		asm volatile(
+		__asm__ volatile(
 			"rep stosq"
 			:
 			: "D"(ptr), "a"((uint64_t)c), "c"(size)
@@ -28,7 +29,7 @@ void* memset(void* s, int c, size_t n) {
 		remaining -= size * 8;
 		ptr = (void*)((uint8_t*)ptr + size * 8);
 	}
-    asm volatile(
+    __asm__ volatile(
         "rep stosb"
         :
         : "D"(ptr), "a"((uint8_t)c), "c"(remaining)
@@ -38,7 +39,7 @@ void* memset(void* s, int c, size_t n) {
 }
 
 void* memcpy(void* dest, const void* src, size_t n) {
-	asm volatile(
+	__asm__ volatile(
         "rep movsb"
         :
         : "D"(dest), "S"(src), "c"(n)
@@ -50,7 +51,7 @@ void* memcpy(void* dest, const void* src, size_t n) {
 int memcmp(const void* s1, const void* s2, size_t n) {
 	int res = 0;
 
-	asm volatile(
+	__asm__ volatile(
         "repe cmpsb\n\t"
         "je 1f\n\t"
         "movzbl -1(%%rsi), %%eax\n\t"
@@ -94,7 +95,7 @@ int strncmp(char* s1, char* s2, size_t n) {
 size_t strlen(char* s) {
     size_t len;
 
-    asm volatile(
+    __asm__ volatile(
         "xor %%al, %%al\n\t"
         "mov $-1, %%rcx\n\t"
         "repne scasb\n\t"
@@ -163,7 +164,7 @@ void spin_unlock(spinlock_t* lock) {
 
 uint64_t spin_lock_irqsave(spinlock_t* lock) {
     uint64_t flags = 0;
-    asm volatile(
+    __asm__ volatile(
         "pushfq\n\t"
         "pop %0\n\t"
         "cli"
@@ -174,7 +175,7 @@ uint64_t spin_lock_irqsave(spinlock_t* lock) {
     );
     while (__sync_lock_test_and_set(lock, 1)) {
         while (*lock) {
-            asm volatile("pause" ::: "memory"); // "Performance is Key" - Some random dude sitting on a chair programming this
+            __asm__ volatile("pause" ::: "memory"); // "Performance is Key" - Some random dude sitting on a chair programming this
         }
     }
 
@@ -183,7 +184,7 @@ uint64_t spin_lock_irqsave(spinlock_t* lock) {
 
 void spin_unlock_irqrestore(spinlock_t* lock, uint64_t flags) {
     __sync_lock_release(lock);
-    asm volatile(
+    __asm__ volatile(
         "push %0\n\t"
         "popfq"
         : :
@@ -207,10 +208,10 @@ static inline uint64_t ktimer_read_tsc(void) {
     uint32_t low = 0;
     uint32_t high = 0;
     if (rdtscp_supported) {
-        asm volatile("rdtscp" : "=a"(low), "=d"(high) : : "rcx");
+        __asm__ volatile("rdtscp" : "=a"(low), "=d"(high) : : "rcx");
     }
     else {
-        asm volatile("lfence\n\t" "rdtsc" : "=a"(low), "=d"(high) : : "memory");
+        __asm__ volatile("lfence\n\t" "rdtsc" : "=a"(low), "=d"(high) : : "memory");
     }
     return ((uint64_t)high << 32) | low;
 }
@@ -236,7 +237,7 @@ static uint64_t rtc_to_timestamp(uint32_t year, uint32_t month, uint32_t day, ui
 void ktimer_calibrate(void) {
     uint32_t eax, ebx, ecx, edx;
     eax = 0x80000001;
-    asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
     if (edx & (1 << 27)) {
         rdtscp_supported = AOS_TRUE;
     } else {
@@ -248,15 +249,15 @@ void ktimer_calibrate(void) {
     uint64_t end = ktimer_read_tsc();
     uint64_t cycles_per_10ms = end - start;
     tsc_ticks_per_ms = cycles_per_10ms / 10;
-    aos_sysinfo_t* sysinfo = (aos_sysinfo_t*)AOS_SYS_INFO_LOC;
-    sysinfo->tsc_freq_hz = tsc_ticks_per_ms * 1000;
+    uniboot_boot_info* sysinfo = kget_sysinfo();
+	if (sysinfo) sysinfo->cpu_info.timer_freq = tsc_ticks_per_ms * 1000;
 
 	// Wait for RTC to finish updating
 	uint64_t timeout = kget_ms_passed();
 	for (; kget_ms_passed() - timeout < 10000;) {
 		asm_outb(0x70, 0x0A);
 		if (!(asm_inb(0x71) & 0x1)) break;
-		asm volatile("pause" ::: "memory");
+		__asm__ volatile("pause" ::: "memory");
 	}
 
 	// Read CMOS RTC (0x00=s, 0x02=min, 0x04=hrs, 0x07=day, 0x08=month, 0x09=year, 0x32=century)
@@ -293,7 +294,7 @@ void kdelay(uint64_t ms) {
 	if (ticks_needed == 0) ticks_needed = 1;
 
     while ((ktimer_read_tsc() - start) < ticks_needed) {
-        asm volatile("pause" ::: "memory");
+        __asm__ volatile("pause" ::: "memory");
     }
 }
 
@@ -305,7 +306,7 @@ void kdelay_ns(uint64_t ns) {
 	if (ticks_needed == 0) ticks_needed = 1;
 
     while ((ktimer_read_tsc() - start) < ticks_needed) {
-        asm volatile("pause" ::: "memory");
+        __asm__ volatile("pause" ::: "memory");
     }
 }
 
@@ -317,7 +318,7 @@ void kdelay_us(uint64_t us) {
 	if (ticks_needed == 0) ticks_needed = 1;
 
     while ((ktimer_read_tsc() - start) < ticks_needed) {
-        asm volatile("pause" ::: "memory");
+        __asm__ volatile("pause" ::: "memory");
     }
 }
 
@@ -410,27 +411,187 @@ void* krealloc(void* ptr, size_t new_size) {
 }
 
 // System info
-static aos_sysinfo_t* system_info;
-static aos_bool sysinfo_checked = AOS_FALSE;
+static uniboot_boot_info* system_info;
+static uniboot_smmap* system_map;
 
-aos_sysinfo_t* kget_sysinfo(void) {
-	if (!sysinfo_checked) {
-		aos_sysinfo_t* sinfo = (aos_sysinfo_t*)(AOS_SYS_INFO_ADDR);
-		aos_sysinfo_t info = *sinfo;
-		
-		info.checksum = 0;
-		uint64_t checksum_comp = kcompute_checksum((const uint8_t*)&info, sizeof(aos_sysinfo_t));
-
-		uint8_t out = (uint8_t)(checksum_comp == sinfo->checksum);
-
-		serial_printf("[KFUNCS] Computed Checksum for SystemInfo = %llu\n\tProvided Checksum = %llu\n", checksum_comp, sinfo->checksum);
-
-		if (!out) system_info = NULL;
-		else system_info = sinfo;
-
-		sysinfo_checked = AOS_TRUE;
+static aos_bool kparse_system_info(uniboot_boot_info* info) {
+	system_info = NULL;
+	if (!info) {
+		serial_print("[KFUNCS] No Boot Info provided!\n");
+		return AOS_FALSE;
 	}
+	if (memcmp((char*)&info->hdr.submagic, UNIBOOT_SUBMAGIC_BOOT_INFO, UNIBOOT_MAGIC_SIZE) != 0) {
+		serial_printf("[KFUNCS] Invalid Magic! (Got: %s , Expected: %s)\n", (char*)&info->hdr.submagic, UNIBOOT_SUBMAGIC_BOOT_INFO);
+		return AOS_FALSE;
+	}
+
+	aos_bool parsed_bmask = AOS_FALSE;
+	aos_bool sse = AOS_FALSE;
+	aos_bool avx = AOS_FALSE;
+	aos_bool b64 = AOS_FALSE;
+	aos_bool paging = AOS_FALSE;
+	aos_bool kernel_space = AOS_FALSE;
+	aos_bool fb = AOS_FALSE;
+
+	uniboot_bitmask* bmask = info->provided_features.root;
+	while (bmask) {
+		if (bmask->bitmask & UNIBOOT_BITMASK_FEATURES_X86F_SSE) sse = AOS_TRUE;
+		if (bmask->bitmask & UNIBOOT_BITMASK_FEATURES_X86F_AVX) avx = AOS_TRUE;
+		if (bmask->bitmask & UNIBOOT_BITMASK_FEATURES_64BIT) b64 = AOS_TRUE;
+		if (bmask->bitmask & UNIBOOT_BITMASK_FEATURES_PAGING) paging = AOS_TRUE;
+		if (bmask->bitmask & UNIBOOT_BITMASK_FEATURES_KERNEL_SPACE_PRESENT) kernel_space = AOS_TRUE;
+		if (bmask->bitmask & UNIBOOT_BITMASK_FEATURES_FRAMEBUFFER_PRESENT) fb = AOS_TRUE;
+
+		parsed_bmask = AOS_TRUE;
+		bmask = bmask->next;
+	}
+
+	if (!kernel_space || !paging || !b64 || !fb || !parsed_bmask) {
+		serial_print("[KFUNCS] Feature List is not compliant to UniBoot!\n");
+		return AOS_FALSE;
+	}
+	if (!sse) {
+		uint64_t cr0, cr4;
+
+		__asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+		cr0 &= ~(1UL << 2); // EM = 0
+		cr0 |=  (1UL << 1); // MP = 1
+		__asm__ volatile("mov %0, %%cr0" :: "r"(cr0));
+
+		__asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+		cr4 |= (1UL << 9); // OSFXSR
+		cr4 |= (1UL << 10); // OSXMMEXCPT
+		__asm__ volatile("mov %0, %%cr4" :: "r"(cr4));
+	}
+	if (!avx) {
+		uint32_t eax, ebx, ecx, edx;
+
+		__asm__ volatile(
+			"cpuid"
+			:
+			"=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+			:
+			"a"(1)
+		);
+
+		aos_bool has_avx = ecx & (1 << 28);
+		aos_bool has_xsave = ecx & (1 << 26);
+		aos_bool has_osxsave = ecx & (1 << 27);
+
+		if (has_avx && has_xsave && has_osxsave) {
+			uint64_t cr4;
+			__asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+			cr4 |= (1UL << 18); // OSXSAVE
+			__asm__ volatile("mov %0, %%cr4" :: "r"(cr4));
+
+			__asm__ volatile(
+				"xgetbv"
+				: "=a"(eax), "=d"(edx)
+				: "c"(0)
+			);
+
+			eax |= 0x7;
+
+			__asm__ volatile(
+				"xsetbv"
+				:
+				: "c"(0), "a"(eax), "d"(edx)
+			);
+		}
+	}
+
+	serial_print("[KFUNCS] Parsed Boot Info!\n");
+	system_info = info;
+	return AOS_TRUE;
+}
+
+static aos_bool kparse_system_map(uniboot_smmap* info) {
+	system_map = NULL;
+	if (!info) {
+		serial_print("[KFUNCS] No SMMAP provided!\n");
+		return AOS_FALSE;
+	}
+	if (memcmp((char*)&info->hdr.submagic, UNIBOOT_SUBMAGIC_SYSTEM_MEM_MAP, UNIBOOT_MAGIC_SIZE) != 0) {
+		serial_printf("[KFUNCS] Invalid Magic! (Got: %s , Expected: %s)\n", (char*)&info->hdr.submagic, UNIBOOT_SUBMAGIC_SYSTEM_MEM_MAP);
+		return AOS_FALSE;
+	}
+	if (!info->entries || info->count < 1) {
+		serial_print("[KFUNCS] Invalid Count!\n");
+		return AOS_FALSE;
+	}
+
+	serial_print("[KFUNCS] Parsed SMMAP!\n");
+	system_map = info;
+	return AOS_TRUE;
+}
+
+aos_bool kinit_bootinfo(uniboot_boot_info* boot_info) {
+	system_info = NULL;
+	system_map = NULL;
+
+	if (!boot_info) {
+		serial_print("[KFUNCS] No Boot Info Given!\n");
+		return AOS_FALSE;
+	}
+	uniboot_hdr* hdr = boot_info->hdr.root;
+	if (!hdr) {
+		serial_print("[KFUNCS] Invalid Boot Info! (Root is not present)\n");
+		return AOS_FALSE;
+	}
+
+	while (hdr) {
+		if (memcmp(hdr->magic, UNIBOOT_MAGIC, UNIBOOT_MAGIC_SIZE) != 0) {
+			serial_print("[KFUNCS] Invalid Boot Info! (Magic Invalid)\n");
+			return AOS_FALSE;
+		}
+		if (
+			hdr->architecture != UNIBOOT_ARCHITECTURE_x64 ||
+			hdr->version > UNIBOOT_CVERSION ||
+			hdr->revision > UNIBOOT_CREVISION
+		) {
+			serial_print("[KFUNCS] Invalid Boot Info! (Not compliant to system)\n");
+			return AOS_FALSE;
+		}
+
+		if (memcmp((char*)&hdr->submagic, UNIBOOT_SUBMAGIC_BOOT_INFO, UNIBOOT_MAGIC_SIZE) == 0) {
+			if (system_info) {
+				serial_print("[KFUNCS] Invalid Boot Info!\n");
+				return AOS_FALSE;
+			}
+			if (!kparse_system_info((uniboot_boot_info*)hdr)) {
+				serial_print("[KFUNCS] Failed to parse SysInfo!\n");
+				return AOS_FALSE;
+			}
+		} else if (memcmp((char*)&hdr->submagic, UNIBOOT_SUBMAGIC_SYSTEM_MEM_MAP, UNIBOOT_MAGIC_SIZE) == 0) {
+			if (system_map) {
+				serial_print("[KFUNCS] Invalid Boot Info!\n");
+				return AOS_FALSE;
+			}
+			if (!kparse_system_map((uniboot_smmap*)hdr)) {
+				serial_print("[KFUNCS] Failed to parse SysMap!\n");
+				return AOS_FALSE;
+			}
+		}
+
+		hdr = hdr->next;
+	}
+
+	if (!system_info) {
+		serial_print("[KFUNCS] Invalid Boot Info!\n");
+		return AOS_FALSE;
+	}
+	if (!system_map) {
+		serial_print("[KFUNCS] Invalid Boot Info!\n");
+		return AOS_FALSE;
+	}
+	return AOS_TRUE;
+}
+
+uniboot_boot_info* kget_sysinfo(void) {
 	return system_info;
+}
+uniboot_smmap* kget_sysmap(void) {
+	return system_map;
 }
 
 // Pheonix STDLIB Functions

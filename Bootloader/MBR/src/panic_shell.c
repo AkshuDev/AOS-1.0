@@ -64,7 +64,7 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, aos_bool
                 valid = AOS_TRUE;
             } else if (!strcmp(c, "cpu")) {
                 uint32_t eax, ebx, ecx, edx;
-                asm volatile (
+                __asm__ volatile (
                     "cpuid"
                     : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
                     : "a"(0), "c"(0)
@@ -81,7 +81,7 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, aos_bool
                 char brand[49];
                 for (int i = 0; i < 3; i++) {
                     uint32_t eax, ebx, ecx, edx;
-                    asm volatile (
+                    __asm__ volatile (
                         "cpuid"
                         : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
                         : "a"(0x80000002 + i), "c"(0)
@@ -273,7 +273,7 @@ static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, aos_bool
             if (!strcmp(c, "shutdown")) {
                 vmem_print(design, "\nShutdown (hlt)\n");
                 valid = AOS_TRUE;
-                for (;;) asm("hlt");
+                for (;;) __asm__("hlt");
             }
             break;
 

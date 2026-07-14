@@ -1,6 +1,7 @@
 #include <aos_inttypes.h>
 #include <asm.h>
 #include <system.h>
+#include <uniboot.h>
 
 #include <inc/mm/pager.h>
 
@@ -33,7 +34,7 @@ aos_bool is_ascii(char c) {
 }
 
 static aos_bool vshell_cmd_sysinfo(void) {
-    aos_sysinfo_t* SystemInfo = kget_sysinfo();
+    uniboot_boot_info* SystemInfo = kget_sysinfo();
 	if (!SystemInfo) {
 		if (!pyrion_builtin_print(vshell_ctx, "No Information Available....\n")) return AOS_FALSE;
 		return AOS_TRUE;
@@ -42,19 +43,20 @@ static aos_bool vshell_cmd_sysinfo(void) {
     if (!pyrion_builtin_print(vshell_ctx, "Boot Information:\n")) return AOS_FALSE;
     if (!pyrion_builtin_printf(vshell_ctx, "  Boot Drive: %d\n  Boot Mode: B=0x%x S=0x%x F=0x%x\n", SystemInfo->boot_drive.bus, SystemInfo->boot_drive.slot, SystemInfo->boot_drive.func, SystemInfo->boot_mode)) return AOS_FALSE;
 
-    char cpu_vendor[14];
-    memcpy(cpu_vendor, SystemInfo->cpu_vendor, 13);
-    cpu_vendor[13] = '\0';
+    char cpu_vendor[33];
+    memcpy(cpu_vendor, SystemInfo->cpu_info.vendor, 32);
+    cpu_vendor[32] = '\0';
+
+	char cpu_model[33];
+    memcpy(cpu_model, SystemInfo->cpu_info.model, 32);
+    cpu_model[32] = '\0';
 
     if (!pyrion_builtin_print(vshell_ctx, "CPU Information:\n")) return AOS_FALSE;
-    if (!pyrion_builtin_printf(vshell_ctx, "  CPU Signature: 0x%x\n  CPU Vendor: %s\n", SystemInfo->cpu_signature, cpu_vendor)) return AOS_FALSE;
-
-    char* apic_present = SystemInfo->apic_present ? "True" : "False";
-
+    if (!pyrion_builtin_printf(vshell_ctx, "  CPU Model: %s\n  CPU Vendor: %s\n", cpu_model, cpu_vendor)) return AOS_FALSE;
+	
     if (!pyrion_builtin_print(vshell_ctx, "Additional Information:\n")) return AOS_FALSE;
-    if (!pyrion_builtin_printf(vshell_ctx, "  APIC Present: %s\n  TSC Freq. : %llu Hz\n", apic_present, SystemInfo->tsc_freq_hz)) return AOS_FALSE;
-    uint64_t ghz = SystemInfo->tsc_freq_hz / 1000000000;
-    uint64_t mhz = (SystemInfo->tsc_freq_hz % 1000000000) / 1000000;
+    uint64_t ghz = SystemInfo->cpu_info.timer_freq / 1000000000;
+    uint64_t mhz = (SystemInfo->cpu_info.timer_freq % 1000000000) / 1000000;
     if (!pyrion_builtin_printf(vshell_ctx, "  CPU Clock: %llu.%03llu GHz\n", ghz, mhz)) return AOS_FALSE;
 	return AOS_TRUE;
 }
@@ -101,7 +103,7 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
         if (last_cmd == 1) {
             if ((cmd_buf[0] == 'y' || cmd_buf[0] == 'Y') && *cmd_len == 1) {
                 vshell_running = AOS_FALSE;
-                asm("int $0x50");
+                __asm__("int $0x50");
             } else {
                 if (!pyrion_builtin_print(vshell_ctx, "\nCancelled 'exit' Command!")) return AOS_FALSE;
             }

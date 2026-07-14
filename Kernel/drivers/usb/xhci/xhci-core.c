@@ -271,7 +271,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 			destroy_n_unmap_xhci(kxc);
 			return AOS_FALSE;
 		}
-		asm volatile("pause");
+		__asm__ volatile("pause");
 	}
 
 	serial_print("[xHCI] Setting HCRST...\n");
@@ -284,7 +284,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 			destroy_n_unmap_xhci(kxc);
 			return AOS_FALSE;
 		}
-		asm volatile("pause");
+		__asm__ volatile("pause");
 	}
 	timeout = kget_ms_passed();
 	while (kxc->op_regs->usbsts & (1 << 11)) {
@@ -293,7 +293,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 			destroy_n_unmap_xhci(kxc);
 			return AOS_FALSE;
 		}
-		asm volatile("pause");
+		__asm__ volatile("pause");
 	}
 
 	serial_print("[xHCI] Allocating DCBAA...\n");
@@ -362,7 +362,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 			destroy_n_unmap_xhci(kxc);
 			return AOS_FALSE;
 		}
-		asm volatile("pause");
+		__asm__ volatile("pause");
 	}
 
 	kxc->runtime_regs->intr_reg_set[0].iman |= (1 << 1); // Enable interrupts
@@ -415,7 +415,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 			destroy_n_unmap_xhci(kxc);
 			return AOS_FALSE;
 		}
-		asm volatile("pause");
+		__asm__ volatile("pause");
 	}
 	timeout = kget_ms_passed();
 	while (!(kxc->op_regs->ports[kxc->port].portsc & (1 << 1))) {
@@ -424,7 +424,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 			destroy_n_unmap_xhci(kxc);
 			return AOS_FALSE;
 		}
-		asm volatile("pause");
+		__asm__ volatile("pause");
 	}
 
 	kxc->speed = (kxc->op_regs->ports[kxc->port].portsc >> 10) & 0xF;

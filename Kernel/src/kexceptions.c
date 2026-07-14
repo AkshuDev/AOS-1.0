@@ -45,7 +45,7 @@ void aos_system_exception_handler_init(void (*ppre_halt_system)(void)) {
 }
 
 void aos_system_exception(struct reg_trap_frame *r) {
-	asm volatile("cli");
+	__asm__ volatile("cli");
 
 	uint32_t core_idx = smp_get_current_core();
 
@@ -59,24 +59,24 @@ void aos_system_exception(struct reg_trap_frame *r) {
 		pre_halt_system();
 
 		acpi_reboot();
-        for(;;) asm volatile("hlt");
+        for(;;) __asm__ volatile("hlt");
 	} else if (lpanic == 3) {
 		serial_print("\nNESTED PANIC - STAGE 2 (Emergency reboot)\n");
 
 		acpi_reboot();
-        for(;;) asm volatile("hlt");
+        for(;;) __asm__ volatile("hlt");
 	} else if (lpanic == 4) {
 		serial_print("\nNESTED PANIC - STAGE 3 (Direct halt)\n");
-        for(;;) asm volatile("hlt");
+        for(;;) __asm__ volatile("hlt");
 	} else if (lpanic > 4) {
-        for(;;) asm volatile("hlt");
+        for(;;) __asm__ volatile("hlt");
 	}
 
-	asm volatile("cli");
+	__asm__ volatile("cli");
 
 	uint64_t cr2 = 0;
 	if (r->int_no == 14)
-		asm volatile("mov %%cr2,%0":"=r"(cr2));
+		__asm__ volatile("mov %%cr2,%0":"=r"(cr2));
 
     uint64_t num = r->int_no;
     const char* name = (num < 32) ? exception_names[num] : "Unknown Exception";

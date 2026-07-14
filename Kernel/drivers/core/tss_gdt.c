@@ -121,7 +121,7 @@ void gdt_init(void) {
 	kgdtr.limit = sizeof(kgdt)-1;
 	kgdtr.base = (uint64_t)&kgdt;
 
-	asm volatile(
+	__asm__ volatile(
 		"lgdt %0\n\t"
 		"mov %1, %%ax\n\t"
 		"mov %%ax, %%ds\n\t"
@@ -158,7 +158,7 @@ void tss_init(void) {
 
 	ktss.iomap_base = TSS_IO_BITMAP_DISABLED;
 
-	asm volatile(
+	__asm__ volatile(
 		"ltr %%ax"
 		::
 		"a"(GDT_TSS_SELECTOR)
@@ -220,7 +220,7 @@ aos_bool gdt_init_ex(gdt_t* gdt, gdtr_t* gdtr, tss_t* tss) {
 	gdtr->limit = sizeof(gdt_t)-1;
 	gdtr->base = (uint64_t)gdt;
 
-	asm volatile(
+	__asm__ volatile(
 		"lgdt %0\n\t"
 		"mov %1, %%ax\n\t"
 		"mov %%ax, %%ds\n\t"
@@ -265,7 +265,7 @@ aos_bool tss_init_ex(tss_t* tss, MemoryAllocType mtype, uint32_t flags) {
 
 	tss->iomap_base = TSS_IO_BITMAP_DISABLED;
 
-	asm volatile(
+	__asm__ volatile(
 		"ltr %%ax"
 		::
 		"a"(GDT_TSS_SELECTOR)

@@ -39,7 +39,7 @@ ASM_x86_64_FILES_O := $(patsubst $(ASM_x86_64_DIR)/%.asm,$(BUILD_DIR)/%.o,$(ASM_
 
 .PHONY: all clean
 
-all: $(BUILD_DIR) $(BIN_DIR) $(KERNEL_BIN)
+all: $(BUILD_DIR) $(BIN_DIR) $(KERNEL_ELF)
 
 $(BUILD_DIR):
 	@echo "Creating $(BUILD_DIR) ..."

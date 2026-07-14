@@ -1,5 +1,6 @@
 #include <system.h>
 #include <aos_inttypes.h>
+#include <uniboot.h>
 
 #include <inc/core/kfuncs.h>
 #include <inc/core/acpi.h>
@@ -57,7 +58,7 @@ static char g_pbfs_cwd[PBFS_MAX_PATH_LEN] = {'/', 0};
 static struct pbfs_mount g_pbfs_mnt = {0};
 
 // Define a static stack array
-void kernel_main(void) __attribute__((used, noinline, section(".start"), noreturn, force_align_arg_pointer));
+void kernel_main_true(void) __attribute__((used, noinline, noreturn));
 void aos_shell_pm(void);
 void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design);
 static void cmd_print_help(struct VMemDesign* vmem_design, int* lines);
@@ -74,10 +75,27 @@ static void make_path(char* out, const char* cwd, const char* in);
 extern uint8_t stack_top__; // From linker script
 static uintptr_t stack_top = (uintptr_t)&stack_top__;
 
+uniboot_boot_info* boot_info;
+
+__attribute__((used, noinline, section(".start"), noreturn, naked))
 void kernel_main(void) {
-    asm volatile("cld");
+	__asm__ volatile(
+		"movq %%rax, boot_info(%%rip)\n\t"
+		"cld\n\t"
+		"jmp kernel_main_true"
+		:::
+		"memory"
+	);
+}
+
+void kernel_main_true(void) { // Supports only UniBoot
     serial_init(AOS_TRUE);
     serial_print("AOS++ LOADED!\n");
+
+	if (!kinit_bootinfo(boot_info)) {
+		serial_print("Failed to validate and load Boot Info, Hanging!\n");
+		for (;;) __asm__ volatile("hlt");
+	}
 
     pager_init(); // Inits AVMF Too
 	serial_init(AOS_FALSE);
@@ -88,28 +106,15 @@ void kernel_main(void) {
 	aos_system_exception_handler_init(pre_halt_system);
     idt_init();
 
-	asm volatile (
+	__asm__ volatile (
 		"cld\n\t"
         "mov %0, %%rsp\n\t"
         "mov %%rsp, %%rbp"
-        :
-        :
+        ::
         "r"(stack_top)
         :
         "memory"
     );
-
-    // Enable SSE
-    uint64_t cr;
-    asm volatile("mov %%cr0, %0" : "=r"(cr));
-    cr &= ~(1 << 2); // Clear EM (Emulation) bit
-    cr |= (1 << 1); // Set MP (Monitor Coproccessor) bit
-    asm volatile("mov %0, %%cr0" : : "r"(cr));
-    cr = 0;
-    asm volatile("mov %%cr4, %0" : "=r"(cr));
-    cr |= (1 << 9); // Set OSFXSR (FXSAVE/FXRSTOR support)
-    cr |= (1 << 10); // Set OSXMMEXCPT (Unmasked Exception support)
-    asm volatile("mov %0, %%cr4" :: "r"(cr));
 
 	// Now safe to use local variables
     struct VMemDesign vmem_design = {
@@ -131,12 +136,12 @@ void kernel_main(void) {
 	vmem_print(&vmem_design, "Initializing Modules...\n");
     if (modules_init() == 0) {
         vmem_print(&vmem_design, "[AOS] Driver/Module Initialization failed! Shutting down!\n");
-        for (;;) asm("hlt");
+        for (;;) __asm__("hlt");
     }
 	vmem_print(&vmem_design, "Initializing PCIe...\n");
     if (pcie_init() == 0) {
         vmem_print(&vmem_design, "[AOS] PCIe Initialization failed! Shutting Down!\n");
-        for (;;) asm("hlt");
+        for (;;) __asm__("hlt");
     }
 
 	vmem_print(&vmem_design, "Initializing SMP...\n");
@@ -145,7 +150,7 @@ void kernel_main(void) {
     // Search for drives
 	vmem_print(&vmem_design, "Searching for Drives...\n");
     current_drive_works = AOS_FALSE;
-	aos_sysinfo_t* sinfo = kget_sysinfo();
+	uniboot_boot_info* sinfo = kget_sysinfo();
 	if (!sinfo) {
 		vmem_print(&vmem_design, "No System Info Found, Not Mounting any drive!\n");
 	} else {
@@ -196,7 +201,7 @@ void kernel_main(void) {
     vmem_clear_screen(&vmem_design);
     vmem_print(&vmem_design, "Welcome To AOS!\n\n");
     aos_shell_pm();
-    for (;;) asm("hlt");
+    for (;;) __asm__("hlt");
 }
 
 void aos_shell_pm(void) {
@@ -212,11 +217,11 @@ void aos_shell_pm(void) {
     int lines = 1;
 
     // Read sysinfo
-    aos_sysinfo_t* SystemInfo = kget_sysinfo();
+    uniboot_boot_info* SystemInfo = kget_sysinfo();
 	if (SystemInfo) {
 		vmem_print(&vmem_design, "SystemInfo:\n");
 		vmem_printf(&vmem_design, "Boot Drive: B=0x%x S=0x%x F=0x%x\nBoot Mode: 0x%x (%u)\n", SystemInfo->boot_drive.bus, SystemInfo->boot_drive.slot, SystemInfo->boot_drive.func, SystemInfo->boot_mode, SystemInfo->boot_mode);
-		vmem_printf(&vmem_design, "CPU Vendor: %s\n", (uintptr_t)&SystemInfo->cpu_vendor);
+		vmem_printf(&vmem_design, "CPU Vendor: %s\n", (uintptr_t)&SystemInfo->cpu_info.vendor);
 		lines += 7;
 	}
 
@@ -429,7 +434,7 @@ void cmd_start(char* program, int* lines, struct VMemDesign* vmem_design) {
 }
 
 void aos_vmss_start(void) {
-    asm("int $0x51");
+    __asm__("int $0x51");
 
     struct VMemDesign vmem_design = {
         .x = 0,
@@ -443,7 +448,7 @@ void aos_vmss_start(void) {
     vmem_clear_screen(&vmem_design);
     vmem_print(&vmem_design, "Welcome To AOS VM Safety Shell!\n\n");
     aos_shell_pm();
-    for (;;) asm("hlt");
+    for (;;) __asm__("hlt");
 }
 
 void pre_halt_system(void) {
@@ -524,4 +529,4 @@ static void make_path(char* out, const char* cwd, const char* in) {
     }
 }
 
-asm(".globl kernel_main");
+__asm__(".globl kernel_main");

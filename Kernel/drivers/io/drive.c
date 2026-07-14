@@ -1,5 +1,6 @@
 #include <aos_inttypes.h>
 #include <system.h>
+#include <uniboot.h>
 
 #include <inc/core/kfuncs.h>
 #include <inc/core/pcie.h>
@@ -32,7 +33,7 @@ aos_bool legacy_ata_write(uint64_t cidx, int port_id, uint64_t lba, uint32_t cou
 }
 
 aos_bool legacy_ata_get_block_device(uint64_t cidx, int port_id, struct block_device* out) {
-	aos_sysinfo_t* sinfo = kget_sysinfo();
+	uniboot_boot_info* sinfo = kget_sysinfo();
 	if (!sinfo) return AOS_FALSE;
 
 	ata_identity_t iden = {0};
@@ -77,8 +78,9 @@ static aos_bool set_sata(uint64_t cidx, struct drive_device* out) {
 }
 
 static aos_bool set_legacy_ata(struct drive_device* out) {
-	aos_sysinfo_t* sinfo = kget_sysinfo();
+	uniboot_boot_info* sinfo = kget_sysinfo();
 	if (!sinfo) return AOS_FALSE;
+
 	uint8_t drive = sinfo->boot_drive_raw;
 
     ata_identity_t iden = {0};
@@ -157,7 +159,7 @@ aos_bool get_available_drives(struct drive_device* out) {
     return AOS_TRUE;
 }
 
-aos_bool get_available_drives_pcie(struct drive_device* out, struct aos_sysinfo_pcie pcie) {
+aos_bool get_available_drives_pcie(struct drive_device* out, uniboot_pcie pcie) {
     serial_printf("[Drive Controller] Trying to find registered drives that match %02x:%02x.%x ...\n", pcie.bus, pcie.slot, pcie.func);
     
 	uint64_t regcount = (uint64_t)module_get_registered_module_count();

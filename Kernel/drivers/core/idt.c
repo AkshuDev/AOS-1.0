@@ -72,7 +72,7 @@ static void set_idt_entry_ist(int num, uint64_t offset, uint16_t selector, uint8
 
 void idt_load_local(void) {
     if (!idt || !idt_ptr) return;
-    asm volatile("lidt %0" : : "m"(*idt_ptr));
+    __asm__ volatile("lidt %0" : : "m"(*idt_ptr));
 }
 
 void idt_init(void) {
@@ -133,6 +133,6 @@ void idt_init(void) {
     set_idt_entry(0x50, (uint64_t)aos_int_avmss, 0x08, 0x8E);
     set_idt_entry(0x51, (uint64_t)aos_int_gpu_switch_off, 0x08, 0x8E);
 
-    asm volatile("lidt %0" : : "m"(*idt_ptr));
-    asm volatile ("sti");
+    __asm__ volatile("lidt %0" : : "m"(*idt_ptr));
+    __asm__ volatile ("sti");
 }

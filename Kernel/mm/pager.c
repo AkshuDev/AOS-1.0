@@ -1,6 +1,6 @@
 #include <aos_inttypes.h>
 #include <system.h>
-#include <e820.h>
+#include <uniboot.h>
 
 #include <inc/core/kfuncs.h>
 #include <inc/core/smp.h>
@@ -24,6 +24,17 @@ static uintptr_t first_pagemaps = (uintptr_t)((uintptr_t)AOS_KERNEL_ADDR + (uint
 
 extern uint8_t __first_pagemaps_end; // from linker script
 static uintptr_t first_pagemaps_end = (uintptr_t)((uintptr_t)AOS_KERNEL_ADDR + (uintptr_t)&__first_pagemaps_end);
+
+static inline const char* uniboot_smmap_get_type_str(uniboot_smmap_type type) {
+	switch (type) {
+		case UNIBOOT_SMMAP_TYPE_UNUSABLE: return "Unusable";
+		case UNIBOOT_SMMAP_TYPE_RESERVED: return "Reserved";
+		case UNIBOOT_SMMAP_TYPE_ACPI_NVS: return "ACPI NVS";
+		case UNIBOOT_SMMAP_TYPE_ACPI_RECLAIM: return "ACPI Reclaim";
+		case UNIBOOT_SMMAP_TYPE_FREE: return "Free";
+		default: return "Unknown";
+	}
+}
 
 static void pager_dump_mapping(struct page_table *pml4, uint64_t virt) {
     int pml4_i = (virt >> 39) & 0x1FF;
@@ -95,7 +106,7 @@ static struct page_table* alloc_page_table(uint64_t* phys_out) {
 }
 
 static void load_cr3(uint64_t pml4_phys) {
-    asm volatile ("mov %0, %%cr3" :: "r"(pml4_phys) : "memory");
+    __asm__ volatile ("mov %0, %%cr3" :: "r"(pml4_phys) : "memory");
 }
 
 static uint64_t bits_needed(uint64_t n) {
@@ -127,26 +138,30 @@ void pager_map_range(uint64_t virt, uint64_t phys, uint64_t size, uint64_t flags
 void pager_init(void) {
     pager_ready = AOS_FALSE; // Ensure
 
-    struct bs1_e820* e820 = (struct bs1_e820*)AOS_E820_INFO_ADDR;
+    uniboot_smmap* m = kget_sysmap();
+	if (!m) {
+		serial_print("[PAGER] No Boot Info Found! Hanging...\n");
+		for (;;) __asm__ volatile("hlt"); // Cannot proceed
+	}
     uint64_t max_phys_addr = 0;
     uint64_t base_phys[256];
     uint64_t limit_phys[256];
     uint64_t phys_idx = 0;
 	
-	for (int i = 0; i < e820->entry_count; i++) {
-        struct bs1_e820_entry* e = &e820->entries[i];
-        uint64_t end_addr = e->base + e->len;
+	for (int i = 0; i < m->count; i++) {
+        uniboot_smmap_entry* e = &m->entries[i];
+        uint64_t end_addr = e->phys_start + e->size;
         
-        if (e->len == 0) continue;
+        if (e->size == 0) continue;
 		if (end_addr > max_phys_addr)
             max_phys_addr = end_addr;
 
-		serial_printf("E820: %p - %p (%llu MB) (Type %s [%d])\n", e->base, end_addr, (uint64_t)((float)e->len / 1024.0f / 1024.0f), e820_get_type_str(e->type), e->type);
-        if (e->type == E820_TYPE_RAM) {
-            uint64_t start = e->base;
+		serial_printf("SMMAP: %p - %p (%llu MB) (Type %s [%d])\n", e->phys_start, end_addr, (uint64_t)((float)e->size / 1024.0f / 1024.0f), uniboot_smmap_get_type_str(e->type), e->type);
+        if (e->type == UNIBOOT_SMMAP_TYPE_FREE) {
+            uint64_t start = e->phys_start;
             // Don't use the first <Kernel End>MB!
             if (start < bss_end) {
-                if (e->len <= (bss_end - start)) continue; // Too small
+                if (e->size <= (bss_end - start)) continue; // Too small
                 start = bss_end;
             }
             base_phys[phys_idx] = start;
@@ -159,7 +174,7 @@ void pager_init(void) {
     unsigned int eax, ebx, ecx, edx;
     eax = 0x80000008;
     ecx = 0;
-    asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
     cpu_phys_bits = eax & 0xFF;
     cpu_virt_bits = (eax >> 8) & 0xFF;
 	uint64_t max_addr = (1ULL << cpu_phys_bits) - 1;
@@ -201,7 +216,7 @@ void pager_init(void) {
 
 static void invlpg(uint64_t addr) {
 	if (!pager_ready) return;
-    asm volatile("invlpg (%0)" :: "r"(addr) : "memory");
+    __asm__ volatile("invlpg (%0)" :: "r"(addr) : "memory");
 	smp_tlb(addr, AOS_FALSE);
 }
 

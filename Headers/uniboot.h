@@ -1,7 +1,7 @@
 // UniBoot - Universal Boot Protocol
 
 #pragma once
-#include <inttypes.h>
+#include <aos_inttypes.h>
 
 #define UNIBOOT_MAGIC "UNIBOOT"
 #define UNIBOOT_SUBMAGIC_BOOT_INFO "BINFO\x0\x0"
@@ -125,11 +125,13 @@ typedef struct {
 	uniboot_bitmask provided_features;
 	
 	uniboot_pcie boot_drive;
+	uint8_t boot_drive_raw;
 	uniboot_cpu_info cpu_info;
 	uniboot_fb_info fb_info;
 	uniboot_boot_mode boot_mode;
 
 	uniboot_bool kflag;
+	uint64_t kernel_space;
 
 	uint64_t checksum;
 } uniboot_boot_info;
