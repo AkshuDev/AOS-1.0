@@ -7,7 +7,8 @@
 #define UNIBOOT_SUBMAGIC_BOOT_INFO "BINFO\x0\x0"
 #define UNIBOOT_SUBMAGIC_SYSTEM_MEM_MAP "SMMAP\x0\x0"
 
-#define UNIBOOT_MAGIC_SIZE (sizeof(char) * 8)
+#define UNIBOOT_MAGIC_SIZE 8
+#define UNIBOOT_MAGIC_SIZE_STR "8"
 
 #define UNIBOOT_CVERSION 0x010000 // 1.0.0
 #define UNIBOOT_CREVISION 1
@@ -132,6 +133,8 @@ typedef struct {
 
 	uniboot_bool kflag;
 	uint64_t kernel_space;
+	uint64_t kernel_space_end;
+	uint64_t kernel_space_size;
 
 	uint64_t checksum;
 } uniboot_boot_info;

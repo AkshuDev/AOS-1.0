@@ -16,14 +16,14 @@ static uint64_t cpu_virt_bits = 0;
 
 static uint64_t first_pagemaps_ptr = 0;
 
+extern uint8_t __kstart; // from linker script
+static uintptr_t kstart = (uintptr_t)&__kstart;
+
 extern uint8_t __bss_end; // from linker script
-static uintptr_t bss_end = (uintptr_t)((uintptr_t)AOS_KERNEL_ADDR + (uintptr_t)&__bss_end);
+static uintptr_t bss_end;
 
-extern uint8_t __first_pagemaps; // from linker script
-static uintptr_t first_pagemaps = (uintptr_t)((uintptr_t)AOS_KERNEL_ADDR + (uintptr_t)&__first_pagemaps);
-
-extern uint8_t __first_pagemaps_end; // from linker script
-static uintptr_t first_pagemaps_end = (uintptr_t)((uintptr_t)AOS_KERNEL_ADDR + (uintptr_t)&__first_pagemaps_end);
+static uintptr_t first_pagemaps;
+static uintptr_t first_pagemaps_end;
 
 static inline const char* uniboot_smmap_get_type_str(uniboot_smmap_type type) {
 	switch (type) {
@@ -137,13 +137,21 @@ void pager_map_range(uint64_t virt, uint64_t phys, uint64_t size, uint64_t flags
 
 void pager_init(void) {
     pager_ready = AOS_FALSE; // Ensure
+	bss_end = (uintptr_t)((uintptr_t)kstart + (uintptr_t)&__bss_end);
 
+	uniboot_boot_info* binfo = kget_sysinfo();
     uniboot_smmap* m = kget_sysmap();
-	if (!m) {
-		serial_print("[PAGER] No Boot Info Found! Hanging...\n");
+	if (!m || !binfo) {
+		if (!m) serial_print("[PAGER] No System Memory Map Found!\n");
+		if (!binfo) serial_print("[PAGER] No Boot Info Found!\n");
+		serial_print("[PAGER] Cannot Proceed, hanging!\n");
 		for (;;) __asm__ volatile("hlt"); // Cannot proceed
 	}
-    uint64_t max_phys_addr = 0;
+    
+	first_pagemaps = (uintptr_t)binfo->kernel_space;
+	first_pagemaps_end = (uintptr_t)binfo->kernel_space_end;
+	
+	uint64_t max_phys_addr = 0;
     uint64_t base_phys[256];
     uint64_t limit_phys[256];
     uint64_t phys_idx = 0;

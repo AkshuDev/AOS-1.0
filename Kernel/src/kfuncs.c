@@ -417,11 +417,7 @@ static uniboot_smmap* system_map;
 static aos_bool kparse_system_info(uniboot_boot_info* info) {
 	system_info = NULL;
 	if (!info) {
-		serial_print("[KFUNCS] No Boot Info provided!\n");
-		return AOS_FALSE;
-	}
-	if (memcmp((char*)&info->hdr.submagic, UNIBOOT_SUBMAGIC_BOOT_INFO, UNIBOOT_MAGIC_SIZE) != 0) {
-		serial_printf("[KFUNCS] Invalid Magic! (Got: %s , Expected: %s)\n", (char*)&info->hdr.submagic, UNIBOOT_SUBMAGIC_BOOT_INFO);
+		serial_print("[KFUNCS] No Boot Info Node provided!\n");
 		return AOS_FALSE;
 	}
 
@@ -447,7 +443,7 @@ static aos_bool kparse_system_info(uniboot_boot_info* info) {
 	}
 
 	if (!kernel_space || !paging || !b64 || !fb || !parsed_bmask) {
-		serial_print("[KFUNCS] Feature List is not compliant to UniBoot!\n");
+		serial_print("[KFUNCS] Invalid Boot Info Node! (Feature List is not compliant to UniBoot)\n");
 		return AOS_FALSE;
 	}
 	if (!sse) {
@@ -500,7 +496,7 @@ static aos_bool kparse_system_info(uniboot_boot_info* info) {
 		}
 	}
 
-	serial_print("[KFUNCS] Parsed Boot Info!\n");
+	serial_print("[KFUNCS] Parsed Boot Info Node!\n");
 	system_info = info;
 	return AOS_TRUE;
 }
@@ -508,19 +504,15 @@ static aos_bool kparse_system_info(uniboot_boot_info* info) {
 static aos_bool kparse_system_map(uniboot_smmap* info) {
 	system_map = NULL;
 	if (!info) {
-		serial_print("[KFUNCS] No SMMAP provided!\n");
-		return AOS_FALSE;
-	}
-	if (memcmp((char*)&info->hdr.submagic, UNIBOOT_SUBMAGIC_SYSTEM_MEM_MAP, UNIBOOT_MAGIC_SIZE) != 0) {
-		serial_printf("[KFUNCS] Invalid Magic! (Got: %s , Expected: %s)\n", (char*)&info->hdr.submagic, UNIBOOT_SUBMAGIC_SYSTEM_MEM_MAP);
+		serial_print("[KFUNCS] No System Memory Map Node provided!\n");
 		return AOS_FALSE;
 	}
 	if (!info->entries || info->count < 1) {
-		serial_print("[KFUNCS] Invalid Count!\n");
+		serial_print("[KFUNCS] Invalid System Memory Map Node! (Entry Count is zero)\n");
 		return AOS_FALSE;
 	}
 
-	serial_print("[KFUNCS] Parsed SMMAP!\n");
+	serial_print("[KFUNCS] Parsed System Memory Map Node!\n");;
 	system_map = info;
 	return AOS_TRUE;
 }
@@ -541,7 +533,7 @@ aos_bool kinit_bootinfo(uniboot_boot_info* boot_info) {
 
 	while (hdr) {
 		if (memcmp(hdr->magic, UNIBOOT_MAGIC, UNIBOOT_MAGIC_SIZE) != 0) {
-			serial_print("[KFUNCS] Invalid Boot Info! (Magic Invalid)\n");
+			serial_printf("[KFUNCS] Invalid Boot Info! (Magic Invalid - Got: %0" UNIBOOT_MAGIC_SIZE_STR "S, Expected: %0" UNIBOOT_MAGIC_SIZE_STR "S)\n", hdr->magic, UNIBOOT_MAGIC);
 			return AOS_FALSE;
 		}
 		if (
@@ -553,22 +545,23 @@ aos_bool kinit_bootinfo(uniboot_boot_info* boot_info) {
 			return AOS_FALSE;
 		}
 
-		if (memcmp((char*)&hdr->submagic, UNIBOOT_SUBMAGIC_BOOT_INFO, UNIBOOT_MAGIC_SIZE) == 0) {
+		serial_printf("[KFUNCS] Found Node %0" UNIBOOT_MAGIC_SIZE_STR "S in Boot Info\n", hdr->submagic);
+		if (memcmp(hdr->submagic, UNIBOOT_SUBMAGIC_BOOT_INFO, UNIBOOT_MAGIC_SIZE) == 0) {
 			if (system_info) {
-				serial_print("[KFUNCS] Invalid Boot Info!\n");
+				serial_print("[KFUNCS] Invalid Boot Info! (Multiple Boot Info Nodes)\n");
 				return AOS_FALSE;
 			}
 			if (!kparse_system_info((uniboot_boot_info*)hdr)) {
-				serial_print("[KFUNCS] Failed to parse SysInfo!\n");
+				serial_print("[KFUNCS] Failed to parse Boot Info!\n");
 				return AOS_FALSE;
 			}
-		} else if (memcmp((char*)&hdr->submagic, UNIBOOT_SUBMAGIC_SYSTEM_MEM_MAP, UNIBOOT_MAGIC_SIZE) == 0) {
+		} else if (memcmp(hdr->submagic, UNIBOOT_SUBMAGIC_SYSTEM_MEM_MAP, UNIBOOT_MAGIC_SIZE) == 0) {
 			if (system_map) {
-				serial_print("[KFUNCS] Invalid Boot Info!\n");
+				serial_print("[KFUNCS] Invalid Boot Info! (Multiple System Memory Map Nodes)\n");
 				return AOS_FALSE;
 			}
 			if (!kparse_system_map((uniboot_smmap*)hdr)) {
-				serial_print("[KFUNCS] Failed to parse SysMap!\n");
+				serial_print("[KFUNCS] Failed to parse System Memory Map!\n");
 				return AOS_FALSE;
 			}
 		}
@@ -577,13 +570,14 @@ aos_bool kinit_bootinfo(uniboot_boot_info* boot_info) {
 	}
 
 	if (!system_info) {
-		serial_print("[KFUNCS] Invalid Boot Info!\n");
+		serial_print("[KFUNCS] Invalid Boot Info! (Failed to initialize Boot Info)\n");
 		return AOS_FALSE;
 	}
 	if (!system_map) {
-		serial_print("[KFUNCS] Invalid Boot Info!\n");
+		serial_print("[KFUNCS] Invalid Boot Info! (Failed to initialize System Memory Map)\n");
 		return AOS_FALSE;
 	}
+	serial_print("[KFUNCS] Loaded Boot Info and System Memory Map\n");
 	return AOS_TRUE;
 }
 
@@ -607,6 +601,10 @@ aos_bool kc_is_digit(char c) {
 
 aos_bool kc_is_alphanum(char c) {
     return kc_is_alpha(c) || kc_is_digit(c);
+}
+
+aos_bool kc_is_printable(char c) {
+	return (c >= 32 && c <= 126);
 }
 
 aos_bool kis_alpha(char* s) {
@@ -650,6 +648,13 @@ aos_bool kis_float(char* s) {
     }
 
     return has_digit;
+}
+
+aos_bool kis_printable(char* s) {
+    for (char* p = s; *p; p++) {
+        if (!kc_is_printable(*p)) return AOS_FALSE;
+    }
+    return AOS_TRUE;
 }
 
 int kchar_to_digit(char c) {

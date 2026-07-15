@@ -327,7 +327,25 @@ aos_bool pyrion_builtin_printf(struct pyrion_ctx *ctx, const char *fmt, ...) {
                     if (!pyrion_builtin_print(ctx, s ? s : "(NULL)")) return AOS_FALSE;
                     break;
                 }
-                case 'i':
+                case 'S': {
+					const char* s = va_arg(args, const char*);
+					if (!s) {
+						if (!pyrion_builtin_print(ctx, "(NULL)")) return AOS_FALSE;
+					} else {
+						for (size_t i = 0; i < width; i++) {
+							char c = s[i];
+							if (kc_is_printable(c)) {
+								if (!pyrion_builtin_printc(ctx, c)) return AOS_FALSE;
+							} else {
+								if (!pyrion_builtin_printc(ctx, '\\')) return AOS_FALSE;
+								if (!pyrion_builtin_printc(ctx, 'x')) return AOS_FALSE;
+								if (!pyrion_builtin_print_ex_integer(ctx, (uint64_t)c, 16, 2, zero_pad, 0)) return AOS_FALSE;
+							}
+						}
+					}
+                    break;
+				}
+				case 'i':
                 case 'd': { // signed 32/64-bit
                     int64_t d;
                     if (is_long >= 1) d = va_arg(args, int64_t);

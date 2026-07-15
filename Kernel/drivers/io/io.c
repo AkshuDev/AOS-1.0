@@ -327,7 +327,24 @@ void serial_printf(const char* fmt, ...) {
 					klog_msg_started = AOS_TRUE;
                     break;
                 }
-                case 'i':
+                case 'S': {
+					const char* s = va_arg(args, const char*);
+					if (!s) serial_print("(NULL)");
+					else {
+						for (size_t i = 0; i < width; i++) {
+							char c = s[i];
+							if (kc_is_printable(c)) serial_printc(c);
+							else {
+								serial_printc('\\');
+								serial_printc('x');
+								serial_print_ex_integer((uint64_t)c, 16, 2, zero_pad, 0);
+							}
+						}
+					}
+					klog_msg_started = AOS_TRUE;
+                    break;
+				}
+				case 'i':
                 case 'd': { // signed 32/64-bit
                     int64_t d;
                     if (is_long >= 1) d = va_arg(args, int64_t);
@@ -713,7 +730,24 @@ void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
                     vmem_print(design, s ? s : "(NULL)");
                     break;
                 }
-                case 'i':
+                case 'S': {
+					const char* s = va_arg(args, const char*);
+					if (!s) vmem_print(design, "(NULL)");
+					else {
+						for (size_t i = 0; i < width; i++) {
+							char c = s[i];
+							if (kc_is_printable(c)) vmem_printc(design, c);
+							else {
+								vmem_printc(design, '\\');
+								vmem_printc(design, 'x');
+								vmem_print_ex_integer(design, (uint64_t)c, 16, 2, zero_pad, 0);
+							}
+						}
+					}
+					klog_msg_started = AOS_TRUE;
+                    break;
+				}
+				case 'i':
                 case 'd': { // signed 32/64-bit
                     int64_t d;
                     if (is_long >= 1) d = va_arg(args, int64_t);

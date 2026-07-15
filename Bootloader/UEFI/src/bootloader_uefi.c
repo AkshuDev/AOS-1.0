@@ -559,8 +559,8 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     }
 
 	memset(UniBootCore, 0, sizeof(uniboot_boot_info));
-	memcpy((char*)UniBootCore->hdr.magic, UNIBOOT_MAGIC, UNIBOOT_MAGIC_SIZE);
-	memcpy((char*)UniBootCore->hdr.submagic, UNIBOOT_SUBMAGIC_BOOT_INFO, UNIBOOT_MAGIC_SIZE);
+	memcpy(UniBootCore->hdr.magic, UNIBOOT_MAGIC, UNIBOOT_MAGIC_SIZE);
+	memcpy(UniBootCore->hdr.submagic, UNIBOOT_SUBMAGIC_BOOT_INFO, UNIBOOT_MAGIC_SIZE);
 	UniBootCore->hdr.version = UNIBOOT_CVERSION;
 	UniBootCore->hdr.revision = UNIBOOT_CREVISION;
 	UniBootCore->hdr.vendor = UNIBOOT_VENDOR_PHEONIX_STUDIOS;
@@ -639,10 +639,15 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 	//UniBootCore->cpu_info.model = "";
 	cpuid_get_vendor((char*)UniBootCore->cpu_info.vendor);
 
-	if (EFI_ERROR(SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 16, (EFI_PHYSICAL_ADDRESS*)&UniBootCore->kernel_space))) {
+	EFI_PHYSICAL_ADDRESS kernel_space_addr = 0;
+	if (EFI_ERROR(SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 8, (EFI_PHYSICAL_ADDRESS*)&kernel_space_addr))) {
 		vmem_print(&cursor, "Failed to allocate kernel space!\n");
 		return ENCODE_ERROR(EFI_OUT_OF_RESOURCES);
 	}
+	UniBootCore->kernel_space = (uint64_t)kernel_space_addr;
+	UniBootCore->kernel_space_end = UniBootCore->kernel_space + (8 * 0x1000);
+	UniBootCore->kernel_space_size = 8 * 0x1000;
+	memset((uint8_t*)UniBootCore->kernel_space, 0, UniBootCore->kernel_space_size);
 
     PBFS_Kernel_Entry os_entries[20];
     uint64_t entry_count = 0;
@@ -944,8 +949,8 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 		vmem_print(&cursor, "Failed to allocate UniBoot System Memory Map Structure!\n");
 		return ENCODE_ERROR(EFI_OUT_OF_RESOURCES);
 	}
-	memcpy((char*)m->hdr.magic, UNIBOOT_MAGIC, UNIBOOT_MAGIC_SIZE);
-	memcpy((char*)m->hdr.submagic, UNIBOOT_SUBMAGIC_SYSTEM_MEM_MAP, UNIBOOT_MAGIC_SIZE);
+	memcpy(m->hdr.magic, UNIBOOT_MAGIC, UNIBOOT_MAGIC_SIZE);
+	memcpy(m->hdr.submagic, UNIBOOT_SUBMAGIC_SYSTEM_MEM_MAP, UNIBOOT_MAGIC_SIZE);
 	m->hdr.version = UNIBOOT_CVERSION;
 	m->hdr.revision = UNIBOOT_CREVISION;
 	m->hdr.vendor = UNIBOOT_VENDOR_PHEONIX_STUDIOS;
@@ -994,7 +999,7 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 		if (last_entry) {
 			if (
 				e->phys_start == (last_entry->phys_start + last_entry->size) &&
-				e->virt_start == (last_entry->virt_start + last_entry->size) &&
+				(e->virt_start == (last_entry->virt_start + last_entry->size) || (e->virt_start == 0 && last_entry->virt_start == 0)) &&
 				e->type == last_entry->type
 			) {
 				last_entry->size += e->size;

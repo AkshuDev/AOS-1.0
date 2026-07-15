@@ -619,7 +619,6 @@ EFIAPI void uniboot_debug_dump(uniboot_hdr* header_r, struct VMemDesign* cursor)
 
     vmem_print(cursor, "=========== UniBoot Dump ===========\n");
     while (header) {
-		char* smagic = (char*)&header->submagic;
         vmem_print(cursor, "-----------------------------------\n");
         
 		vmem_print(cursor, "Magic      : ");
@@ -627,7 +626,7 @@ EFIAPI void uniboot_debug_dump(uniboot_hdr* header_r, struct VMemDesign* cursor)
 		vmem_printc(cursor, '\n');
         
 		vmem_print(cursor, "SubMagic   : ");
-		ub_print_full_string(smagic, UNIBOOT_MAGIC_SIZE, cursor);
+		ub_print_full_string(header->submagic, UNIBOOT_MAGIC_SIZE, cursor);
 		vmem_printc(cursor, '\n');
 		
         vmem_printf(cursor, "Version    : 0x%llx\n", header->version);
@@ -636,7 +635,7 @@ EFIAPI void uniboot_debug_dump(uniboot_hdr* header_r, struct VMemDesign* cursor)
         vmem_printf(cursor, "Arch       : %s\n", ub_arch_to_str(header->architecture));
 		vmem_flush();
 
-        if (memcmp(smagic, UNIBOOT_SUBMAGIC_BOOT_INFO, UNIBOOT_MAGIC_SIZE) == 0) {
+        if (memcmp(header->submagic, UNIBOOT_SUBMAGIC_BOOT_INFO, UNIBOOT_MAGIC_SIZE) == 0) {
             uniboot_boot_info* boot = (uniboot_boot_info*)header;
 
             vmem_print(cursor, "\n== Boot Info ==\n");
@@ -668,7 +667,7 @@ EFIAPI void uniboot_debug_dump(uniboot_hdr* header_r, struct VMemDesign* cursor)
 			vmem_flush();
             ub_print_features(boot->provided_features.bitmask, cursor);
 			vmem_flush();
-        } else if (memcmp(smagic, UNIBOOT_SUBMAGIC_SYSTEM_MEM_MAP, UNIBOOT_MAGIC_SIZE) == 0) {
+        } else if (memcmp(header->submagic, UNIBOOT_SUBMAGIC_SYSTEM_MEM_MAP, UNIBOOT_MAGIC_SIZE) == 0) {
             uniboot_smmap* map = (uniboot_smmap*)header;
 
             vmem_print(cursor, "\n== Memory Map ==\n");

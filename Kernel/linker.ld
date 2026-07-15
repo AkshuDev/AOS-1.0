@@ -4,6 +4,7 @@ SECTIONS
 {
     /* Force the very start of the kernel at VIRTUAL ADDR 0x100000 */
     . = 0x100000;
+	__kstart = .;
 
     /* Kernel entry section */
     .start : {
@@ -32,11 +33,6 @@ SECTIONS
         stack_bottom__ = .;
         . += 0x10000; /* 64KB stack */
         stack_top__ = .;
-
-		. = ALIGN(16);
-		__first_pagemaps = .;
-		. += 0x8000;
-		__first_pagemaps_end = .;
 
         __bss_end = .;
     }
