@@ -92,6 +92,8 @@ void kernel_main_true(void) { // Supports only UniBoot
     serial_init(AOS_TRUE);
     serial_print("AOS++ LOADED!\n");
 
+	serial_printf("Loaded and Parsing Boot Info at %p\n", boot_info);
+
 	if (!kinit_bootinfo(boot_info)) {
 		serial_print("Failed to validate and load Boot Info, Hanging!\n");
 		for (;;) __asm__ volatile("hlt");

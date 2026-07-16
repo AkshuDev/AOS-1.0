@@ -21,13 +21,18 @@ typedef uint64_t phys_addr_t;
 typedef uint64_t virt_addr_t;
 
 struct page_table {
-	spinlock_t lock;
-    page_entry_t entries[64];
+    page_entry_t entries[512];
 } __attribute__((aligned(4096)));
+
+struct x_page_table {
+	uint64_t table_phys;
+	spinlock_t lock;
+	volatile struct page_table* table;
+};
 
 void pager_map_range(uint64_t virt, uint64_t phys, uint64_t size, uint64_t flags) __attribute__((used));
 void pager_init() __attribute__((used));
 struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags) __attribute__((used));
 void pager_destroy_table(int level) __attribute__((used));
 void pager_unmap(uint64_t virt) __attribute__((used));
-void pager_load(struct page_table* pml4) __attribute__((used));
+void pager_load(struct x_page_table* pml4) __attribute__((used));

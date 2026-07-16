@@ -940,7 +940,8 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
 	vmem_print(&cursor, "Initializing UniBoot System Memory Map...\n");
 	EFI_PHYSICAL_ADDRESS SMMAP_Phys = 0;
-	if (EFI_ERROR(SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, (ALIGN_UP(sizeof(uniboot_smmap) + (sizeof(uniboot_smmap_entry)*(map_size / desc_size)), 0x1000))/0x1000, &SMMAP_Phys))) {
+	uint64_t smmap_size = sizeof(uniboot_smmap) + ((sizeof(uniboot_smmap_entry) * 5)*(map_size / desc_size));
+	if (EFI_ERROR(SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, (ALIGN_UP(smmap_size, 0x1000))/0x1000, &SMMAP_Phys))) {
 		vmem_print(&cursor, "Failed to allocate UniBoot System Memory Map Structure!\n");
 		return ENCODE_ERROR(EFI_OUT_OF_RESOURCES);
 	}
@@ -994,6 +995,135 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 			default:
 				e->type = UNIBOOT_SMMAP_TYPE_RESERVED;
 				break;
+		}
+
+		if (
+			(
+				((uint64_t)UniBootCore == e->phys_start && (uint64_t)UniBootCore + sizeof(uniboot_boot_info) == e->phys_start + e->size) ||
+				((uint64_t)UniBootCore == e->virt_start && (uint64_t)UniBootCore + sizeof(uniboot_boot_info) == e->virt_start + e->size)
+			) ||
+			(
+				((uint64_t)m == e->phys_start && (uint64_t)m + smmap_size == e->phys_start + e->size) ||
+				((uint64_t)m == e->virt_start && (uint64_t)m + smmap_size == e->virt_start + e->size)
+			)
+		) {
+			e->type = UNIBOOT_SMMAP_TYPE_UNIBOOT_STRUCTS; // Perfect Fit
+		} else if (
+			((uint64_t)UniBootCore > e->phys_start && (uint64_t)UniBootCore + sizeof(uniboot_boot_info) <= e->phys_start + e->size) ||
+			((uint64_t)UniBootCore > e->virt_start && (uint64_t)UniBootCore + sizeof(uniboot_boot_info) <= e->virt_start + e->size)
+		) {
+			uint64_t desc_start = desc->PhysicalStart;
+			uint64_t desc_end = desc_start + e->size;
+
+			uint64_t ub_start = (uint64_t)UniBootCore;
+			uint64_t ub_end = ub_start + sizeof(uniboot_boot_info);
+
+			uint64_t overlap_start = desc_start > ub_start ? desc_start : ub_start;
+			uint64_t overlap_end = desc_end < ub_end ? desc_end : ub_end;
+
+			if (desc_start < overlap_start) {
+				if (!last_entry) {
+					mmap[mcount++] = (uniboot_smmap_entry){
+						.phys_start = desc_start,
+						.virt_start = desc->VirtualStart,
+						.size = overlap_start - desc_start,
+						.type = e->type
+					};
+				} else {
+					if (
+						e->phys_start == (last_entry->phys_start + last_entry->size) &&
+						(e->virt_start == (last_entry->virt_start + last_entry->size) || (e->virt_start == 0 && last_entry->virt_start == 0)) &&
+						e->type == last_entry->type
+					) {
+						last_entry->size += overlap_start - desc_start;
+					} else {
+						mmap[mcount++] = (uniboot_smmap_entry){
+							.phys_start = desc_start,
+							.virt_start = desc->VirtualStart,
+							.size = overlap_start - desc_start,
+							.type = e->type
+						};
+					}
+				}
+			}
+			
+			uint64_t idx = mcount++;
+			mmap[idx] = (uniboot_smmap_entry){
+    			.phys_start = overlap_start,
+				.virt_start = 0,
+				.size = overlap_end - overlap_start,
+				.type = UNIBOOT_SMMAP_TYPE_UNIBOOT_STRUCTS
+			};
+
+			if (overlap_end < desc_end) {
+				idx = mcount++;
+				mmap[idx] = (uniboot_smmap_entry){
+					.phys_start = overlap_end,
+					.virt_start = 0,
+					.size = desc_end - overlap_end,
+					.type = e->type
+				};
+			}
+			last_entry = &mmap[idx];
+			continue;
+		} else if (
+			((uint64_t)m > e->phys_start && (uint64_t)m + smmap_size <= e->phys_start + e->size) ||
+			((uint64_t)m > e->virt_start && (uint64_t)m + smmap_size <= e->virt_start + e->size)
+		) {
+
+			uint64_t desc_start = desc->PhysicalStart;
+			uint64_t desc_end = desc_start + e->size;
+
+			uint64_t ub_start = (uint64_t)m;
+			uint64_t ub_end = ub_start + smmap_size;
+
+			uint64_t overlap_start = desc_start > ub_start ? desc_start : ub_start;
+			uint64_t overlap_end = desc_end < ub_end ? desc_end : ub_end;
+
+			if (desc_start < overlap_start) {
+				if (!last_entry) {
+					mmap[mcount++] = (uniboot_smmap_entry){
+						.phys_start = desc_start,
+						.virt_start = desc->VirtualStart,
+						.size = overlap_start - desc_start,
+						.type = e->type
+					};
+				} else {
+					if (
+						e->phys_start == (last_entry->phys_start + last_entry->size) &&
+						(e->virt_start == (last_entry->virt_start + last_entry->size) || (e->virt_start == 0 && last_entry->virt_start == 0)) &&
+						e->type == last_entry->type
+					) {
+						last_entry->size += overlap_start - desc_start;
+					} else {
+						mmap[mcount++] = (uniboot_smmap_entry){
+							.phys_start = desc_start,
+							.virt_start = desc->VirtualStart,
+							.size = overlap_start - desc_start,
+							.type = e->type
+						};
+					}
+				}
+			}
+			uint64_t idx = mcount++;
+			mmap[idx] = (uniboot_smmap_entry){
+    			.phys_start = overlap_start,
+				.virt_start = 0,
+				.size = overlap_end - overlap_start,
+				.type = UNIBOOT_SMMAP_TYPE_UNIBOOT_STRUCTS
+			};
+
+			if (overlap_end < desc_end) {
+				idx = mcount++;
+				mmap[idx] = (uniboot_smmap_entry){
+					.phys_start = overlap_end,
+					.virt_start = 0,
+					.size = desc_end - overlap_end,
+					.type = e->type
+				};
+			}
+			last_entry = &mmap[idx];
+			continue;
 		}
 
 		if (last_entry) {

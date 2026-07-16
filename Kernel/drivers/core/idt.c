@@ -135,4 +135,6 @@ void idt_init(void) {
 
     __asm__ volatile("lidt %0" : : "m"(*idt_ptr));
     __asm__ volatile ("sti");
+
+	serial_print("[IDT] Initialized\n");
 }
