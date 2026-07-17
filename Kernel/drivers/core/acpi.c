@@ -116,15 +116,17 @@ static uint8_t acpi_checksum(void* table, uint32_t len) {
 
 static struct acpi_rsdp_descriptor* acpi_find_rsdp(void) {
 	// Try Map
+	serial_print("[ACPI] Searching for RSDP using UniBoot System Memory Map...\n");
 	uniboot_smmap* m = kget_sysmap();
 	if (m) {
 		for (uint64_t i = 0; i < m->count; i++) {
 			uniboot_smmap_entry* entry = &m->entries[i];
 			if (entry->type != UNIBOOT_SMMAP_TYPE_RESERVED && entry->type != UNIBOOT_SMMAP_TYPE_ACPI_RECLAIM && entry->type != UNIBOOT_SMMAP_TYPE_ACPI_NVS)
 				continue;
-			uint64_t base = entry->virt_start;
-			uint64_t limit = entry->virt_start + entry->size;
+			uint64_t base = AOS_DIRECT_MAP_BASE + entry->phys_start;
+			uint64_t limit = AOS_DIRECT_MAP_BASE + entry->phys_start + entry->size;
 
+			serial_printf("[KFUNCS] Checking Entry: %llx-%llx\n", base, limit);
 			for (uint64_t addr = base; addr < limit; addr += 16) {
 				if (memcmp((char*)addr, "RSD PTR ", 8) == 0) {
 					struct acpi_rsdp_descriptor* rsdp = (struct acpi_rsdp_descriptor*)addr;
@@ -141,6 +143,7 @@ static struct acpi_rsdp_descriptor* acpi_find_rsdp(void) {
 	}
 
 	serial_print("[ACPI] Failed to find RSDP within E820 Map, Trying manual!\n");
+	serial_print("[ACPI] Searching for RSDP using EBDA Segment...\n");
     // fallbacks, try ebda first
     uint16_t ebda_seg = *(uint16_t*)(AOS_DIRECT_MAP_BASE + EBDA_SEG_PTR); // 0x40E holds seg of ebda
     uint32_t ebda = ((uint32_t)ebda_seg) << 4;
@@ -158,6 +161,7 @@ static struct acpi_rsdp_descriptor* acpi_find_rsdp(void) {
     }
 
     // check bios area
+	serial_print("[ACPI] Searching for RSDP in BIOS area...\n");
     for (uint64_t addr = AOS_DIRECT_MAP_BASE + 0xE0000; addr < AOS_DIRECT_MAP_BASE + 0x100000; addr += 16) {
         if (memcmp((char*)addr, "RSD PTR ", 8) == 0) {
             struct acpi_rsdp_descriptor* rsdp = (struct acpi_rsdp_descriptor*)addr;
@@ -314,8 +318,8 @@ void acpi_init(void) {
 
     struct acpi_rsdp_descriptor *rsdp = acpi_find_rsdp();
     if (!rsdp) {
-        serial_print("[ACPI] RSDP Descriptor Not Found!\n");
-        return;
+        serial_print("[ACPI] RSDP Descriptor Not Found, Hanging!\n");
+        for (;;) __asm__ volatile("hlt");
     }
 
     serial_printf("[ACPI] RSDP Descriptor found at %p\n", (uint64_t)rsdp);

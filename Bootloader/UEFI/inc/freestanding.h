@@ -9,6 +9,7 @@
 #include <inc/drivers/io/io.h>
 
 #define ALIGN_UP(x, align) (((x) + ((align) - 1)) & ~((align) - 1))
+#define ALIGN_DOWN(x, align) ((x) & ~((align) - 1))
 
 #define UEFI_BOX_DOUBLE_TOP_RIGHT u"\u2554"
 #define UEFI_BOX_DOUBLE_TOP_LEFT u"\u2557"

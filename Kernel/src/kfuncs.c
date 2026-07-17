@@ -760,3 +760,102 @@ double kstr_to_double(const char* str) {
 
     return result * sign;
 }
+
+char* ki64_to_str(int64_t v, char* buf, int base, aos_bool caps) {
+    char* p = buf;
+    aos_bool neg = AOS_FALSE;
+
+    uint64_t val;
+    if (base == 10 && v < 0) {
+        neg = AOS_TRUE;
+        val = (uint64_t)(-(v + 1)) + 1;
+    } else {
+        val = (uint64_t)v;
+    }
+
+    do {
+        uint64_t digit = val % base;
+        *p++ = (digit < 10) ? ('0' + digit) : ((caps ? 'A' : 'a')  + digit - 10);
+        val /= base;
+    } while (val);
+
+    if (neg)
+        *p++ = '-';
+
+    *p = '\0';
+
+    char* start = buf;
+    char* end = p - 1;
+
+    while (start < end) {
+        char tmp = *start;
+        *start++ = *end;
+        *end-- = tmp;
+    }
+
+    return buf;
+}
+
+char* ku64_to_str(uint64_t v, char* buf, int base, aos_bool caps) {
+    char* p = buf;
+
+    uint64_t val = (uint64_t)v;
+
+    do {
+        uint64_t digit = val % base;
+        *p++ = (digit < 10) ? ('0' + digit) : ((caps ? 'A' : 'a') + digit - 10);
+        val /= base;
+    } while (val);
+
+    *p = '\0';
+
+    char* start = buf;
+    char* end = p - 1;
+
+    while (start < end) {
+        char tmp = *start;
+        *start++ = *end;
+        *end-- = tmp;
+    }
+
+    return buf;
+}
+
+char* kdouble_to_str(double v, char* buf, int precision) {
+    if (!buf) return 0;
+
+    if (precision < 0) precision = 6;
+
+    char* p = buf;
+
+    if (v < 0) {
+        *p++ = '-';
+        v = -v;
+    }
+
+    int64_t int_part = (int64_t)v;
+    double frac = v - (double)int_part;
+
+    char tmp[32];
+    char* t = tmp;
+
+    do {
+        *t++ = '0' + (int_part % 10);
+        int_part /= 10;
+    } while (int_part);
+
+    while (t > tmp)
+        *p++ = *--t;
+
+    *p++ = '.';
+
+    for (int i = 0; i < precision; i++) {
+        frac *= 10.0;
+        int digit = (int)frac;
+        *p++ = '0' + digit;
+        frac -= digit;
+    }
+
+    *p = 0;
+    return buf;
+}

@@ -28,7 +28,7 @@ prot_mode:
     mov ss, ax
 
     ; Use the Page Tables provided by the BSP
-    mov eax, [0x500] ;Present at 0x500
+    mov eax, [0x500] ; Present at 0x500
     mov cr3, eax
 
     ; Enable PAE
@@ -65,33 +65,20 @@ long_mode_entry:
     mov es, ax
     mov ss, ax
 
-    mov rsp, [0x510] ; Set stack before for CPU, but later refresh it to avoid memory issues
-
-    ; Load TSS
-    mov rbx, [0x510]
-
-    mov rax, 0x8000 + (ap_tss - smp_trampoline_start)
-    mov rcx, 0x8000 + (gdt64 - smp_trampoline_start) + 24
-
-    mov [rax + 4], rbx ; RSP0
-
-    mov word [rcx + 2], ax
-    shr rax, 16
-    mov byte [rcx + 4], al
-    shr rax, 8
-    mov byte [rcx + 7], al
-    shr rax, 8
-    mov dword [rcx + 8], eax
-
-    mov dword [rcx + 12], 0
-
-    mov ax, 0x18
-    ltr ax
-
-    xor rax, rax
-    xor rbx, rbx
+   	xor rax, rax
     xor rcx, rcx
     xor rdx, rdx
+    xor rbx, rbx
+	xor rsi, rsi
+	xor rdi, rdi
+	xor r8, r8
+	xor r9, r9
+	xor r10, r10
+	xor r11, r11
+	xor r12, r12
+	xor r13, r13
+	xor r14, r14
+	xor r15, r15
 
     ; Load the stack and jump into the Kernel
     mov rsp, [0x510] ; Stack provided at 0x510
@@ -114,36 +101,10 @@ gdt64:
     dq 0x0000000000000000 ; NULL
     dq 0x00AF9A000000FFFF ; 64-bit CODE (0x08)
     dq 0x00AF92000000FFFF ; 64-bit DATA (0x10)
-    dq 0x0000890000006700 ; TSS Entry 1
-    dq 0x0000000000000000 ; TSS Entry 2
 gdt64_end:
 
 gdt64_descriptor:
     dw gdt64_end - gdt64 - 1
-    dq 0 ; To be patched at runtime
-
-ALIGN 16
-ap_tss:
-    dd 0 ; Reserved
-    dq 0 ; RSP0 (will be patched during runtime)
-    dq 0 ; RSP1
-    dq 0 ; RSP2
-    dq 0 ; Reserved
-    dq 0 ; IST1
-    dq 0 ; IST2
-    dq 0 ; IST3
-    dq 0 ; IST4
-    dq 0 ; IST5
-    dq 0 ; IST6
-    dq 0 ; IST7
-    dq 0 ; Reserved
-    dd 0 ; Reserved
-    dw 0 ; IO Map Base
-ap_tss_end:
-
-ALIGN 16
-tss64_desc:
-    dq ap_tss_end - ap_tss - 1
     dq 0 ; To be patched at runtime
 
 smp_trampoline_end:

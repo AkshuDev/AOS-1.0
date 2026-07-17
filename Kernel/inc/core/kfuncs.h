@@ -6,6 +6,7 @@
 #include <uniboot.h>
 
 #define ALIGN_UP(x, align) (((x) + ((align) - 1)) & ~((align) - 1))
+#define ALIGN_DOWN(x, align) ((x) & ~((align) - 1))
 
 typedef volatile int spinlock_t;
 
@@ -58,3 +59,7 @@ int kchar_to_digit(char c) __attribute__((used));
 uint64_t kstr_to_u64(const char* str, int base) __attribute__((used));
 int64_t kstr_to_i64(const char* str, int base) __attribute__((used));
 double kstr_to_double(const char* str) __attribute__((used));
+double kstr_to_double(const char* str) __attribute__((used));
+char* ki64_to_str(int64_t v, char* buf, int base, aos_bool caps) __attribute__((used));
+char* ku64_to_str(uint64_t v, char* buf, int base, aos_bool caps) __attribute__((used));
+char* kdouble_to_str(double v, char* buf, int precision) __attribute__((used));

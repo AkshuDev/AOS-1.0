@@ -254,9 +254,9 @@ void serial_print(const char* str) {
 	spin_unlock_irqrestore(&serial_lock, rflags);
 }
 
-static void serial_print_ex_integer(uint64_t val, int base, int width, int zero_pad, int is_signed) {
+static void serial_print_ex_integer(uint64_t val, int base, int width, int zero_pad, aos_bool is_signed, aos_bool caps) {
     char buf[64];
-    const char* digits = "0123456789abcdef";
+    char* digits = caps ? "0123456789abcdef" : "0123456789ABCDEF";
     int i = 0;
     int neg = 0;
     if (is_signed && (int64_t)val < 0) {
@@ -337,7 +337,7 @@ void serial_printf(const char* fmt, ...) {
 							else {
 								serial_printc('\\');
 								serial_printc('x');
-								serial_print_ex_integer((uint64_t)c, 16, 2, zero_pad, 0);
+								serial_print_ex_integer((uint64_t)c, 16, 2, zero_pad, AOS_FALSE, AOS_TRUE);
 							}
 						}
 					}
@@ -349,14 +349,29 @@ void serial_printf(const char* fmt, ...) {
                     int64_t d;
                     if (is_long >= 1) d = va_arg(args, int64_t);
                     else d = (int64_t)va_arg(args, int);
-                    serial_print_ex_integer((uint64_t)d, 10, width, zero_pad, 1);
+                    serial_print_ex_integer((uint64_t)d, 10, width, zero_pad, AOS_TRUE, AOS_FALSE);
                     break;
                 }
                 case 'u': { // unsigned 32/64-bit
                     uint64_t u;
                     if (is_long >= 1) u = va_arg(args, uint64_t);
                     else u = (uint64_t)va_arg(args, uint32_t);
-                    serial_print_ex_integer(u, 10, width, zero_pad, 0);
+                    serial_print_ex_integer(u, 10, width, zero_pad, AOS_FALSE, AOS_FALSE);
+                    break;
+                }
+				case 'I':
+                case 'D': { // signed 32/64-bit
+                    int64_t d;
+                    if (is_long >= 1) d = va_arg(args, int64_t);
+                    else d = (int64_t)va_arg(args, int);
+                    serial_print_ex_integer((uint64_t)d, 10, width, zero_pad, AOS_TRUE, AOS_TRUE);
+                    break;
+                }
+                case 'U': { // unsigned 32/64-bit
+                    uint64_t u;
+                    if (is_long >= 1) u = va_arg(args, uint64_t);
+                    else u = (uint64_t)va_arg(args, uint32_t);
+                    serial_print_ex_integer(u, 10, width, zero_pad, AOS_FALSE, AOS_TRUE);
                     break;
                 }
                 case 'x':
@@ -372,7 +387,23 @@ void serial_printf(const char* fmt, ...) {
                         if (is_long >= 1) p = va_arg(args, uint64_t);
                         else p = (uint64_t)va_arg(args, uint32_t);
                     }
-                    serial_print_ex_integer(p, 16, width, zero_pad, 0);
+                    serial_print_ex_integer(p, 16, width, zero_pad, AOS_TRUE, AOS_FALSE);
+                    break;
+                }
+				case 'X':
+                case 'P': { // Pointer
+                    uint64_t p;
+                    if (*fmt == 'p') {
+                        p = (uintptr_t)va_arg(args, void*);
+                        serial_print("0x");
+						klog_msg_started = AOS_TRUE;
+                        if (width == 0) width = 16;
+                        zero_pad = 1;
+                    } else {
+                        if (is_long >= 1) p = va_arg(args, uint64_t);
+                        else p = (uint64_t)va_arg(args, uint32_t);
+                    }
+                    serial_print_ex_integer(p, 16, width, zero_pad, AOS_TRUE, AOS_TRUE);
                     break;
                 }
                 case '%': {
@@ -658,9 +689,9 @@ void vmem_print(struct VMemDesign* design, const char* str) {
     spin_unlock_irqrestore(&vmem_lock, rflags);
 }
 
-static void vmem_print_ex_integer(struct VMemDesign* design, uint64_t val, int base, int width, int zero_pad, int is_signed) {
+static void vmem_print_ex_integer(struct VMemDesign* design, uint64_t val, int base, int width, int zero_pad, aos_bool is_signed, aos_bool caps) {
     char buf[64];
-    const char* digits = "0123456789abcdef";
+    const char* digits = caps ? "0123456789abcdef" : "0123456789ABCDEF";
     int i = 0;
     int neg = 0;
     if (is_signed && (int64_t)val < 0) {
@@ -740,7 +771,7 @@ void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
 							else {
 								vmem_printc(design, '\\');
 								vmem_printc(design, 'x');
-								vmem_print_ex_integer(design, (uint64_t)c, 16, 2, zero_pad, 0);
+								vmem_print_ex_integer(design, (uint64_t)c, 16, 2, zero_pad, AOS_FALSE, AOS_TRUE);
 							}
 						}
 					}
@@ -752,14 +783,29 @@ void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
                     int64_t d;
                     if (is_long >= 1) d = va_arg(args, int64_t);
                     else d = (int64_t)va_arg(args, int);
-                    vmem_print_ex_integer(design, (uint64_t)d, 10, width, zero_pad, 1);
+                    vmem_print_ex_integer(design, (uint64_t)d, 10, width, zero_pad, AOS_TRUE, AOS_FALSE);
                     break;
                 }
                 case 'u': { // unsigned 32/64-bit
                     uint64_t u;
                     if (is_long >= 1) u = va_arg(args, uint64_t);
                     else u = (uint64_t)va_arg(args, uint32_t);
-                    vmem_print_ex_integer(design, u, 10, width, zero_pad, 0);
+                    vmem_print_ex_integer(design, u, 10, width, zero_pad, AOS_FALSE, AOS_FALSE);
+                    break;
+                }
+				case 'I':
+                case 'D': { // signed 32/64-bit
+                    int64_t d;
+                    if (is_long >= 1) d = va_arg(args, int64_t);
+                    else d = (int64_t)va_arg(args, int);
+                    vmem_print_ex_integer(design, (uint64_t)d, 10, width, zero_pad, AOS_TRUE, AOS_TRUE);
+                    break;
+                }
+                case 'U': { // unsigned 32/64-bit
+                    uint64_t u;
+                    if (is_long >= 1) u = va_arg(args, uint64_t);
+                    else u = (uint64_t)va_arg(args, uint32_t);
+                    vmem_print_ex_integer(design, u, 10, width, zero_pad, AOS_FALSE, AOS_TRUE);
                     break;
                 }
                 case 'x':
@@ -774,7 +820,22 @@ void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
                         if (is_long >= 1) p = va_arg(args, uint64_t);
                         else p = (uint64_t)va_arg(args, uint32_t);
                     }
-                    vmem_print_ex_integer(design, p, 16, width, zero_pad, 0);
+                    vmem_print_ex_integer(design, p, 16, width, zero_pad, AOS_FALSE, AOS_FALSE);
+                    break;
+                }
+				case 'X':
+                case 'P': { // Pointer
+                    uint64_t p;
+                    if (*fmt == 'p') {
+                        p = (uintptr_t)va_arg(args, void*);
+                        vmem_print(design, "0x");
+                        if (width == 0) width = 16;
+                        zero_pad = 1;
+                    } else {
+                        if (is_long >= 1) p = va_arg(args, uint64_t);
+                        else p = (uint64_t)va_arg(args, uint32_t);
+                    }
+                    vmem_print_ex_integer(design, p, 16, width, zero_pad, AOS_FALSE, AOS_TRUE);
                     break;
                 }
                 case '%': {

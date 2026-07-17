@@ -997,6 +997,12 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 				break;
 		}
 
+		uint64_t desc_start;
+		uint64_t desc_end;
+		uint64_t desc_vstart;
+		uint64_t ub_start;
+		uint64_t ub_end;
+
 		if (
 			(
 				((uint64_t)UniBootCore == e->phys_start && (uint64_t)UniBootCore + sizeof(uniboot_boot_info) == e->phys_start + e->size) ||
@@ -1009,121 +1015,29 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 		) {
 			e->type = UNIBOOT_SMMAP_TYPE_UNIBOOT_STRUCTS; // Perfect Fit
 		} else if (
-			((uint64_t)UniBootCore > e->phys_start && (uint64_t)UniBootCore + sizeof(uniboot_boot_info) <= e->phys_start + e->size) ||
-			((uint64_t)UniBootCore > e->virt_start && (uint64_t)UniBootCore + sizeof(uniboot_boot_info) <= e->virt_start + e->size)
+			((uint64_t)UniBootCore >= e->phys_start && (uint64_t)UniBootCore + sizeof(uniboot_boot_info) <= e->phys_start + e->size) ||
+			((uint64_t)UniBootCore >= e->virt_start && (uint64_t)UniBootCore + sizeof(uniboot_boot_info) <= e->virt_start + e->size)
 		) {
-			uint64_t desc_start = desc->PhysicalStart;
-			uint64_t desc_end = desc_start + e->size;
+			desc_start = desc->PhysicalStart;
+			desc_vstart = desc->VirtualStart;
+			desc_end = desc_start + e->size;
 
-			uint64_t ub_start = (uint64_t)UniBootCore;
-			uint64_t ub_end = ub_start + sizeof(uniboot_boot_info);
+			ub_start = ALIGN_DOWN((uint64_t)UniBootCore, 0x1000);
+		 	ub_end = ALIGN_UP((uint64_t)UniBootCore + sizeof(uniboot_boot_info), 0x1000);
 
-			uint64_t overlap_start = desc_start > ub_start ? desc_start : ub_start;
-			uint64_t overlap_end = desc_end < ub_end ? desc_end : ub_end;
-
-			if (desc_start < overlap_start) {
-				if (!last_entry) {
-					mmap[mcount++] = (uniboot_smmap_entry){
-						.phys_start = desc_start,
-						.virt_start = desc->VirtualStart,
-						.size = overlap_start - desc_start,
-						.type = e->type
-					};
-				} else {
-					if (
-						e->phys_start == (last_entry->phys_start + last_entry->size) &&
-						(e->virt_start == (last_entry->virt_start + last_entry->size) || (e->virt_start == 0 && last_entry->virt_start == 0)) &&
-						e->type == last_entry->type
-					) {
-						last_entry->size += overlap_start - desc_start;
-					} else {
-						mmap[mcount++] = (uniboot_smmap_entry){
-							.phys_start = desc_start,
-							.virt_start = desc->VirtualStart,
-							.size = overlap_start - desc_start,
-							.type = e->type
-						};
-					}
-				}
-			}
-			
-			uint64_t idx = mcount++;
-			mmap[idx] = (uniboot_smmap_entry){
-    			.phys_start = overlap_start,
-				.virt_start = 0,
-				.size = overlap_end - overlap_start,
-				.type = UNIBOOT_SMMAP_TYPE_UNIBOOT_STRUCTS
-			};
-
-			if (overlap_end < desc_end) {
-				idx = mcount++;
-				mmap[idx] = (uniboot_smmap_entry){
-					.phys_start = overlap_end,
-					.virt_start = 0,
-					.size = desc_end - overlap_end,
-					.type = e->type
-				};
-			}
-			last_entry = &mmap[idx];
-			continue;
+			goto fragment_entry_due_to_overlap;
 		} else if (
-			((uint64_t)m > e->phys_start && (uint64_t)m + smmap_size <= e->phys_start + e->size) ||
-			((uint64_t)m > e->virt_start && (uint64_t)m + smmap_size <= e->virt_start + e->size)
+			((uint64_t)m >= e->phys_start && (uint64_t)m + smmap_size <= e->phys_start + e->size) ||
+			((uint64_t)m >= e->virt_start && (uint64_t)m + smmap_size <= e->virt_start + e->size)
 		) {
+			desc_start = desc->PhysicalStart;
+			desc_vstart = desc->VirtualStart;
+			desc_end = desc_start + e->size;
 
-			uint64_t desc_start = desc->PhysicalStart;
-			uint64_t desc_end = desc_start + e->size;
+			ub_start = ALIGN_DOWN((uint64_t)m, 0x1000);
+		 	ub_end = ALIGN_UP((uint64_t)m + smmap_size, 0x1000);
 
-			uint64_t ub_start = (uint64_t)m;
-			uint64_t ub_end = ub_start + smmap_size;
-
-			uint64_t overlap_start = desc_start > ub_start ? desc_start : ub_start;
-			uint64_t overlap_end = desc_end < ub_end ? desc_end : ub_end;
-
-			if (desc_start < overlap_start) {
-				if (!last_entry) {
-					mmap[mcount++] = (uniboot_smmap_entry){
-						.phys_start = desc_start,
-						.virt_start = desc->VirtualStart,
-						.size = overlap_start - desc_start,
-						.type = e->type
-					};
-				} else {
-					if (
-						e->phys_start == (last_entry->phys_start + last_entry->size) &&
-						(e->virt_start == (last_entry->virt_start + last_entry->size) || (e->virt_start == 0 && last_entry->virt_start == 0)) &&
-						e->type == last_entry->type
-					) {
-						last_entry->size += overlap_start - desc_start;
-					} else {
-						mmap[mcount++] = (uniboot_smmap_entry){
-							.phys_start = desc_start,
-							.virt_start = desc->VirtualStart,
-							.size = overlap_start - desc_start,
-							.type = e->type
-						};
-					}
-				}
-			}
-			uint64_t idx = mcount++;
-			mmap[idx] = (uniboot_smmap_entry){
-    			.phys_start = overlap_start,
-				.virt_start = 0,
-				.size = overlap_end - overlap_start,
-				.type = UNIBOOT_SMMAP_TYPE_UNIBOOT_STRUCTS
-			};
-
-			if (overlap_end < desc_end) {
-				idx = mcount++;
-				mmap[idx] = (uniboot_smmap_entry){
-					.phys_start = overlap_end,
-					.virt_start = 0,
-					.size = desc_end - overlap_end,
-					.type = e->type
-				};
-			}
-			last_entry = &mmap[idx];
-			continue;
+			goto fragment_entry_due_to_overlap;
 		}
 
 		if (last_entry) {
@@ -1134,12 +1048,77 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 			) {
 				last_entry->size += e->size;
 			} else {
+				goto set_new_last_entry;
+			}
+		} else {
+			set_new_last_entry: {
 				last_entry = e;
 				mcount++;
 			}
-		} else {
-			last_entry = e;
-			mcount++;
+		}
+		continue;
+
+		fragment_entry_due_to_overlap: {
+			vmem_printf(&cursor,"Fragmenting:\n\tDesc : %llx-%llx\n\tprot : %llx-%llx\n", desc_start, desc_end, ub_start, ub_end);
+
+			uint64_t overlap_start = desc_start > ub_start ? desc_start : ub_start;
+			uint64_t overlap_end = desc_end < ub_end ? desc_end : ub_end;
+
+			if (desc_start < overlap_start) {
+				if (!last_entry) {
+					add_first_fragment_entry: {
+						mmap[mcount++] = (uniboot_smmap_entry){
+							.phys_start = desc_start,
+							.virt_start = desc_vstart,
+							.size = overlap_start - desc_start,
+							.type = e->type
+						};
+					}
+				} else {
+					if (
+						desc_start == (last_entry->phys_start + last_entry->size) &&
+						(desc_vstart == (last_entry->virt_start + last_entry->size) || (e->virt_start == 0 && last_entry->virt_start == 0)) &&
+						e->type == last_entry->type
+					) {
+						last_entry->size += overlap_start - desc_start;
+					} else {
+						goto add_first_fragment_entry;
+					}
+				}
+			}
+			
+			uint64_t idx1 = 0;
+			if (last_entry) {
+				if (
+					overlap_start == (last_entry->phys_start + last_entry->size) &&
+					UNIBOOT_SMMAP_TYPE_UNIBOOT_STRUCTS == last_entry->type
+				) {
+					last_entry->size += overlap_end - overlap_start;
+				} else {
+					add_second_fragment_entry: {
+						idx1 = (mcount++) + 1;
+						mmap[idx1-1] = (uniboot_smmap_entry){
+							.phys_start = overlap_start,
+							.virt_start = 0,
+							.size = overlap_end - overlap_start,
+							.type = UNIBOOT_SMMAP_TYPE_UNIBOOT_STRUCTS
+						};
+					}
+				}
+			} else {
+				goto add_second_fragment_entry;
+			}
+
+			if (overlap_end < desc_end) {
+				idx1 = (mcount++) + 1;
+				mmap[idx1-1] = (uniboot_smmap_entry){
+					.phys_start = overlap_end,
+					.virt_start = 0,
+					.size = desc_end - overlap_end,
+					.type = e->type
+				};
+			}
+			if (idx1 > 0) last_entry = &mmap[idx1-1];
 		}
 	}
 

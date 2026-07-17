@@ -84,15 +84,16 @@ static struct core_state* cores[SMP_MAX_CORES] = {0};
 
 static void send_ipi(uint8_t target_apic_id, uint8_t vector) {
     // init IPI
-    lapic_write(0x310, (target_apic_id << 24)); // ICR High
-    lapic_write(0x300, 0x0000C500); // ICR Low: INIT
-    kdelay(10);
+    lapic_write(LAPIC_REG_ICR_HIGH, (target_apic_id << 24)); // ICR High
+    lapic_write(LAPIC_REG_ICR_LOW, 0x0000C500); // ICR Low: INIT
 
-    while (lapic_read(0x300) & (1 << 12)) { __asm__ volatile("pause"); }
+    while (lapic_read(LAPIC_REG_ICR_LOW) & (1 << 12)) { __asm__ volatile("pause"); }
 
     // Startup IPI
-    lapic_write(0x310, (target_apic_id << 24)); // ICR High
-    lapic_write(0x300, 0x0000C600 | vector); // ICR Low: STARTUP
+    lapic_write(LAPIC_REG_ICR_HIGH, (target_apic_id << 24)); // ICR High
+    lapic_write(LAPIC_REG_ICR_LOW, 0x0000C600 | vector); // ICR Low: STARTUP
+
+	while (lapic_read(LAPIC_REG_ICR_LOW) & (1 << 12)) { __asm__ volatile("pause"); }
 }
 
 static void send_wakeup_ipi(uint8_t target_apic_id, uint8_t vector) {
@@ -596,7 +597,6 @@ void smp_tlb_core(uint32_t core_idx, uint64_t virt, aos_bool full_flush) {
     target->tlb_addr = virt;
 	target->tlb_done = AOS_FALSE;
 
-	serial_printf("[SMP] Sending TLB IPI to APIC ID %lld\n", target->lapic_id);
 	send_wakeup_ipi(target->lapic_id, SMP_TLB_IPI_VECTOR);
 
 	uint64_t timeout = kget_ms_passed();
@@ -606,8 +606,6 @@ void smp_tlb_core(uint32_t core_idx, uint64_t virt, aos_bool full_flush) {
 
 	if (kget_ms_passed() - timeout > 1000) {
 		serial_printf("[SMP] Error: Core %lld failed to check in on TLB Flush/Invlpage!\n", core_idx);
-	} else {
-		serial_printf("[SMP] Core %lld checked in successfully on TLB Flush/Invlpage.\n", core_idx);
 	}
 }
 

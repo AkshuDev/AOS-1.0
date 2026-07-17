@@ -9,7 +9,7 @@
 #include <inc/drivers/io/io.h>
 
 static struct x_page_table kernel_pml4;
-static struct x_page_table mapped_pml4;
+static struct x_page_table* mapped_pml4;
 static aos_bool pager_ready = AOS_FALSE;
 static uint64_t cpu_phys_bits = 0;
 static uint64_t cpu_virt_bits = 0;
@@ -221,7 +221,6 @@ static void invlpg(uint64_t addr) {
 
 struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags) {
     if (phys & ~((1ULL << cpu_phys_bits) - 1)) {
-        serial_printf("[PAGER] ERROR: Physical address %p exceeds CPU limit of %lu bits!\n", phys, cpu_phys_bits);
         return NULL;
     }
 
@@ -257,17 +256,9 @@ struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags)
 		if (old & PAGE_PRESENT) {
 			spin_unlock_irqrestore(&pml4->lock, pml4_rflags);
 			if (old & PAGE_HUGE) {
-				serial_printf(
-					"[PAGER] HUGE already mapped Virt=%p Phys(old)=%p Phys(new)=%p Flags=%llx\n",
-					virt,
-					old & ~0x1FFFFFULL,
-					phys & ~0x1FFFFFULL,
-					old
-				);
 				if ((old & ~0x1FFFFFULL) == (phys & ~0x1FFFFFULL)) return pml4->table;
 				return NULL;
 			}
-			serial_print("[PAGER] ERROR: PD entry already points to a PT!\n");
 			return NULL;
 		}
         
@@ -275,21 +266,12 @@ struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags)
 		spin_unlock_irqrestore(&pml4->lock, pml4_rflags);
     } else {
 		if (pd->entries[idx_pd] & PAGE_HUGE) {
-			serial_printf(
-				"[PAGER] HUGE already mapped Virt=%p Phys(old)=%p Phys(new)=%p Flags=%llx\n",
-				virt,
-				pd->entries[idx_pd] & ~0x1FFFFFULL,
-				phys & ~0x1FFFFFULL,
-				pd->entries[idx_pd]
-			);
-
 			spin_unlock_irqrestore(&pml4->lock, pml4_rflags);
 
 			uint64_t old_phys = pd->entries[idx_pd] & ~0x1FFFFFULL;
 			if (old_phys == (phys & ~0x1FFFFFULL)) {
 				return pml4->table;
 			}
-			serial_print("[PAGER] ERROR: PD entry already points to a PT!\n");
 			return NULL;
 		}
         if (!(pd->entries[idx_pd] & PAGE_PRESENT)) {
@@ -303,22 +285,13 @@ struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags)
         // Map the physical range
 		uint64_t old = pt->entries[idx_pt];
 		if (old & PAGE_PRESENT) {
-			serial_printf(
-				"[PAGER] Page already mapped Virt=%p Phys(old)=%p Phys(new)=%p Flags=%llx\n",
-				virt,
-				old & ~0x1FFFFFULL,
-				phys & ~0x1FFFFFULL,
-				old
-			);
-
 			uint64_t old_phys = old & ~0xFFFULL;
 			spin_unlock_irqrestore(&pml4->lock, pml4_rflags);
 
 			if (old_phys == (phys & ~0xFFFULL)) {
 				return pml4->table;
 			}
-    		serial_print("[PAGER] ERROR: Mapping already exists!\n");
-			return NULL;
+    		return NULL;
 		}
 		pt->entries[idx_pt] = (phys & ~0xFFFULL) | (flags & 0xFFFULL) | PAGE_PRESENT;
 		spin_unlock_irqrestore(&pml4->lock, pml4_rflags);
@@ -347,12 +320,12 @@ static void destroy_table(struct page_table* table, int level, uint64_t lock_rfl
 }
 
 void pager_destroy_table(int level) {
-    struct page_table* table = mapped_pml4.table;
-    return destroy_table(table, level, 0, AOS_FALSE, mapped_pml4.table_phys);
+    struct page_table* table = mapped_pml4->table;
+    return destroy_table(table, level, 0, AOS_FALSE, mapped_pml4->table_phys);
 }
 
 void pager_unmap(uint64_t virt) {
-    struct x_page_table* pml4 = &mapped_pml4;
+    struct x_page_table* pml4 = mapped_pml4;
     if (!pml4) return;
 
     int idx_pml4 = (virt >> 39) & 0x1FF;
@@ -407,7 +380,7 @@ void pager_load(struct x_page_table* pml4) {
     load_cr3(pml4_phys);
 
 	spin_unlock_irqrestore(&pml4->lock, rflags);
-    mapped_pml4 = *pml4;
+    mapped_pml4 = pml4;
 
 	serial_printf("[PAGER] Loaded PML4 at Phys - 0x%llx\n", pml4_phys);
 }
