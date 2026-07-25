@@ -346,6 +346,7 @@ static aos_bool virtio_setup_cmd_core(virtio_controller* kvc) {
 	if (kvc->gpu_cmd_core != 0xFFFF) virtio_release_cmd_core(kvc);
 
 	kvc->gpu_cmd_core = 0xFFFF;
+	return AOS_TRUE;
 	smp_get_first_free_core(&kvc->gpu_cmd_core);
 	if (kvc->gpu_cmd_core != 0xFFFF) {
 		smp_reserve_core(kvc->gpu_cmd_core);
@@ -1106,11 +1107,13 @@ aos_bool pyrion_init_virtio(void) {
         if (!ctx_phys || !ctx_virt) continue;
 
         struct pyrion_ctx* ctx = (struct pyrion_ctx*)ctx_virt;
+		memset(ctx, 0, sizeof(*ctx));
         ctx->ctx_phys = ctx_phys;
         ctx->ctx_id = i + 1;
         ctx->driver_var = 0;
         ctx->res_id = 0;
         ctx->valid = 0; // NOT VALID
+		ctx->controller_idx = 0;
         p_contexts[i] = ctx;
         if (p_nxt_ctx > MAX_PYRION_CONTEXTS) // Not set yet
             p_nxt_ctx = i;
@@ -1190,7 +1193,7 @@ struct pyrion_ctx* pyrion_create_ctx_virtio(void) {
 
     virtio_create_context(kvc, ctx->ctx_id);
     
-    ctx->viewport.x = 0; ctx->viewport.y=0; ctx->viewport.width=0; ctx->viewport.height; ctx->viewport.color = 0;
+    ctx->viewport.x = 0; ctx->viewport.y=0; ctx->viewport.width=0; ctx->viewport.height=0; ctx->viewport.color = 0;
     ctx->valid = 1;
 
     serial_print("[Pyrion] Context Created\n");
@@ -1224,7 +1227,7 @@ aos_bool pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* view
     struct virtio_gpu_resource_create_2d* c2d = (struct virtio_gpu_resource_create_2d*)&kvc->cmd_buf[slot];
     memset(c2d, 0, sizeof(*c2d));
     c2d->hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_2D;
-    c2d->resource_id = res_id_2d;
+    c2d->resource_id = kvc->acceleration_present ? res_id : res_id_2d;
     c2d->format = VIRTIO_GPU_FORMAT_A8B8G8R8_UNORM;
     c2d->width = viewport->width;
     c2d->height = viewport->height;
@@ -1525,21 +1528,12 @@ aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y,
 
     if (kvc->acceleration_present != 1) {
         if (!ctx->fb.addr) return AOS_FALSE;
-        
         uint8_t char_idx = (atlas_y / 16) * 16 + (atlas_x / 8);
-        for (uint32_t row = 0; row < 16; row++) {
-            if ((y + row) >= ctx->fb.height) break; 
-            uint8_t line = font8x16[char_idx][row];
-            for (uint32_t col = 0; col < 8; col++) {
-                if ((x + col) >= ctx->fb.width) break;
 
-                if (line & (1 << (7 - col))) {
-                    fb_put_pixel(&ctx->fb, x + col, y + row, ctx->fb_info.fg_color);
-                } else {
-					fb_put_pixel(&ctx->fb, x + col, y + row, ctx->fb_info.bg_color);
-				}
-            }
-        }
+		ctx->fb_info.x = x;
+		ctx->fb_info.y = y;
+		fb_printc(&ctx->fb, &ctx->fb_info, char_idx);
+        
         return AOS_TRUE;
     }
     uint32_t args[13];

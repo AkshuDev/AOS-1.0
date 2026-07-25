@@ -195,6 +195,7 @@ void kernel_main_true(void) { // Supports only UniBoot
             g_pbfs_cwd[1] = '\0';
             current_drive_mounted = AOS_TRUE;
 			serial_init_klog("/aos/klog.log", &g_pbfs_mnt);
+			serial_flush_klog("/aos/klog.log", &g_pbfs_mnt); // Flush the prelog
         }
     } else {
         vmem_print(&vmem_design, "Error: Current drive doesn't work!\n");
