@@ -55,6 +55,7 @@ struct pyrion_ctx {
 
     struct pyrion_rect viewport;
     aos_bool valid;
+	aos_bool usable;
 };
 
 struct pyrion_api {

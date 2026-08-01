@@ -298,6 +298,15 @@ aos_bool virtio_set_mode(struct gpu_device* gpu, uint32_t w, uint32_t h, uint32_
 aos_bool virtio_switch_off(struct gpu_device* gpu) __attribute__((used));
 
 // Virgl
+#define PIPE_MASK_R 0x1
+#define PIPE_MASK_G 0x2
+#define PIPE_MASK_B 0x4
+#define PIPE_MASK_A 0x8
+#define PIPE_MASK_RGBA 0xF
+
+#define VIRGL_CMD_BLIT_S0_MASK(x) (((x) & 0xff) << 0)
+#define VIRGL_CMD_BLIT_S0_FILTER(x) (((x) & 0x3) << 8)
+
 enum virtio_virgl_object_types {
    VIRTIO_VIRGL_OBJECT_NULL,
    VIRTIO_VIRGL_OBJECT_BLEND,
@@ -312,6 +321,11 @@ enum virtio_virgl_object_types {
    VIRTIO_VIRGL_OBJECT_STREAMOUT_TARGET,
    VIRTIO_VIRGL_OBJECT_MSAA_SURFACE,
    VIRTIO_VIRGL_MAX_OBJECTS,
+};
+
+enum pipe_tex_filter {
+    PIPE_TEX_FILTER_NEAREST = 0,
+    PIPE_TEX_FILTER_LINEAR = 1,
 };
 
 enum virtio_virgl_context_cmd {
@@ -385,3 +399,4 @@ aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y,
 void pyrion_destroy_font_virtio(struct pyrion_ctx* ctx, uint32_t font_res_id, void* font_mem) __attribute__((used));
 uint32_t pyrion_upload_font_virtio(struct pyrion_ctx* ctx, uint64_t atlas_phys, uint32_t* atlas, uint32_t atlas_w, uint32_t atlas_total_h) __attribute__((used));
 aos_bool pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));
+aos_bool pyrion_blit(struct pyrion_ctx *ctx, uint32_t dst_res, uint32_t src_res, uint32_t width, uint32_t height) __attribute__((used));
