@@ -389,8 +389,9 @@ enum virtio_virgl_context_cmd {
 
 aos_bool pyrion_init_virtio(void) __attribute__((used));
 void pyrion_finish_virtio(void) __attribute__((used));
-struct pyrion_ctx* pyrion_create_ctx_virtio(void) __attribute__((used));
+struct pyrion_ctx* pyrion_create_ctx_virtio(struct pyrion_create_ctx_info ctx_info) __attribute__((used));
 void pyrion_destroy_ctx_virtio(struct pyrion_ctx* ctx) __attribute__((used));
+aos_bool pyrion_enumerate_physical_devices_virtio(size_t* count, size_t idx, struct pyrion_physical_device* out) __attribute__((used));
 aos_bool pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* viewport) __attribute__((used));
 aos_bool pyrion_flush_virtio(struct pyrion_ctx* ctx) __attribute__((used));
 aos_bool pyrion_clear_virtio(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));

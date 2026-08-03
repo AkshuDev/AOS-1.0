@@ -4,6 +4,8 @@
 #include <inc/drivers/gpu/apis/pyrion_color.h>
 #include <inc/drivers/core/framebuffer.h>
 
+#define PYRION_MAX_NAME 64
+
 struct pyrion_rect {
     uint32_t x;
     uint32_t y;
@@ -30,6 +32,18 @@ struct pyrion_font {
     uint32_t total_h;
 };
 
+struct pyrion_create_ctx_info {
+	char name[PYRION_MAX_NAME];
+};
+
+struct pyrion_physical_device {
+	char name[PYRION_MAX_NAME];
+	uint64_t idx;
+
+	aos_bool accelerated;
+	size_t cmd_core;
+};
+
 struct pyrion_ctx {
     uint64_t ctx_id;
     uint64_t res_id;
@@ -47,11 +61,13 @@ struct pyrion_ctx {
     aos_bool font_ready;
     struct pyrion_font font;
     
-    void* driver_data;
+    void* cmd_buf;
+	uint64_t cmd_buf_phys;
+	uint64_t cmd_size;
+	uint64_t cmd_cap;
+
     void* driver_data2;
-    uint64_t driver_data_phys;
     uint64_t driver_data_phys2;
-    uint64_t driver_var;
 
     struct pyrion_rect viewport;
     aos_bool valid;
@@ -62,8 +78,10 @@ struct pyrion_api {
     aos_bool (*init)(void);
     void (*finish)(void);
     
-    struct pyrion_ctx* (*create_ctx)(void);
+    struct pyrion_ctx* (*create_ctx)(struct pyrion_create_ctx_info ctx_info);
     void (*destroy_ctx)(struct pyrion_ctx* ctx);
+
+	aos_bool (*pyrion_enumerate_physical_devices)(size_t* count, size_t idx, struct pyrion_physical_device* out);
 
     aos_bool (*flush)(struct pyrion_ctx* ctx);
     aos_bool (*viewport)(struct pyrion_ctx* ctx, struct pyrion_rect* viewport);
@@ -84,8 +102,10 @@ aos_bool pyrion_init(struct gpu_device* device) __attribute__((used));
 void pyrion_finish(void) __attribute__((used));
 aos_bool pyrion_conf(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t fg, uint32_t bg) __attribute__((used));
 
-struct pyrion_ctx* pyrion_create_ctx(void) __attribute__((used));
+struct pyrion_ctx* pyrion_create_ctx(struct pyrion_create_ctx_info ctx_info) __attribute__((used));
 void pyrion_destroy_ctx(struct pyrion_ctx* ctx) __attribute__((used));
+
+aos_bool pyrion_enumerate_physical_devices(size_t* count, size_t idx, struct pyrion_physical_device* out) __attribute__((used));
 
 aos_bool pyrion_builtin_printc(struct pyrion_ctx* ctx, char c) __attribute__((used));
 aos_bool pyrion_builtin_print(struct pyrion_ctx* ctx, const char* str) __attribute__((used));

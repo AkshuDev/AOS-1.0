@@ -116,6 +116,7 @@ aos_bool modules_init(void) {
                 .finish = pyrion_finish_virtio,
                 .create_ctx = pyrion_create_ctx_virtio,
                 .destroy_ctx = pyrion_destroy_ctx_virtio,
+				.pyrion_enumerate_physical_devices = pyrion_enumerate_physical_devices_virtio,
                 .flush = pyrion_flush_virtio,
                 .viewport = pyrion_viewport_virtio,
                 .clear = pyrion_clear_virtio,

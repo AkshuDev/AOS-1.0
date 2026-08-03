@@ -1074,15 +1074,16 @@ aos_bool virtio_refresh(struct gpu_device* gpu_, uint64_t flags) {
 	serial_print("[VirtIO:GPU] Refresh Completed!\n");
 }
 
-static aos_bool virtio_create_context(virtio_controller* kvc, uint32_t ctx_id) {
+static aos_bool virtio_create_context(virtio_controller* kvc, uint32_t ctx_id, char* debug_name, size_t debug_name_len) {
     uint64_t cur_buf_slot = wait_for_free_buf(kvc);
     struct virtio_gpu_ctx_create* cmd = (struct virtio_gpu_ctx_create*)&kvc->cmd_buf[cur_buf_slot];
     memset(cmd, 0, sizeof(*cmd));
     
     cmd->hdr.type = VIRTIO_GPU_CMD_CTX_CREATE;
     cmd->hdr.ctx_id = ctx_id;
-    cmd->nlen = 14;
-    memcpy(cmd->debug_name, "Pyrion-Context", 14);
+    cmd->nlen = debug_name_len >= 64 ? 14 : debug_name_len;
+    memcpy(cmd->debug_name, debug_name_len >= 64 ? "Pyrion-Context" : name, cmd->nlen);
+	cmd->debug_name[cmd->nlen] = '\0';
     
     return virtio_submit_sync(kvc, cur_buf_slot, sizeof(*cmd), sizeof(struct virtio_gpu_ctrl_hdr));
 }
@@ -1119,7 +1120,7 @@ aos_bool pyrion_init_virtio(void) {
 		memset(ctx, 0, sizeof(*ctx));
         ctx->ctx_phys = ctx_phys;
         ctx->ctx_id = i + 1;
-        ctx->driver_var = 0;
+        ctx->cmd_size = 0;
         ctx->res_id = 0;
 		ctx->res_id_2d = 0;
         ctx->valid = AOS_FALSE; // NOT VALID
@@ -1165,12 +1166,12 @@ static uint64_t pyrion_get_free_ctx_slot(void) {
 }
 
 static void pyrion_push_virgl(struct pyrion_ctx* ctx, uint32_t opcode, uint32_t obj_type, uint32_t* args, uint32_t arg_count) {
-    if (ctx == NULL || ctx->driver_data == NULL) return;
-    uint32_t current_size = ctx->driver_var;
+    if (ctx == NULL || ctx->cmd_buf == NULL) return;
+    uint32_t current_size = ctx->cmd_size;
 
 	if (current_size + ((arg_count + 1)*sizeof(uint32_t)) > 0x1000) return;
 
-    uint32_t* write_ptr = (uint32_t*)((uintptr_t)ctx->driver_data + current_size);
+    uint32_t* write_ptr = (uint32_t*)((uintptr_t)ctx->cmd_buf + current_size);
     *write_ptr = VIRGL_CMD_HEADER(opcode, obj_type, arg_count & 0xFF);
     write_ptr++;
 
@@ -1179,14 +1180,14 @@ static void pyrion_push_virgl(struct pyrion_ctx* ctx, uint32_t opcode, uint32_t 
         write_ptr++;
     }
     
-    ctx->driver_var += (1 + arg_count) * sizeof(uint32_t);
+    ctx->cmd_size += (1 + arg_count) * sizeof(uint32_t);
 }
 
 static uint32_t rgba_to_u32(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
     return ((uint32_t)r << 24) | ((uint32_t)g << 16) | ((uint32_t)b << 8) | ((uint32_t)a);
 }
 
-struct pyrion_ctx* pyrion_create_ctx_virtio(void) {
+struct pyrion_ctx* pyrion_create_ctx_virtio(struct pyrion_create_ctx_info ctx_info) {
 	if (0 >= controller_count || !controllers) return NULL;
 	virtio_controller* kvc = &controllers[0];
 
@@ -1199,11 +1200,13 @@ struct pyrion_ctx* pyrion_create_ctx_virtio(void) {
     }
 
     struct pyrion_ctx* ctx = (struct pyrion_ctx*)p_contexts[slot];
-    ctx->driver_data = (void*)avmf_alloc(0x1000, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &ctx->driver_data_phys);
-    if (!ctx->driver_data) return NULL;
-    memset(ctx->driver_data, 0, 0x1000);
+	ctx->cmd_cap = 0x1000
+    ctx->cmd_buf = (void*)avmf_alloc(ctx->cmd_cap, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &ctx->cmd_buf_phys);
+    if (!ctx->cmd_buf) return NULL;
+    memset(ctx->cmd_buf, 0, ctx->cmd_cap);
 
-    virtio_create_context(kvc, ctx->ctx_id);
+	ctx_info.name[63] = '\0';
+    virtio_create_context(kvc, ctx->ctx_id, (char*)ctx_info.name, strlen((char*)ctx_info.name));
     
     ctx->viewport.x = 0; ctx->viewport.y=0; ctx->viewport.width=0; ctx->viewport.height=0; ctx->viewport.color = 0;
     ctx->valid = AOS_TRUE;
@@ -1211,6 +1214,25 @@ struct pyrion_ctx* pyrion_create_ctx_virtio(void) {
 
     serial_print("[Pyrion] Context Created\n");
     return ctx;
+}
+
+aos_bool pyrion_enumerate_physical_devices_virtio(size_t* count, size_t idx, struct pyrion_physical_device* out) {
+	if (!out) {
+		*count = controller_count;
+		return AOS_TRUE;
+	}
+	
+	if (idx >= controller_count) return AOS_FALSE;
+	virtio_controller* kvc = &controllers[idx];
+
+	if (!kvc->valid) return AOS_FALSE;
+	memcpy(out->name, "Virtio-GPU", 11);
+
+	out->cmd_core = kvc->gpu_cmd_core;
+	out->accelerated = kvc->acceleration_present;
+	out->idx = kvc->idx;
+
+	return AOS_TRUE;
 }
 
 void pyrion_destroy_ctx_virtio(struct pyrion_ctx* ctx) {
@@ -1222,10 +1244,10 @@ void pyrion_destroy_ctx_virtio(struct pyrion_ctx* ctx) {
 	ctx->usable = AOS_FALSE;
 	ctx->valid = AOS_FALSE;
 
-    if (ctx->driver_data) {
-		avmf_free((uint64_t)ctx->driver_data);
-		ctx->driver_data = NULL;
-		ctx->driver_data_phys = 0;
+    if (ctx->cmd_buf) {
+		avmf_free((uint64_t)ctx->cmd_buf);
+		ctx->cmd_buf = NULL;
+		ctx->cmd_buf_phys = 0;
 	}
 	if (ctx->driver_data2) {
 		avmf_free((uint64_t)ctx->driver_data2);
@@ -1427,8 +1449,8 @@ aos_bool pyrion_flush_virtio(struct pyrion_ctx* ctx) {
         return AOS_TRUE;
     }
 
-	uint32_t stream_size = ctx->driver_var;
-    if (!ctx->driver_data || stream_size < 1) {
+	uint32_t stream_size = ctx->cmd_size;
+    if (!ctx->cmd_buf || stream_size < 1) {
         uint64_t slot = wait_for_free_buf(kvc);
 
         struct virtio_gpu_resource_flush* f = (struct virtio_gpu_resource_flush*)&kvc->cmd_buf[slot];
@@ -1445,7 +1467,7 @@ aos_bool pyrion_flush_virtio(struct pyrion_ctx* ctx) {
         return virtio_submit_async(kvc, slot, sizeof(*f), sizeof(struct virtio_gpu_ctrl_hdr));
     }
 
-    for (uintptr_t i = (uintptr_t)ctx->driver_data; i < (uintptr_t)ctx->driver_data + stream_size; i += 64) { // 64 is the standard x86 cache line size
+    for (uintptr_t i = (uintptr_t)ctx->cmd_buf; i < (uintptr_t)ctx->cmd_buf + stream_size; i += 64) { // 64 is the standard x86 cache line size
         __asm__ volatile("clflush (%0)" : : "r"(i) : "memory");
     }
     __asm__ volatile("mfence" ::: "memory");
@@ -1466,7 +1488,7 @@ aos_bool pyrion_flush_virtio(struct pyrion_ctx* ctx) {
 			.next = 0 // Autofill
 		},
 		(struct virtq_desc){
-			.addr = (uintptr_t)(ctx->driver_data_phys),
+			.addr = (uintptr_t)(ctx->cmd_buf_phys),
 			.len = stream_size,
 			.flags = VIRTQ_DESC_F_NEXT,
 			.next = 0 // Autofill
@@ -1485,7 +1507,7 @@ aos_bool pyrion_flush_virtio(struct pyrion_ctx* ctx) {
 	virtio_notify_device(kvc);
 	virtqueue_wait_complete_sync(kvc);
     
-    ctx->driver_var = 0;
+    ctx->cmd_size = 0;
 
     slot = wait_for_free_buf(kvc);
     struct virtio_gpu_transfer_to_host_3d* t = (struct virtio_gpu_transfer_to_host_3d*)&kvc->cmd_buf[slot];

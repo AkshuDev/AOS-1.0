@@ -23,7 +23,6 @@
 
 static struct pyrion_ctx* vshell_ctx = NULL;
 static struct pyrion_rect vshell_viewport = (struct pyrion_rect){.x=0,.y=0,.width=800,.height=600,.color=0x121212FF};
-static struct pyrion_ctx* gdisplay_ctx = NULL;
 static aos_bool vshell_running = AOS_FALSE;
 static char* prompt = DEF_PROMPT;
 
@@ -161,10 +160,12 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
 	return AOS_TRUE;
 }
 
-void start_vshell(struct pyrion_ctx* display_ctx) {
+void start_vshell(void) {
     serial_print("Starting VShell...\n");
-    gdisplay_ctx = display_ctx;
-    vshell_ctx = pyrion_create_ctx();
+	struct pyrion_create_ctx_info pcreate_info = {
+		.name = "VShell"
+	};
+    vshell_ctx = pyrion_create_ctx(pcreate_info);
     if (!vshell_ctx) return;
 
     vshell_ctx->cformat = PYRION_COLORF_RGBA;

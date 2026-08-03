@@ -22,10 +22,9 @@ void aospp() __attribute__((used));
 
 static struct AOS_Module* gpu_m;
 static PCIe_FB gpu_framebuffer;
-static struct pyrion_ctx* display_ctx;
 
 void aos_start_vshell(void) {
-    start_vshell(display_ctx);
+    start_vshell();
     smp_yield();
 }
 
@@ -42,10 +41,6 @@ void aospp_start(void) {
     
 	serial_print("[AOS++] Initializing Pyrion...\n");
     if (!pyrion_init(gpu_device)) return;
-    
-	serial_print("[AOS++] Creating main display Pyrion Context...\n");
-	display_ctx = pyrion_create_ctx();
-    if (!display_ctx) return;
 
     start_vshell(display_ctx);
 

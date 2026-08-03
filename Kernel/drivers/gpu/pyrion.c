@@ -111,8 +111,8 @@ void pyrion_finish(void) {
     gdevice->pyrion.finish();
 }
 
-struct pyrion_ctx* pyrion_create_ctx(void) {
-    struct pyrion_ctx* ctx = gdevice->pyrion.create_ctx();
+struct pyrion_ctx* pyrion_create_ctx(struct pyrion_create_ctx_info ctx_info) {
+    struct pyrion_ctx* ctx = gdevice->pyrion.create_ctx(ctx_info);
     if (!ctx) return NULL;
 
     ctx->cformat = PYRION_COLORF_RGBA;
@@ -140,6 +140,10 @@ void pyrion_destroy_ctx(struct pyrion_ctx *ctx) {
         ctx->font_ready = AOS_FALSE;
     }
     gdevice->pyrion.destroy_ctx(ctx);
+}
+
+aos_bool pyrion_enumerate_physical_devices(size_t* count, size_t idx, struct pyrion_physical_device* out) {
+	return gdevice->pyrion.pyrion_enumerate_physical_devices(count, idx, out);
 }
 
 aos_bool pyrion_viewport(struct pyrion_ctx *ctx, struct pyrion_rect *viewport) {
