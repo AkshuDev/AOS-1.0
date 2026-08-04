@@ -140,7 +140,7 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
                 if (!pyrion_builtin_printc(vshell_ctx, '\n')) return AOS_FALSE;
             }
         } else if (strcmp(cmd_buf, "clear") == 0) {
-            if (!pyrion_clear(vshell_ctx, vshell_ctx->fb_info.bg_color)) return AOS_FALSE;
+            if (!pyrion_clear(vshell_ctx, vshell_ctx->fb_cursor.bg_color)) return AOS_FALSE;
             if (!pyrion_set_cursor(vshell_ctx, 0, 0)) return AOS_FALSE;
         } else {
             if (!pyrion_builtin_print(vshell_ctx, "Unknown Command: ")) return AOS_FALSE;
@@ -160,6 +160,44 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
 	return AOS_TRUE;
 }
 
+static aos_bool vshell_enum_n_set_best_dev(struct pyrion_ctx* ctx) {
+	if (!ctx) return AOS_FALSE;
+
+	uint64_t count = 0;
+	if (!pyrion_enumerate_physical_devices(&count, 0, NULL)) return AOS_FALSE;
+	if (count < 1) return AOS_FALSE;
+
+	struct pyrion_physical_device best_device = {0};
+	aos_bool found_best = AOS_FALSE;
+
+	serial_printf("[VSHELL] Enumerating Pyrion GPU Devices (Count - %llu)\n", count);
+
+	for (uint64_t i = 0; i < count; i++) {
+		struct pyrion_physical_device pdev = {0};
+		if (!pyrion_enumerate_physical_devices(NULL, i, &pdev)) continue;
+
+		serial_printf("[VSHELL] #%llu Device - %s\n", i, pdev.name);
+		serial_printf("\t[VSHELL] Acceleration: %s\n", pdev.accelerated ? "True" : "False");
+		serial_printf("\t[VSHELL] CMD Core Present: %s (Core - %llu)\n", pdev.cmd_core != 0xFFFF ? "True" : "False", pdev.cmd_core);
+
+		if (!found_best) {
+			best_device = pdev;
+			found_best = AOS_TRUE;
+			continue;
+		}
+
+		// P1 - Acceleration
+		if (pdev.accelerated && !best_device.accelerated) { best_device = pdev; found_best = AOS_TRUE; continue; }
+		// P2 - Cmd Core
+		if (pdev.cmd_core != 0xFFFF && best_device.cmd_core == 0xFFFF) { best_device = pdev; found_best = AOS_TRUE; continue; }
+	}
+	if (!found_best) return AOS_FALSE;
+
+	serial_printf("[VSHELL] Using (#%llu) Device - %s\n", best_device.idx, best_device.name);
+
+	return pyrion_use_device(ctx, &best_device);
+} 
+
 void start_vshell(void) {
     serial_print("Starting VShell...\n");
 	struct pyrion_create_ctx_info pcreate_info = {
@@ -167,6 +205,11 @@ void start_vshell(void) {
 	};
     vshell_ctx = pyrion_create_ctx(pcreate_info);
     if (!vshell_ctx) return;
+
+	if (!vshell_enum_n_set_best_dev(vshell_ctx)) {
+		pyrion_destroy_ctx(vshell_ctx);
+		return;
+	}
 
     vshell_ctx->cformat = PYRION_COLORF_RGBA;
     if (!pyrion_viewport(vshell_ctx, &vshell_viewport)) {

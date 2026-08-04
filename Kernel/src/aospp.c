@@ -42,7 +42,7 @@ void aospp_start(void) {
 	serial_print("[AOS++] Initializing Pyrion...\n");
     if (!pyrion_init(gpu_device)) return;
 
-    start_vshell(display_ctx);
+    start_vshell();
 
 	if (gpu_device->switch_off) gpu_device->switch_off(gpu_device);
 }

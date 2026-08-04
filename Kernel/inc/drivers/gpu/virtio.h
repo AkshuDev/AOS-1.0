@@ -307,6 +307,41 @@ aos_bool virtio_switch_off(struct gpu_device* gpu) __attribute__((used));
 #define VIRGL_CMD_BLIT_S0_MASK(x) (((x) & 0xff) << 0)
 #define VIRGL_CMD_BLIT_S0_FILTER(x) (((x) & 0x3) << 8)
 
+// Rasterizer offsets
+#define VIRGL_OBJ_RS_S0_FLATSHADE(x) (((x) & 0x1) << 0)
+#define VIRGL_OBJ_RS_S0_DEPTH_CLIP(x) (((x) & 0x1) << 1)
+#define VIRGL_OBJ_RS_S0_CLIP_HALFZ(x) (((x) & 0x1) << 2)
+#define VIRGL_OBJ_RS_S0_RASTERIZER_DISCARD(x) (((x) & 0x1) << 3)
+#define VIRGL_OBJ_RS_S0_FLATSHADE_FIRST(x) (((x) & 0x1) << 4)
+#define VIRGL_OBJ_RS_S0_LIGHT_TWOSIZE(x) (((x) & 0x1) << 5)
+#define VIRGL_OBJ_RS_S0_SPRITE_COORD_MODE(x) (((x) & 0x1) << 6)
+#define VIRGL_OBJ_RS_S0_POINT_QUAD_RASTERIZATION(x) (((x) & 0x1) << 7)
+#define VIRGL_OBJ_RS_S0_CULL_FACE(x) (((x) & 0x3) << 8)
+#define VIRGL_OBJ_RS_S0_FILL_FRONT(x) (((x) & 0x3) << 10)
+#define VIRGL_OBJ_RS_S0_FILL_BACK(x) (((x) & 0x3) << 12)
+#define VIRGL_OBJ_RS_S0_SCISSOR(x) (((x) & 0x1) << 14)
+#define VIRGL_OBJ_RS_S0_FRONT_CCW(x) (((x) & 0x1) << 15)
+#define VIRGL_OBJ_RS_S0_CLAMP_VERTEX_COLOR(x) (((x) & 0x1) << 16)
+#define VIRGL_OBJ_RS_S0_CLAMP_FRAGMENT_COLOR(x) (((x) & 0x1) << 17)
+#define VIRGL_OBJ_RS_S0_OFFSET_LINE(x) (((x) & 0x1) << 18)
+#define VIRGL_OBJ_RS_S0_OFFSET_POINT(x) (((x) & 0x1) << 19)
+#define VIRGL_OBJ_RS_S0_OFFSET_TRI(x) (((x) & 0x1) << 20)
+#define VIRGL_OBJ_RS_S0_POLY_SMOOTH(x) (((x) & 0x1) << 21)
+#define VIRGL_OBJ_RS_S0_POLY_STIPPLE_ENABLE(x) (((x) & 0x1) << 22)
+#define VIRGL_OBJ_RS_S0_POINT_SMOOTH(x) (((x) & 0x1) << 23)
+#define VIRGL_OBJ_RS_S0_POINT_SIZE_PER_VERTEX(x) (((x) & 0x1) << 24)
+#define VIRGL_OBJ_RS_S0_MULTISAMPLE(x) (((x) & 0x1) << 25)
+#define VIRGL_OBJ_RS_S0_LINE_SMOOTH(x) (((x) & 0x1) << 26)
+#define VIRGL_OBJ_RS_S0_LINE_STIPPLE_ENABLE(x) (((x) & 0x1) << 27)
+#define VIRGL_OBJ_RS_S0_LINE_LAST_PIXEL(x) (((x) & 0x1) << 28)
+#define VIRGL_OBJ_RS_S0_HALF_PIXEL_CENTER(x) (((x) & 0x1) << 29)
+#define VIRGL_OBJ_RS_S0_BOTTOM_EDGE_RULE(x) (((x) & 0x1) << 30)
+#define VIRGL_OBJ_RS_S0_FORCE_PERSAMPLE_INTERP(x) (((x) & 0x1) << 31)
+
+#define VIRGL_OBJ_RS_S3_LINE_STIPPLE_PATTERN(x) (((x) & 0xffff) << 0)
+#define VIRGL_OBJ_RS_S3_LINE_STIPPLE_FACTOR(x) (((x) & 0xff) << 16)
+#define VIRGL_OBJ_RS_S3_CLIP_PLANE_ENABLE(x) (((x) & 0xff) << 24)
+
 enum virtio_virgl_object_types {
    VIRTIO_VIRGL_OBJECT_NULL,
    VIRTIO_VIRGL_OBJECT_BLEND,
@@ -391,8 +426,10 @@ aos_bool pyrion_init_virtio(void) __attribute__((used));
 void pyrion_finish_virtio(void) __attribute__((used));
 struct pyrion_ctx* pyrion_create_ctx_virtio(struct pyrion_create_ctx_info ctx_info) __attribute__((used));
 void pyrion_destroy_ctx_virtio(struct pyrion_ctx* ctx) __attribute__((used));
+void pyrion_unuse_device_virtio(struct pyrion_ctx* ctx) __attribute__((used));
 aos_bool pyrion_enumerate_physical_devices_virtio(size_t* count, size_t idx, struct pyrion_physical_device* out) __attribute__((used));
-aos_bool pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect* viewport) __attribute__((used));
+aos_bool pyrion_use_device_virtio(struct pyrion_ctx* ctx, struct pyrion_physical_device* dev, struct pyrion_rect viewport) __attribute__((used));
+aos_bool pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect viewport) __attribute__((used));
 aos_bool pyrion_flush_virtio(struct pyrion_ctx* ctx) __attribute__((used));
 aos_bool pyrion_clear_virtio(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));
 aos_bool pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));
