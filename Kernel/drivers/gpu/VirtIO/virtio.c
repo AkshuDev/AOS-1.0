@@ -1081,9 +1081,13 @@ aos_bool pyrion_init_virtio(void) {
         struct pyrion_ctx* ctx = (struct pyrion_ctx*)ctx_virt;
 		memset(ctx, 0, sizeof(*ctx));
         ctx->ctx_id = i + 1;
+
         ctx->valid = AOS_FALSE; // NOT VALID
 		ctx->usable = AOS_FALSE;
-		ctx->controller_idx = 0;
+		ctx->device_set = AOS_FALSE;
+		ctx->viewport_set = AOS_FALSE;
+
+		ctx->controller_idx = 0; // Default
         p_contexts[i] = ctx;
         if (p_nxt_ctx > MAX_PYRION_CONTEXTS) // Not set yet
             p_nxt_ctx = i;
@@ -1099,7 +1103,6 @@ void pyrion_finish_virtio(void) {
 		virtio_controller* kvc = &controllers[ctx->controller_idx];
 
         if (!ctx) continue;
-
         if (ctx->valid) {
             virtio_destroy_context(kvc, ctx->ctx_id);
         }
@@ -1123,27 +1126,38 @@ static uint64_t pyrion_get_free_ctx_slot(void) {
     return 0xFFFFFFFFFFFFFFFF;
 }
 
-static void pyrion_push_virgl(struct pyrion_ctx* ctx, uint32_t opcode, uint32_t obj_type, uint32_t* args, uint32_t arg_count) {
-    if (ctx == NULL) return;
-	if (!ctx->cmd_buf) return;
-    uint32_t current_size = ctx->cmd_size;
+static void pyrion_push_virgl_ex(struct pyrion_ctx* ctx, struct pyrion_cmd_stream* stream, uint32_t opcode, uint32_t obj_type, uint32_t* args, uint32_t arg_count) {
+	if (!ctx || !stream) return;
+	if (!ctx->valid || !stream->stream || !stream->stream_phys) return;
+	if (stream->stream_cap < 1 || stream->stream_cap < stream->stream_count) return;
 
-	if (current_size + ((arg_count + 1)*sizeof(uint32_t)) > ctx->cmd_cap) return;
+    uint32_t current_size = stream->stream_count;
+	if (current_size + ((arg_count + 1)*sizeof(uint32_t)) > stream->stream_cap) return;
 
-    uint32_t* write_ptr = (uint32_t*)((uintptr_t)ctx->cmd_buf + current_size);
+    uint32_t* write_ptr = (uint32_t*)((uintptr_t)stream->stream + current_size);
     *write_ptr = VIRGL_CMD_HEADER(opcode, obj_type, arg_count & 0xFF);
+	//serial_printf("VIRGL: %02llX ", *write_ptr);
     write_ptr++;
 
     for (uint32_t i = 0; i < arg_count; i++) {
         *write_ptr = args[i];
+		//serial_printf("%02llX ", *write_ptr);
         write_ptr++;
     }
+	//serial_printc('\n');
     
-    ctx->cmd_size += (1 + arg_count) * sizeof(uint32_t);
+    stream->stream_count += (1 + arg_count) * sizeof(uint32_t);
+}
+
+static void pyrion_push_virgl(struct pyrion_ctx* ctx, uint32_t opcode, uint32_t obj_type, uint32_t* args, uint32_t arg_count) {
+    if (!ctx) return;
+	if (!ctx->valid) return;
+	
+	pyrion_push_virgl_ex(ctx, &ctx->cmd_stream, opcode, obj_type, args, arg_count);
 }
 
 static uint32_t rgba_to_u32(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
-    return ((uint32_t)r << 24) | ((uint32_t)g << 16) | ((uint32_t)b << 8) | ((uint32_t)a);
+    return ((uint32_t)a << 24) | ((uint32_t)b << 16) | ((uint32_t)g << 8) | ((uint32_t)r);
 }
 
 struct pyrion_ctx* pyrion_create_ctx_virtio(struct pyrion_create_ctx_info ctx_info) {
@@ -1159,10 +1173,10 @@ struct pyrion_ctx* pyrion_create_ctx_virtio(struct pyrion_create_ctx_info ctx_in
     }
 
     struct pyrion_ctx* ctx = (struct pyrion_ctx*)p_contexts[slot];
-	ctx->cmd_cap = 0x1000;
-    ctx->cmd_buf = (void*)avmf_alloc(ctx->cmd_cap, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &ctx->cmd_buf_phys);
-    if (!ctx->cmd_buf) return NULL;
-    memset(ctx->cmd_buf, 0, ctx->cmd_cap);
+	ctx->cmd_stream.stream_cap = 0x1000;
+    ctx->cmd_stream.stream = (void*)avmf_alloc(ctx->cmd_stream.stream_cap, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &ctx->cmd_stream.stream_phys);
+    if (!ctx->cmd_stream.stream) return NULL;
+    memset(ctx->cmd_stream.stream, 0, ctx->cmd_stream.stream_cap);
 
 	ctx_info.name[63] = '\0';
     virtio_create_context(kvc, ctx->ctx_id, (char*)ctx_info.name, strlen((char*)ctx_info.name));
@@ -1195,28 +1209,12 @@ aos_bool pyrion_enumerate_physical_devices_virtio(size_t* count, size_t idx, str
 	return AOS_TRUE;
 }
 
-aos_bool pyrion_use_device_virtio(struct pyrion_ctx* ctx, struct pyrion_physical_device* dev, struct pyrion_rect viewport) {
-	if (!dev || !ctx) return AOS_FALSE;
-	if (ctx->usable || !ctx->valid || dev->idx >= controller_count || ctx->device_set) return AOS_FALSE;
-	if (!controllers[dev->idx].valid) return AOS_FALSE;
-
-	// Device Verifications
-	virtio_controller* kvc = &controllers[dev->idx];
-	if (kvc->acceleration_present != dev->accelerated) return AOS_FALSE;
-	if (kvc->gpu_cmd_core != dev->cmd_core) return AOS_FALSE;
-	if (kvc->idx != dev->idx) return AOS_FALSE;
-
-	// Device Registering
-	struct pyrion_physical_device dev_cp = *dev;
-	ctx->device = dev_cp;
-	ctx->device_set = AOS_TRUE;
-
-	ctx->viewport = viewport;
+static aos_bool pyrion_create_viewport_res(struct pyrion_ctx* ctx, virtio_controller* kvc, struct pyrion_rect viewport) {
+	if (!ctx || !kvc) return AOS_FALSE;
 
 	// Resource Initialize
 	ctx->res_id_3d = ctx->ctx_id + RES_ID_3D_BASE; // Ensure not a single resource id causes trouble
 	ctx->res_id_2d = ctx->ctx_id + RES_ID_2D_BASE;
-	ctx->res_id_rast = ctx->ctx_id + RES_ID_RAST_BASE;
 
 	// Create 2D Texture
 	uint64_t slot = wait_for_free_buf(kvc);
@@ -1229,10 +1227,17 @@ aos_bool pyrion_use_device_virtio(struct pyrion_ctx* ctx, struct pyrion_physical
 	c2d->width = viewport.width;
 	c2d->height = viewport.height;
 
-	if (!virtio_submit_sync(kvc, slot, sizeof(*c2d), sizeof(struct virtio_gpu_ctrl_hdr))) {
-		pyrion_unuse_device(ctx);
-		return AOS_FALSE;
-	}
+	if (!virtio_submit_sync(kvc, slot, sizeof(*c2d), sizeof(struct virtio_gpu_ctrl_hdr))) return AOS_FALSE;
+
+	slot = wait_for_free_buf(kvc);
+
+	struct virtio_gpu_ctx_resource* att = (struct virtio_gpu_ctx_resource*)&kvc->cmd_buf[slot];
+	memset(att, 0, sizeof(*att));
+	att->hdr.type = VIRTIO_GPU_CMD_CTX_ATTACH_RESOURCE;
+	att->hdr.ctx_id = ctx->ctx_id;
+	att->resource_id = ctx->res_id_2d;
+	
+	if (!virtio_submit_sync(kvc, slot, sizeof(*att), sizeof(struct virtio_gpu_ctrl_hdr))) return AOS_FALSE;
 
 	if (kvc->acceleration_present) {
 		// Create 3D-Accelerated Texture
@@ -1242,9 +1247,9 @@ aos_bool pyrion_use_device_virtio(struct pyrion_ctx* ctx, struct pyrion_physical
 		memset(c3d, 0, sizeof(*c3d));
 		c3d->hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_3D;
 		c3d->resource_id = ctx->res_id_3d;
-		c3d->target = VIRTIO_GPU_PIPE_TEXTURE_2D;
-		c3d->format = VIRTIO_GPU_FORMAT_A8B8G8R8_UNORM;
-		c3d->bind = VIRTIO_GPU_BIND_RENDER_TARGET;
+		c3d->target = PIPE_TEXTURE_2D;
+		c3d->format = PIPE_FORMAT_R8G8B8A8_UNORM;
+		c3d->bind = PIPE_BIND_RENDER_TARGET;
 		c3d->width = viewport.width;
 		c3d->height = viewport.height;
 		c3d->depth = 1;
@@ -1253,10 +1258,7 @@ aos_bool pyrion_use_device_virtio(struct pyrion_ctx* ctx, struct pyrion_physical
 		c3d->array_size = 1;
 		c3d->flags = VIRTIO_GPU_RESOURCE_FLAG_Y_0_TOP;
 
-		if (!virtio_submit_sync(kvc, slot, sizeof(*c3d), sizeof(struct virtio_gpu_ctrl_hdr))) {
-			pyrion_unuse_device(ctx);
-			return AOS_FALSE;
-		}
+		if (!virtio_submit_sync(kvc, slot, sizeof(*c3d), sizeof(struct virtio_gpu_ctrl_hdr))) return AOS_FALSE;
 
 		slot = wait_for_free_buf(kvc);
 
@@ -1266,10 +1268,7 @@ aos_bool pyrion_use_device_virtio(struct pyrion_ctx* ctx, struct pyrion_physical
 		att->hdr.ctx_id = ctx->ctx_id;
 		att->resource_id = ctx->res_id_3d;
 		
-		if (!virtio_submit_sync(kvc, slot, sizeof(*att), sizeof(struct virtio_gpu_ctrl_hdr))) {
-			pyrion_unuse_device(ctx);
-			return AOS_FALSE;
-		}
+		if (!virtio_submit_sync(kvc, slot, sizeof(*att), sizeof(struct virtio_gpu_ctrl_hdr))) return AOS_FALSE;
 	}
 
 	// Create FB
@@ -1281,10 +1280,8 @@ aos_bool pyrion_use_device_virtio(struct pyrion_ctx* ctx, struct pyrion_physical
 	ctx->fb_info.size = ctx->fb_info.width * ctx->fb_info.height * sizeof(uint32_t);
 	ctx->fb_info.addr = avmf_alloc(ctx->fb_info.size, MALLOC_TYPE_SENSITIVE, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE | AVMF_FLAG_GLOBAL, &ctx->fb_info.phys_addr);
 	
-	if (!ctx->fb_info.addr || !ctx->fb_info.phys_addr) {
-		pyrion_unuse_device(ctx);
-		return AOS_FALSE;
-	}
+	if (!ctx->fb_info.addr || !ctx->fb_info.phys_addr) return AOS_FALSE;
+	memset((void*)ctx->fb_info.addr, 0, ctx->fb_info.size);
 
 	// Attach Backing
 	slot = wait_for_free_buf(kvc);
@@ -1306,71 +1303,14 @@ aos_bool pyrion_use_device_virtio(struct pyrion_ctx* ctx, struct pyrion_physical
 		avmf_free(ctx->fb_info.addr);
 		ctx->fb_info.addr = 0;
 		ctx->fb_info.phys_addr = 0;
-
-		pyrion_unuse_device(ctx);
-
 		return AOS_FALSE;
 	}
 
-	// Set Rasterizer and Flush VIRGL Commands
-	uint32_t rast_handle = ctx->res_id_rast;
-    uint32_t rast_args[9] = {0};
-    rast_args[0] = rast_handle;
-    rast_args[1] = VIRGL_OBJ_RS_S0_FILL_FRONT(2) | VIRGL_OBJ_RS_S0_FILL_BACK(2) | VIRGL_OBJ_RS_S0_FRONT_CCW(1) | VIRGL_OBJ_RS_S0_FLATSHADE(1);
-	rast_args[2] = 1.0f;
-	rast_args[6] = 1.0f;
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CREATE_OBJECT, VIRTIO_VIRGL_OBJECT_RASTERIZER, rast_args, 9);
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_BIND_OBJECT, VIRTIO_VIRGL_OBJECT_RASTERIZER, &rast_handle, 1);
-
-	uint32_t stream_size = ctx->cmd_size;
-	slot = wait_for_free_buf(kvc);
-
-	struct virtio_gpu_cmd_submit_3d* virgl = (struct virtio_gpu_cmd_submit_3d*)&kvc->cmd_buf[slot];
-	memset(virgl, 0, sizeof(*virgl));
-    virgl->hdr.type = VIRTIO_GPU_CMD_SUBMIT_3D;
-    virgl->hdr.ctx_id = ctx->ctx_id;
-    virgl->size = stream_size;
-
-	struct virtq_desc descs[3] = {
-		(struct virtq_desc){
-			.addr = (uintptr_t)kvc->cmd_buf_phys[slot],
-			.len = sizeof(*virgl),
-			.flags = VIRTQ_DESC_F_NEXT,
-			.next = 0 // Autofill
-		},
-		(struct virtq_desc){
-			.addr = (uintptr_t)(ctx->cmd_buf_phys),
-			.len = stream_size,
-			.flags = VIRTQ_DESC_F_NEXT,
-			.next = 0 // Autofill
-		},
-		(struct virtq_desc){
-			.addr = (uintptr_t)(kvc->resp_buf_phys[slot]),
-			.len = sizeof(struct virtio_gpu_ctrl_hdr),
-			.flags = VIRTQ_DESC_F_WRITE,
-			.next = 0xFFFF
-		}
-	};
-
-	uint16_t head = 0;
-	if (!virtio_send_ex(kvc, (struct virtq_desc*)descs, 3, &head)) return AOS_FALSE;
-	kvc->desc_to_buf[head] = slot;
-	virtio_notify_device(kvc);
-	virtqueue_wait_complete_sync(kvc);
-    ctx->cmd_size = 0;
-
-	ctx->viewport_set = AOS_TRUE;
 	return AOS_TRUE;
 }
 
-void pyrion_unuse_device_virtio(struct pyrion_ctx* ctx) {
-	if (!ctx) return;
-	if (!ctx->device_set || !ctx->valid) return;
-	if (ctx->controller_idx >= controller_count || !controllers) return;
-	virtio_controller* kvc = &controllers[ctx->controller_idx];
-
-	ctx->device_set = AOS_FALSE;
-	ctx->usable = AOS_FALSE;
+static void pyrion_delete_viewport_res(struct pyrion_ctx* ctx, virtio_controller* kvc) {
+	if (!ctx || !kvc) return;
 
 	uint64_t slot;
 	if (kvc->acceleration_present && ctx->device.accelerated) {
@@ -1429,52 +1369,59 @@ void pyrion_unuse_device_virtio(struct pyrion_ctx* ctx) {
         ctx->fb_info.addr = 0;
         ctx->fb_info.phys_addr = 0;
     }
-    memset(&ctx->device, 0, sizeof(ctx->device));
+}
 
+aos_bool pyrion_use_device_virtio(struct pyrion_ctx* ctx, struct pyrion_physical_device* dev) {
+	if (!dev || !ctx) return AOS_FALSE;
+	if (ctx->usable || !ctx->valid || dev->idx >= controller_count || ctx->device_set) return AOS_FALSE;
+	if (!controllers[dev->idx].valid) return AOS_FALSE;
+
+	// Device Verifications
+	virtio_controller* kvc = &controllers[dev->idx];
+	if (kvc->acceleration_present != dev->accelerated) return AOS_FALSE;
+	if (kvc->gpu_cmd_core != dev->cmd_core) return AOS_FALSE;
+	if (kvc->idx != dev->idx) return AOS_FALSE;
+
+	// Device Registering
+	struct pyrion_physical_device dev_cp = *dev;
+	ctx->device = dev_cp;
+	ctx->controller_idx = dev->idx;
+	ctx->device_set = AOS_TRUE;
+
+	// Set Rasterizer and Flush VIRGL Commands
+	ctx->res_id_rast = ctx->ctx_id + RES_ID_RAST_BASE;
+	uint32_t rast_handle = ctx->res_id_rast;
+    uint32_t rast_args[VIRGL_OBJ_RS_SIZE] = {0};
+    rast_args[VIRGL_OBJ_RS_HANDLE] = rast_handle;
+    rast_args[VIRGL_OBJ_RS_S0] = VIRGL_OBJ_RS_S0_FILL_FRONT(2) | VIRGL_OBJ_RS_S0_FILL_BACK(2) | VIRGL_OBJ_RS_S0_FRONT_CCW(1) | VIRGL_OBJ_RS_S0_FLATSHADE(1);
+	rast_args[VIRGL_OBJ_RS_POINT_SIZE] = 1;
+	rast_args[VIRGL_OBJ_RS_LINE_WIDTH] = 1;
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CREATE_OBJECT, VIRTIO_VIRGL_OBJECT_RASTERIZER, rast_args, VIRGL_OBJ_RS_SIZE);
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_BIND_OBJECT, VIRTIO_VIRGL_OBJECT_RASTERIZER, &rast_handle, 1);
+
+	if (!pyrion_submit_cmd_stream_virtio(ctx, &ctx->cmd_stream)) {
+		pyrion_unuse_device(ctx);
+		return AOS_FALSE;
+	}
+	return AOS_TRUE;
+}
+
+void pyrion_unuse_device_virtio(struct pyrion_ctx* ctx) {
+	if (!ctx) return;
+	if (!ctx->device_set || !ctx->valid) return;
+	if (ctx->controller_idx >= controller_count || !controllers) return;
+	virtio_controller* kvc = &controllers[ctx->controller_idx];
+
+	ctx->device_set = AOS_FALSE;
+	ctx->usable = AOS_FALSE;
+
+	uint64_t slot;
 	if (ctx->res_id_rast > RES_ID_RAST_BASE && ctx->res_id_rast <= RES_ID_RAST_BASE + MAX_PYRION_CONTEXTS) {
 		uint32_t args[1] = {ctx->res_id_rast};
 		pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_DESTROY_OBJECT, VIRTIO_VIRGL_OBJECT_RASTERIZER, args, 1);
-
-		uint32_t stream_size = ctx->cmd_size;
-		slot = wait_for_free_buf(kvc);
-
-		struct virtio_gpu_cmd_submit_3d* virgl = (struct virtio_gpu_cmd_submit_3d*)&kvc->cmd_buf[slot];
-		memset(virgl, 0, sizeof(*virgl));
-		virgl->hdr.type = VIRTIO_GPU_CMD_SUBMIT_3D;
-		virgl->hdr.ctx_id = ctx->ctx_id;
-		virgl->size = stream_size;
-
-		struct virtq_desc descs[3] = {
-			(struct virtq_desc){
-				.addr = (uintptr_t)kvc->cmd_buf_phys[slot],
-				.len = sizeof(*virgl),
-				.flags = VIRTQ_DESC_F_NEXT,
-				.next = 0 // Autofill
-			},
-			(struct virtq_desc){
-				.addr = (uintptr_t)(ctx->cmd_buf_phys),
-				.len = stream_size,
-				.flags = VIRTQ_DESC_F_NEXT,
-				.next = 0 // Autofill
-			},
-			(struct virtq_desc){
-				.addr = (uintptr_t)(kvc->resp_buf_phys[slot]),
-				.len = sizeof(struct virtio_gpu_ctrl_hdr),
-				.flags = VIRTQ_DESC_F_WRITE,
-				.next = 0xFFFF
-			}
-		};
-
-		uint16_t head = 0;
-		virtio_send_ex(kvc, (struct virtq_desc*)descs, 3, &head);
-		kvc->desc_to_buf[head] = slot;
-		virtio_notify_device(kvc);
-		virtqueue_wait_complete_sync(kvc);
-		ctx->cmd_size = 0;
+		pyrion_submit_cmd_stream_virtio(ctx, &ctx->cmd_stream);
 	}
 	ctx->res_id_rast = 0;
-
-    return;
 }
 
 void pyrion_destroy_ctx_virtio(struct pyrion_ctx* ctx) {
@@ -1496,6 +1443,7 @@ void pyrion_destroy_ctx_virtio(struct pyrion_ctx* ctx) {
     scanout->r.y = 0;
 
 	virtio_submit_sync(kvc, slot, sizeof(*scanout), sizeof(struct virtio_gpu_ctrl_hdr));
+	pyrion_delete_viewport_res(ctx, kvc);
 
 	if (ctx->device_set) pyrion_unuse_device_virtio(ctx);
 	ctx->device_set = AOS_FALSE;
@@ -1504,13 +1452,71 @@ void pyrion_destroy_ctx_virtio(struct pyrion_ctx* ctx) {
 
     virtio_destroy_context(kvc, ctx->ctx_id);
 
-    if (ctx->cmd_buf) {
-		avmf_free((uint64_t)ctx->cmd_buf);
-		ctx->cmd_buf = NULL;
-		ctx->cmd_buf_phys = 0;
+    if (ctx->cmd_stream.stream) {
+		avmf_free((uint64_t)ctx->cmd_stream.stream);
+		ctx->cmd_stream.stream = NULL;
+		ctx->cmd_stream.stream_phys = 0;
+		ctx->cmd_stream.stream_cap = 0;
+		ctx->cmd_stream.stream_count = 0;
 	}
 
+	memset(ctx, 0, sizeof(struct pyrion_ctx));
     p_nxt_ctx = ctx->ctx_id;
+}
+
+aos_bool pyrion_submit_cmd_stream_virtio(struct pyrion_ctx* ctx, struct pyrion_cmd_stream* stream) {
+	if (!ctx || !stream) return AOS_FALSE;
+	if (!ctx->valid || !stream->stream || !stream->stream_phys) return AOS_FALSE;
+	if (ctx->controller_idx >= controller_count || !controllers) return AOS_FALSE;
+
+	if (stream->stream_cap < 1 || stream->stream_cap < stream->stream_count) return AOS_FALSE;
+	if (stream->stream_count < 1) return AOS_TRUE;
+
+	virtio_controller* kvc = &controllers[ctx->controller_idx];
+
+	for (uintptr_t i = (uintptr_t)stream->stream; i < (uintptr_t)stream->stream + stream->stream_count; i += 64) { // 64 is the standard x86 cache line size
+        __asm__ volatile("clflush (%0)" : : "r"(i) : "memory");
+    }
+    __asm__ volatile("mfence" ::: "memory");
+
+	uint64_t slot = wait_for_free_buf(kvc);
+
+    struct virtio_gpu_cmd_submit_3d* virgl = (struct virtio_gpu_cmd_submit_3d*)&kvc->cmd_buf[slot];
+	memset(virgl, 0, sizeof(*virgl));
+    virgl->hdr.type = VIRTIO_GPU_CMD_SUBMIT_3D;
+    virgl->hdr.ctx_id = ctx->ctx_id;
+    virgl->size = stream->stream_count;
+
+	struct virtq_desc descs[3] = {
+		(struct virtq_desc){
+			.addr = (uintptr_t)kvc->cmd_buf_phys[slot],
+			.len = sizeof(*virgl),
+			.flags = VIRTQ_DESC_F_NEXT,
+			.next = 0 // Autofill
+		},
+		(struct virtq_desc){
+			.addr = (uintptr_t)(stream->stream_phys),
+			.len = stream->stream_count,
+			.flags = VIRTQ_DESC_F_NEXT,
+			.next = 0 // Autofill
+		},
+		(struct virtq_desc){
+			.addr = (uintptr_t)(kvc->resp_buf_phys[slot]),
+			.len = sizeof(struct virtio_gpu_ctrl_hdr),
+			.flags = VIRTQ_DESC_F_WRITE,
+			.next = 0xFFFF
+		}
+	};
+
+	uint16_t head = 0;
+	if (!virtio_send_ex(kvc, (struct virtq_desc*)descs, 3, &head)) return AOS_FALSE;
+	kvc->desc_to_buf[head] = slot;
+	virtio_notify_device(kvc);
+	aos_bool out = virtqueue_wait_complete_sync(kvc);
+
+	if (!out) return out;
+	stream->stream_count = 0;
+	return out;
 }
 
 aos_bool pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect viewport) {
@@ -1521,22 +1527,20 @@ aos_bool pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect viewp
 
 	if (ctx->viewport_set) {
 		if (ctx->usable) {
-			if (!pyrion_flush(ctx)) return AOS_FALSE;
+			if (!pyrion_submit_cmd_stream_virtio(ctx, &ctx->cmd_stream)) return AOS_FALSE;
 			ctx->usable = AOS_FALSE;
 		}
 
 		if (viewport.width != ctx->viewport.width || viewport.height != ctx->viewport.height) {
 			ctx->viewport_set = AOS_FALSE;
-			
-			struct pyrion_physical_device pdev = ctx->device;
-			pyrion_unuse_device(ctx);
-			if (!pyrion_use_device(ctx, &pdev, viewport)) return AOS_FALSE;
+			pyrion_delete_viewport_res(ctx, kvc);
+			if (!pyrion_create_viewport_res(ctx, kvc, viewport)) return AOS_FALSE;
 		}
 
-		uint32_t surf_args[1] = {
-			ctx->res_id_scanout
-		};
+		uint32_t surf_args[1] = {ctx->res_id_scanout};
 		pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_DESTROY_OBJECT, VIRTIO_VIRGL_OBJECT_SURFACE, surf_args, 1);
+	} else {
+		if (!pyrion_create_viewport_res(ctx, kvc, viewport)) return AOS_FALSE;
 	}
 
 	ctx->viewport = viewport;
@@ -1559,53 +1563,53 @@ aos_bool pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect viewp
 		return AOS_FALSE;
 	}
 	
-	if (kvc->acceleration_present != 1) {
+	if (!kvc->acceleration_present) {
         serial_print("[VirtIO:GPU] No Acceleration in Viewport/Context!\n");
+		ctx->usable = AOS_TRUE;
+		ctx->viewport_set = AOS_TRUE;
 		return AOS_TRUE;
     }
 
-    uint32_t surf_args[6] = {
-        ctx->res_id_scanout,
-        ctx->res_id_3d,
-        VIRTIO_GPU_FORMAT_A8B8G8R8_UNORM,
-        0,
-        0,
-		0
-    };
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CREATE_OBJECT, VIRTIO_VIRGL_OBJECT_SURFACE, surf_args, 6);
-    uint32_t fb_args[3] = {
-        1,
-        0,
-        ctx->res_id_scanout
-    };
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_FRAMEBUFFER_STATE, VIRTIO_VIRGL_OBJECT_NULL, fb_args, 3);
+    uint32_t surf_args[VIRGL_OBJ_SURFACE_SIZE] = {0};
+	surf_args[VIRGL_OBJ_SURFACE_HANDLE] = ctx->res_id_scanout;
+	surf_args[VIRGL_OBJ_SURFACE_RES_HANDLE] = ctx->res_id_3d;
+	surf_args[VIRGL_OBJ_SURFACE_FORMAT] = PIPE_FORMAT_R8G8B8A8_UNORM;
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CREATE_OBJECT, VIRTIO_VIRGL_OBJECT_SURFACE, surf_args, VIRGL_OBJ_SURFACE_SIZE);
+    
+	uint32_t fb_args[VIRGL_SET_FRAMEBUFFER_STATE_SIZE(1)] = {0};
+	fb_args[VIRGL_SET_FRAMEBUFFER_STATE_NR_CBUFS] = 1;
+	fb_args[VIRGL_SET_FRAMEBUFFER_STATE_CBUF_HANDLE(0)] = ctx->res_id_scanout;
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_FRAMEBUFFER_STATE, VIRTIO_VIRGL_OBJECT_NULL, fb_args, VIRGL_SET_FRAMEBUFFER_STATE_SIZE(1));
 
     float width = (float)viewport.width;
     float height = (float)viewport.height;
 
-    float view_args[6];
-    ((float*)view_args)[0] = width / 2.0f; // Scale X
-    ((float*)view_args)[1] = height / 2.0f; // Scale Y
-    ((float*)view_args)[2] = 0.5f; // Scale Z (Depth)
-    ((float*)view_args)[3] = width / 2.0f; // Translate X
-    ((float*)view_args)[4] = height / 2.0f; // Translate Y
-    ((float*)view_args)[5] = 0.5f; // Translate Z
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_VIEWPORT_STATE, VIRTIO_VIRGL_OBJECT_NULL, (uint32_t*)view_args, 6);
+    float view_args[VIRGL_SET_VIEWPORT_STATE_SIZE(1)] = {0};
+    ((float*)view_args)[VIRGL_SET_VIEWPORT_STATE_SCALE_0(0)] = width / 2.0f; // Scale X
+    ((float*)view_args)[VIRGL_SET_VIEWPORT_STATE_SCALE_1(0)] = height / 2.0f; // Scale Y
+    ((float*)view_args)[VIRGL_SET_VIEWPORT_STATE_SCALE_2(0)] = 0.5f; // Scale Z (Depth)
+    ((float*)view_args)[VIRGL_SET_VIEWPORT_STATE_TRANSLATE_0(0)] = width / 2.0f; // Translate X
+    ((float*)view_args)[VIRGL_SET_VIEWPORT_STATE_TRANSLATE_1(0)] = height / 2.0f; // Translate Y
+    ((float*)view_args)[VIRGL_SET_VIEWPORT_STATE_TRANSLATE_2(0)] = 0.5f; // Translate Z
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_VIEWPORT_STATE, VIRTIO_VIRGL_OBJECT_NULL, (uint32_t*)view_args, VIRGL_SET_VIEWPORT_STATE_SIZE(1));
 
-    uint32_t init_scissor[2] = {0, (viewport.height << 16) | viewport.width};
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, init_scissor, 2);
+    uint32_t init_scissor[VIRGL_SET_SCISSOR_STATE_SIZE(1)] = {0};
+	init_scissor[VIRGL_SET_SCISSOR_MINX_MINY(0)] = (0 << 16) | 0;
+	init_scissor[VIRGL_SET_SCISSOR_MAXX_MAXY(0)] = ((viewport.height & 0xFFFF) << 16) | (viewport.width & 0xFFFF);
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, init_scissor, VIRGL_SET_SCISSOR_STATE_SIZE(1));
+
+	ctx->usable = AOS_TRUE;
+	ctx->viewport_set = AOS_TRUE;
 
     if (!pyrion_flush_virtio(ctx)) {
 		return AOS_FALSE;
 	}
-	ctx->usable = AOS_TRUE;
-	ctx->viewport_set = AOS_TRUE;
 	return AOS_TRUE;
 }
 
 aos_bool pyrion_flush_virtio(struct pyrion_ctx* ctx) {
     if (!ctx) return AOS_FALSE;
-	if (!ctx->valid || !ctx->usable || !ctx->device_set) return AOS_FALSE;
+	if (!ctx->valid || !ctx->usable || !ctx->device_set || !ctx->viewport_set) return AOS_FALSE;
 	if (ctx->controller_idx >= controller_count || !controllers) return AOS_FALSE;
 	virtio_controller* kvc = &controllers[ctx->controller_idx];
 
@@ -1621,7 +1625,8 @@ aos_bool pyrion_flush_virtio(struct pyrion_ctx* ctx) {
         struct virtio_gpu_transfer_to_host_2d* t2d = (struct virtio_gpu_transfer_to_host_2d*)&kvc->cmd_buf[slot];
         memset(t2d, 0, sizeof(*t2d));
         t2d->hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D;
-        t2d->resource_id = ctx->res_id_2d; 
+		t2d->hdr.ctx_id = ctx->ctx_id;
+        t2d->resource_id = ctx->res_id_2d;
         t2d->r.x = ctx->viewport.x;
         t2d->r.y = ctx->viewport.y;
         t2d->r.width = ctx->viewport.width;
@@ -1634,75 +1639,20 @@ aos_bool pyrion_flush_virtio(struct pyrion_ctx* ctx) {
         return AOS_TRUE;
     }
 
-	uint32_t stream_size = ctx->cmd_size;
-    if (!ctx->cmd_buf || stream_size < 1) {
-        uint64_t slot = wait_for_free_buf(kvc);
-
-        struct virtio_gpu_resource_flush* f = (struct virtio_gpu_resource_flush*)&kvc->cmd_buf[slot];
-        memset(f, 0, sizeof(*f));
-        f->hdr.type = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
-        f->hdr.ctx_id = ctx->ctx_id;
-        f->r.x = ctx->viewport.x;
-        f->r.y = ctx->viewport.y;
-        f->r.width = ctx->viewport.width;
-        f->r.height = ctx->viewport.height;
-        f->resource_id = ctx->res_id_2d;
-        f->padding = 0;
-
-        return virtio_submit_async(kvc, slot, sizeof(*f), sizeof(struct virtio_gpu_ctrl_hdr));
-    }
-
-    for (uintptr_t i = (uintptr_t)ctx->cmd_buf; i < (uintptr_t)ctx->cmd_buf + stream_size; i += 64) { // 64 is the standard x86 cache line size
-        __asm__ volatile("clflush (%0)" : : "r"(i) : "memory");
-    }
-    __asm__ volatile("mfence" ::: "memory");
+	if (!pyrion_blit_virtio(ctx, ctx->res_id_2d, ctx->res_id_3d, ctx->viewport.width, ctx->viewport.height)) return AOS_FALSE;
+    if (!pyrion_submit_cmd_stream_virtio(ctx, &ctx->cmd_stream)) return AOS_FALSE;
 
     uint64_t slot = wait_for_free_buf(kvc);
-
-    struct virtio_gpu_cmd_submit_3d* virgl = (struct virtio_gpu_cmd_submit_3d*)&kvc->cmd_buf[slot];
-	memset(virgl, 0, sizeof(*virgl));
-    virgl->hdr.type = VIRTIO_GPU_CMD_SUBMIT_3D;
-    virgl->hdr.ctx_id = ctx->ctx_id;
-    virgl->size = stream_size;
-
-	struct virtq_desc descs[3] = {
-		(struct virtq_desc){
-			.addr = (uintptr_t)kvc->cmd_buf_phys[slot],
-			.len = sizeof(*virgl),
-			.flags = VIRTQ_DESC_F_NEXT,
-			.next = 0 // Autofill
-		},
-		(struct virtq_desc){
-			.addr = (uintptr_t)(ctx->cmd_buf_phys),
-			.len = stream_size,
-			.flags = VIRTQ_DESC_F_NEXT,
-			.next = 0 // Autofill
-		},
-		(struct virtq_desc){
-			.addr = (uintptr_t)(kvc->resp_buf_phys[slot]),
-			.len = sizeof(struct virtio_gpu_ctrl_hdr),
-			.flags = VIRTQ_DESC_F_WRITE,
-			.next = 0xFFFF
-		}
-	};
-
-	uint16_t head = 0;
-	if (!virtio_send_ex(kvc, (struct virtq_desc*)descs, 3, &head)) return AOS_FALSE;
-	kvc->desc_to_buf[head] = slot;
-	virtio_notify_device(kvc);
-	virtqueue_wait_complete_sync(kvc);
-    
-    ctx->cmd_size = 0;
-
-    slot = wait_for_free_buf(kvc);
-    struct virtio_gpu_transfer_to_host_3d* t = (struct virtio_gpu_transfer_to_host_3d*)&kvc->cmd_buf[slot];
+    struct virtio_gpu_transfer_to_host_2d* t = (struct virtio_gpu_transfer_to_host_2d*)&kvc->cmd_buf[slot];
     memset(t, 0, sizeof(*t));
-    t->hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D;
+    t->hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D;
     t->hdr.ctx_id = ctx->ctx_id;
     t->resource_id = ctx->res_id_2d;
-    t->w = ctx->viewport.width;
-    t->h = ctx->viewport.height;
-    t->d = 1;
+    t->r.x = ctx->viewport.x;
+	t->r.y = ctx->viewport.y;
+	t->r.width = ctx->viewport.width;
+	t->r.height = ctx->viewport.height;
+	t->offset = 0;
 
     if (!virtio_submit_sync(kvc, slot, sizeof(*t), sizeof(struct virtio_gpu_ctrl_hdr))) return AOS_FALSE;
     
@@ -1728,18 +1678,21 @@ aos_bool pyrion_clear_virtio(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8
 	if (ctx->controller_idx >= controller_count || !controllers) return AOS_FALSE;
 	virtio_controller* kvc = &controllers[ctx->controller_idx];
 
-    if (kvc->acceleration_present != 1) {
+    if (!kvc->acceleration_present) {
         if (!ctx->fb_info.addr) return AOS_FALSE;
         fb_clear(&ctx->fb_info, rgba_to_u32(r, g, b, a));
         return AOS_TRUE;
     }
 
     float color[4] = {r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f};
-    uint32_t args[5];
-    args[0] = 0x7;
-    memcpy(&args[1], color, sizeof(color));
+    uint32_t args[VIRGL_OBJ_CLEAR_SIZE] = {0};
+    args[VIRGL_OBJ_CLEAR_BUFFERS] = 0x7;
+	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_0] = color[0];
+	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_1] = color[1];
+	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_2] = color[2];
+	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_3] = color[3];
 
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CLEAR, VIRTIO_VIRGL_OBJECT_NULL, args, 5);
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CLEAR, VIRTIO_VIRGL_OBJECT_NULL, args, VIRGL_OBJ_CLEAR_SIZE);
 	return AOS_TRUE;
 }
 
@@ -1754,24 +1707,27 @@ aos_bool pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uin
         fb_put_pixel(&ctx->fb_info, x, y, rgba_to_u32(r, g, b, a));
         return AOS_TRUE;
     }
-    uint32_t scissor_args[2];
-    scissor_args[0] = (y << 16) | x;
-    scissor_args[1] = ((y + 1) << 16) | (x + 1);
+    uint32_t scissor_args[VIRGL_SET_SCISSOR_STATE_SIZE(1)] = {0};
+    scissor_args[VIRGL_SET_SCISSOR_MINX_MINY(1)] = ((y & 0xFFFF) << 16) | (x & 0xFFFF);
+    scissor_args[VIRGL_SET_SCISSOR_MAXX_MAXY(1)] = (((y + 1) & 0xFFFF) << 16) | ((x + 1) & 0xFFFF);
 
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, 2);
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, VIRGL_SET_SCISSOR_STATE_SIZE(1));
     
     float color[4] = {r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f};
-    uint32_t args[5];
-    args[0] = 0x7;
-    memcpy(&args[1], color, sizeof(color));
+    uint32_t args[VIRGL_OBJ_CLEAR_SIZE] = {0};
+    args[VIRGL_OBJ_CLEAR_BUFFERS] = 0x7;
+	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_0] = color[0];
+	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_1] = color[1];
+	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_2] = color[2];
+	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_3] = color[3];
 
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CLEAR, VIRTIO_VIRGL_OBJECT_NULL, args, 5);
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CLEAR, VIRTIO_VIRGL_OBJECT_NULL, args, VIRGL_OBJ_CLEAR_SIZE);
 
-    scissor_args[0] = (ctx->viewport.y << 16) | ctx->viewport.x;
-    scissor_args[1] = ((ctx->viewport.y + ctx->viewport.height) << 16) | (ctx->viewport.x + ctx->viewport.width);
+    scissor_args[VIRGL_SET_SCISSOR_MINX_MINY(1)] = ((ctx->viewport.y & 0xFFFF) << 16) | (ctx->viewport.x & 0xFFFF);
+    scissor_args[VIRGL_SET_SCISSOR_MAXX_MAXY(1)] = (((ctx->viewport.y + ctx->viewport.height) & 0xFFFF) << 16) | ((ctx->viewport.x + ctx->viewport.width) & 0xFFFF);
 
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, 2);
-	return AOS_TRUE;
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, VIRGL_SET_SCISSOR_STATE_SIZE(1));
+    return AOS_TRUE;
 }
 
 aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, uint32_t w, uint32_t h, uint32_t font_res_id) {
@@ -1780,32 +1736,35 @@ aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y,
 	if (ctx->controller_idx >= controller_count || !controllers) return AOS_FALSE;
 	virtio_controller* kvc = &controllers[ctx->controller_idx];
 
-    if (kvc->acceleration_present != 1) {
+    if (!kvc->acceleration_present) {
         if (!ctx->fb_info.addr) return AOS_FALSE;
-        uint8_t char_idx = (atlas_y / 16) * 16 + (atlas_x / 8);
+		if (!ctx->font_ready) return AOS_FALSE;
 
-		ctx->fb_cursor.x = x;
-		ctx->fb_cursor.y = y;
-		fb_printc(&ctx->fb_info, &ctx->fb_cursor, char_idx);
+		for (uint32_t row = 0; row < h; row++) {
+			uint32_t* src = ctx->font.atlas + ((atlas_y + row) * ctx->font.w) + atlas_x;
+			uint32_t* dst = (uint32_t*)((uintptr_t)ctx->fb_info.addr + (((y + row) * ctx->fb_info.width) + x) * (ctx->fb_info.bpp * 8));
+
+			memcpy(dst, src, w * (ctx->fb_info.bpp * 8));
+		}
         
         return AOS_TRUE;
     }
-    uint32_t args[13];
-    args[0] = ctx->res_id_3d; // Destination (The Window)
-    args[1] = 0; // Dest level
-    args[2] = x; // Dest X
-    args[3] = y; // Dest Y
-    args[4] = 0; // Dest Z
-    args[5] = font_res_id; // Source (The Font Atlas)
-    args[6] = 0; // Source level
-    args[7] = atlas_x; // Source X (Where char is in atlas)
-    args[8] = atlas_y; // Source Y
-    args[9] = 0; // Source Z
-    args[10] = w; // Width of char
-    args[11] = h; // Height of char
-    args[12] = 1; // Depth
+    uint32_t args[VIRGL_CMD_RESOURCE_COPY_REGION_SIZE] = {0};
+    args[VIRGL_CMD_RCR_DST_RES_HANDLE] = ctx->res_id_3d; // Destination (The Window)
+    args[VIRGL_CMD_RCR_DST_LEVEL] = 0; // Dest level
+    args[VIRGL_CMD_RCR_DST_X] = x; // Dest X
+    args[VIRGL_CMD_RCR_DST_Y] = y; // Dest Y
+    args[VIRGL_CMD_RCR_DST_Z] = 0; // Dest Z
+    args[VIRGL_CMD_RCR_SRC_RES_HANDLE] = font_res_id; // Source (The Font Atlas)
+    args[VIRGL_CMD_RCR_SRC_LEVEL] = 0; // Source level
+    args[VIRGL_CMD_RCR_SRC_X] = atlas_x; // Source X (Where char is in atlas)
+    args[VIRGL_CMD_RCR_SRC_Y] = atlas_y; // Source Y
+    args[VIRGL_CMD_RCR_SRC_Z] = 0; // Source Z
+    args[VIRGL_CMD_RCR_SRC_W] = w; // Width of char
+    args[VIRGL_CMD_RCR_SRC_H] = h; // Height of char
+    args[VIRGL_CMD_RCR_SRC_D] = 1; // Depth
 
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_RESOURCE_COPY_REGION, VIRTIO_VIRGL_OBJECT_NULL, args, 13);
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_RESOURCE_COPY_REGION, VIRTIO_VIRGL_OBJECT_NULL, args, VIRGL_CMD_RESOURCE_COPY_REGION_SIZE);
 	return AOS_TRUE;
 }
 
@@ -1842,34 +1801,32 @@ uint32_t pyrion_upload_font_virtio(struct pyrion_ctx* ctx, uint64_t atlas_phys, 
 	ctx->font.h = atlas_total_h;
 	ctx->font.total_h = atlas_total_h;
 
-	if (kvc->acceleration_present != 1) {
-        return res_id;
-    }
+	if (!kvc->acceleration_present) {
+		return res_id;
+	}
+	uint64_t slot = wait_for_free_buf(kvc);
 
-    // Create 3D Resource
-    uint64_t slot = wait_for_free_buf(kvc);
-
-    struct virtio_gpu_resource_create_3d* c3d = (struct virtio_gpu_resource_create_3d*)&kvc->cmd_buf[slot];
-    memset(c3d, 0, sizeof(*c3d));
-    c3d->hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_3D;
-    c3d->hdr.ctx_id = ctx->ctx_id;
-    c3d->resource_id = res_id;
-    c3d->target = VIRTIO_GPU_PIPE_TEXTURE_2D;
-    c3d->format = VIRTIO_GPU_FORMAT_A8B8G8R8_UNORM;
-    c3d->bind = VIRTIO_GPU_BIND_SAMPLER_VIEW;
-    c3d->width = atlas_w;
-    c3d->height = atlas_total_h;
-    c3d->depth = 1;
+	// Create 3D Resource
+	struct virtio_gpu_resource_create_3d* c3d = (struct virtio_gpu_resource_create_3d*)&kvc->cmd_buf[slot];
+	memset(c3d, 0, sizeof(*c3d));
+	c3d->hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_3D;
+	c3d->resource_id = res_id;
+	c3d->target = PIPE_TEXTURE_2D;
+	c3d->format = PIPE_FORMAT_R8G8B8A8_UNORM;
+	c3d->bind = PIPE_BIND_SAMPLER_VIEW;
+	c3d->width = atlas_w;
+	c3d->height = atlas_total_h;
+	c3d->depth = 1;
 	c3d->last_level = 0;
-    c3d->nr_samples = 0;
-    c3d->flags = 0;
-    if (!virtio_submit_sync(kvc, slot, sizeof(*c3d), sizeof(struct virtio_gpu_ctrl_hdr))) return 0;
+	c3d->nr_samples = 0;
+	c3d->flags = 0;
+	if (!virtio_submit_sync(kvc, slot, sizeof(*c3d), sizeof(struct virtio_gpu_ctrl_hdr))) return 0;
 
-    struct virtio_gpu_ctrl_hdr* resp = (struct virtio_gpu_ctrl_hdr*)&kvc->resp_buf[slot];
-    if (resp->type != VIRTIO_GPU_RESP_OK_NODATA) {
-        serial_printf("[VIRTIO:PYRION] Font upload failed (during create). resp type: 0x%x\n", resp->type);
-        return 0;
-    }
+	struct virtio_gpu_ctrl_hdr* resp = (struct virtio_gpu_ctrl_hdr*)&kvc->resp_buf[slot];
+	if (resp->type != VIRTIO_GPU_RESP_OK_NODATA) {
+		serial_printf("[VIRTIO:PYRION] Font upload failed (during create). resp type: 0x%x\n", resp->type);
+		return 0;
+	}
 
     // Attach Backing
     struct cmd_struct {
@@ -1881,7 +1838,6 @@ uint32_t pyrion_upload_font_virtio(struct pyrion_ctx* ctx, uint64_t atlas_phys, 
     struct cmd_struct* cmd = (struct cmd_struct*)&kvc->cmd_buf[slot];
     memset(cmd, 0, sizeof(*cmd));
     cmd->att.hdr.type = VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING;
-    cmd->att.hdr.ctx_id = 0;
     cmd->att.resource_id = res_id;
     cmd->att.nr_entries = 1;
     cmd->entry.addr = atlas_phys;
@@ -1913,16 +1869,16 @@ uint32_t pyrion_upload_font_virtio(struct pyrion_ctx* ctx, uint64_t atlas_phys, 
     // Transfer to Host
     slot = wait_for_free_buf(kvc);
 
-    struct virtio_gpu_transfer_to_host_3d* t = (struct virtio_gpu_transfer_to_host_3d*)&kvc->cmd_buf[slot];
-    memset(t, 0, sizeof(*t));
-    t->hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D;
-    t->hdr.ctx_id = ctx->ctx_id;
-    t->resource_id = res_id;
-    t->w = atlas_w;
-    t->h = atlas_total_h;
-    t->d = 1;
-    if (!virtio_submit_sync(kvc, slot, sizeof(*t), sizeof(struct virtio_gpu_ctrl_hdr))) return 0;
-
+	struct virtio_gpu_transfer_to_host_3d* t = (struct virtio_gpu_transfer_to_host_3d*)&kvc->cmd_buf[slot];
+	memset(t, 0, sizeof(*t));
+	t->hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D;
+	t->hdr.ctx_id = ctx->ctx_id;
+	t->resource_id = res_id;
+	t->w = atlas_w;
+	t->h = atlas_total_h;
+	t->d = 1;
+	if (!virtio_submit_sync(kvc, slot, sizeof(*t), sizeof(struct virtio_gpu_ctrl_hdr))) return 0;
+	
     resp = (struct virtio_gpu_ctrl_hdr*)&kvc->resp_buf[slot];
     if (resp->type != VIRTIO_GPU_RESP_OK_NODATA) {
         serial_printf("[VIRTIO:PYRION] Font upload failed (during transfer). resp type: %x\n", resp->type);
@@ -1943,60 +1899,64 @@ aos_bool pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint
         fb_draw_rect(&ctx->fb_info, x, y, w, h, rgba_to_u32(r, g, b, a));
         return AOS_TRUE;
     }
-    uint32_t scissor_args[2];
-    scissor_args[0] = (y << 16) | x;
-    scissor_args[1] = ((y + h) << 16) | (x + w);
 
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, 2);
+	uint32_t scissor_args[VIRGL_SET_SCISSOR_STATE_SIZE(1)] = {0};
+    scissor_args[VIRGL_SET_SCISSOR_MINX_MINY(1)] = ((y & 0xFFFF) << 16) | (x & 0xFFFF);
+    scissor_args[VIRGL_SET_SCISSOR_MAXX_MAXY(1)] = (((y + h) & 0xFFFF) << 16) | ((x + w) & 0xFFFF);
+
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, VIRGL_SET_SCISSOR_STATE_SIZE(1));
     
     float color[4] = {r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f};
-    uint32_t args[5];
-    args[0] = 0x7;
-    memcpy(&args[1], color, sizeof(color));
+    uint32_t args[VIRGL_OBJ_CLEAR_SIZE] = {0};
+    args[VIRGL_OBJ_CLEAR_BUFFERS] = 0x7;
+	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_0] = color[0];
+	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_1] = color[1];
+	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_2] = color[2];
+	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_3] = color[3];
 
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CLEAR, VIRTIO_VIRGL_OBJECT_NULL, args, 5);
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CLEAR, VIRTIO_VIRGL_OBJECT_NULL, args, VIRGL_OBJ_CLEAR_SIZE);
 
-    scissor_args[0] = (ctx->viewport.y << 16) | ctx->viewport.x;
-    scissor_args[1] = ((ctx->viewport.y + ctx->viewport.height) << 16) | (ctx->viewport.x + ctx->viewport.width);
+    scissor_args[VIRGL_SET_SCISSOR_MINX_MINY(1)] = ((ctx->viewport.y & 0xFFFF) << 16) | (ctx->viewport.x & 0xFFFF);
+    scissor_args[VIRGL_SET_SCISSOR_MAXX_MAXY(1)] = (((ctx->viewport.y + ctx->viewport.height) & 0xFFFF) << 16) | ((ctx->viewport.x + ctx->viewport.width) & 0xFFFF);
 
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, 2);
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, VIRGL_SET_SCISSOR_STATE_SIZE(1));
 	return AOS_TRUE;
 }
 
-aos_bool pyrion_blit(struct pyrion_ctx *ctx, uint32_t dst_res, uint32_t src_res, uint32_t width, uint32_t height){
+aos_bool pyrion_blit_virtio(struct pyrion_ctx *ctx, uint32_t dst_res, uint32_t src_res, uint32_t width, uint32_t height){
 	if (!ctx) return AOS_FALSE;
 	if (!ctx->valid || !ctx->usable || !ctx->device_set) return AOS_FALSE;
 	if (ctx->controller_idx >= controller_count || !controllers) return AOS_FALSE;
 
-    uint32_t args[21] = {0};
-    args[0] = VIRGL_CMD_BLIT_S0_MASK(PIPE_MASK_RGBA) | VIRGL_CMD_BLIT_S0_FILTER(PIPE_TEX_FILTER_NEAREST);
+    uint32_t args[VIRGL_CMD_BLIT_SIZE] = {0};
+    args[VIRGL_CMD_BLIT_S0] = VIRGL_CMD_BLIT_S0_MASK(PIPE_MASK_RGBA) | VIRGL_CMD_BLIT_S0_FILTER(PIPE_TEX_FILTER_NEAREST);
 
     // Scissor
-    args[1] = 0;
-    args[2] = (height << 16) | width;
+    args[VIRGL_CMD_BLIT_SCISSOR_MINX_MINY] = 0;
+    args[VIRGL_CMD_BLIT_SCISSOR_MAXX_MAXY] = (height << 16) | width;
 
     // DEST
-    args[3]  = dst_res;
-    args[4]  = 0; // level
-    args[5]  = VIRTIO_GPU_FORMAT_A8B8G8R8_UNORM;
-    args[6]  = 0; // x
-    args[7]  = 0; // y
-    args[8]  = 0; // z
-    args[9]  = width;
-    args[10] = height;
-    args[11] = 1;
+    args[VIRGL_CMD_BLIT_DST_RES_HANDLE] = dst_res;
+    args[VIRGL_CMD_BLIT_DST_LEVEL] = 0; // level
+    args[VIRGL_CMD_BLIT_DST_FORMAT] = PIPE_FORMAT_R8G8B8A8_UNORM;
+    args[VIRGL_CMD_BLIT_DST_X] = 0; // x
+    args[VIRGL_CMD_BLIT_DST_Y] = 0; // y
+    args[VIRGL_CMD_BLIT_DST_Z] = 0; // z
+    args[VIRGL_CMD_BLIT_DST_W] = width;
+    args[VIRGL_CMD_BLIT_DST_H] = height;
+    args[VIRGL_CMD_BLIT_DST_D] = 1;
 
     // SRC
-    args[12] = src_res;
-    args[13] = 0; // level
-    args[14] = VIRTIO_GPU_FORMAT_A8B8G8R8_UNORM;
-    args[15] = 0; // x
-    args[16] = 0; // y
-    args[17] = 0; // z
-    args[18] = width;
-    args[19] = height;
-    args[20] = 1;
+	args[VIRGL_CMD_BLIT_SRC_RES_HANDLE] = src_res;
+    args[VIRGL_CMD_BLIT_SRC_LEVEL] = 0; // level
+    args[VIRGL_CMD_BLIT_SRC_FORMAT] = PIPE_FORMAT_R8G8B8A8_UNORM;
+    args[VIRGL_CMD_BLIT_SRC_X] = 0; // x
+    args[VIRGL_CMD_BLIT_SRC_Y] = 0; // y
+    args[VIRGL_CMD_BLIT_SRC_Z] = 0; // z
+    args[VIRGL_CMD_BLIT_SRC_W] = width;
+    args[VIRGL_CMD_BLIT_SRC_H] = height;
+    args[VIRGL_CMD_BLIT_SRC_D] = 1;
 
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_BLIT, VIRTIO_VIRGL_OBJECT_NULL, args, 21);
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_BLIT, VIRTIO_VIRGL_OBJECT_NULL, args, VIRGL_CMD_BLIT_SIZE);
 	return AOS_TRUE;
 }

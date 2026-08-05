@@ -116,9 +116,10 @@ aos_bool modules_init(void) {
                 .finish = pyrion_finish_virtio,
                 .create_ctx = pyrion_create_ctx_virtio,
                 .destroy_ctx = pyrion_destroy_ctx_virtio,
-				.pyrion_unuse_device = pyrion_unuse_device_virtio,
-				.pyrion_enumerate_physical_devices = pyrion_enumerate_physical_devices_virtio,
-				.pyrion_use_device = pyrion_use_device_virtio,
+				.unuse_device = pyrion_unuse_device_virtio,
+				.enumerate_physical_devices = pyrion_enumerate_physical_devices_virtio,
+				.use_device = pyrion_use_device_virtio,
+				.submit_cmd_stream = pyrion_submit_cmd_stream_virtio,
                 .flush = pyrion_flush_virtio,
                 .viewport = pyrion_viewport_virtio,
                 .clear = pyrion_clear_virtio,
@@ -126,7 +127,8 @@ aos_bool modules_init(void) {
                 .draw_rect = pyrion_rect_virtio,
                 .upload_font = pyrion_upload_font_virtio,
                 .destroy_font = pyrion_destroy_font_virtio,
-                .draw_char = pyrion_draw_char_virtio
+                .draw_char = pyrion_draw_char_virtio,
+				.blit = pyrion_blit
             },
 
             .active = AOS_FALSE,

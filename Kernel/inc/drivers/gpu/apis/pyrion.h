@@ -51,6 +51,15 @@ struct pyrion_physical_device {
 	size_t cmd_core; // Extra Async Core Index for Command Submission (0xFFFF is none)
 };
 
+// Pyrion Command Stream Structure
+struct pyrion_cmd_stream {
+	uint64_t stream_phys; // Command Stream Physical Address
+	void* stream; // Command Stream Pointer
+
+	uint64_t stream_cap; // Command Stream Capacity (in bytes)
+	uint64_t stream_count; // Command Stream Count (in bytes)
+};
+
 // Pyrion Context Structure
 struct pyrion_ctx {
     uint64_t ctx_id; // Context ID
@@ -70,10 +79,7 @@ struct pyrion_ctx {
     aos_bool font_ready; // Built-In Font Ready (Internal)
     struct pyrion_font font; // Built-In Font (Internal)
     
-    void* cmd_buf; // Default Command Buffer
-	uint64_t cmd_buf_phys; // Default Command Buffer Physical address
-	uint64_t cmd_size; // Default Command Buffer Size (in bytes)
-	uint64_t cmd_cap; // Default Command Buffer Capacity (in bytes)
+    struct pyrion_cmd_stream cmd_stream; // Default Command Stream
 
     struct pyrion_rect viewport; // Viewport
 	aos_bool viewport_set; // Viewport is initialized
@@ -92,10 +98,12 @@ struct pyrion_api {
     
     struct pyrion_ctx* (*create_ctx)(struct pyrion_create_ctx_info ctx_info);
     void (*destroy_ctx)(struct pyrion_ctx* ctx);
-	void (*pyrion_unuse_device)(struct pyrion_ctx* ctx);
+	void (*unuse_device)(struct pyrion_ctx* ctx);
 
-	aos_bool (*pyrion_enumerate_physical_devices)(size_t* count, size_t idx, struct pyrion_physical_device* out);
-	aos_bool (*pyrion_use_device)(struct pyrion_ctx* ctx, struct pyrion_physical_device* dev, struct pyrion_rect viewport);
+	aos_bool (*enumerate_physical_devices)(size_t* count, size_t idx, struct pyrion_physical_device* out);
+	aos_bool (*use_device)(struct pyrion_ctx* ctx, struct pyrion_physical_device* dev);
+
+	aos_bool (*submit_cmd_stream)(struct pyrion_ctx* ctx, struct pyrion_cmd_stream* stream);
 
     aos_bool (*flush)(struct pyrion_ctx* ctx);
     aos_bool (*viewport)(struct pyrion_ctx* ctx, struct pyrion_rect viewport);
@@ -108,6 +116,7 @@ struct pyrion_api {
     void (*destroy_font)(struct pyrion_ctx* ctx, uint32_t font_res_id, void* font_mem);
 
     aos_bool (*draw_char)(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, uint32_t w, uint32_t h, uint32_t font_res_id);
+	aos_bool (*blit)(struct pyrion_ctx *ctx, uint32_t dst_res, uint32_t src_res, uint32_t width, uint32_t height);
 };
 
 struct gpu_device;
@@ -121,7 +130,9 @@ void pyrion_destroy_ctx(struct pyrion_ctx* ctx) __attribute__((used));
 void pyrion_unuse_device(struct pyrion_ctx* ctx) __attribute__((used));
 
 aos_bool pyrion_enumerate_physical_devices(size_t* count, size_t idx, struct pyrion_physical_device* out) __attribute__((used));
-aos_bool pyrion_use_device(struct pyrion_ctx* ctx, struct pyrion_physical_device* dev, struct pyrion_rect viewport) __attribute__((used));
+aos_bool pyrion_use_device(struct pyrion_ctx* ctx, struct pyrion_physical_device* dev) __attribute__((used));
+
+aos_bool pyrion_submit_cmd_stream(struct pyrion_ctx* ctx, struct pyrion_cmd_stream* stream) __attribute__((used));
 
 aos_bool pyrion_builtin_printc(struct pyrion_ctx* ctx, char c) __attribute__((used));
 aos_bool pyrion_builtin_print(struct pyrion_ctx* ctx, const char* str) __attribute__((used));
@@ -133,6 +144,7 @@ aos_bool pyrion_pixel(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t c
 aos_bool pyrion_flush(struct pyrion_ctx* ctx); __attribute__((used));
 aos_bool pyrion_viewport(struct pyrion_ctx* ctx, struct pyrion_rect viewport) __attribute__((used));
 aos_bool pyrion_set_cursor(struct pyrion_ctx* ctx, uint32_t x, uint32_t y) __attribute__((used));
+aos_bool pyrion_blit(struct pyrion_ctx *ctx, uint32_t dst_res, uint32_t src_res, uint32_t width, uint32_t height) __attribute__((used));
 
 // SWITCH OFF THE GPU, NOT APPLICABLE TO USER APPLICATIONS
 aos_bool pyrion_switch_off(void) __attribute__((used));

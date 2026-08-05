@@ -144,22 +144,27 @@ void pyrion_destroy_ctx(struct pyrion_ctx* ctx) {
 
 void pyrion_unuse_device(struct pyrion_ctx* ctx) {
 	if (!ctx) return;
-	gdevice->pyrion.pyrion_unuse_device(ctx);
+	gdevice->pyrion.unuse_device(ctx);
 }
 
 aos_bool pyrion_enumerate_physical_devices(size_t* count, size_t idx, struct pyrion_physical_device* out) {
 	if (!count && !out) return AOS_FALSE;
-	return gdevice->pyrion.pyrion_enumerate_physical_devices(count, idx, out);
+	return gdevice->pyrion.enumerate_physical_devices(count, idx, out);
 }
 
-aos_bool pyrion_use_device(struct pyrion_ctx* ctx, struct pyrion_physical_device* dev, struct pyrion_rect viewport) {
+aos_bool pyrion_use_device(struct pyrion_ctx* ctx, struct pyrion_physical_device* dev) {
 	if (!ctx || !dev) return AOS_FALSE;
-	return gdevice->pyrion.pyrion_use_device(ctx, dev, viewport);
+	return gdevice->pyrion.use_device(ctx, dev);
 }
 
 aos_bool pyrion_viewport(struct pyrion_ctx* ctx, struct pyrion_rect viewport) {
     if (!ctx) return AOS_FALSE;
     return gdevice->pyrion.viewport(ctx, viewport);
+}
+
+aos_bool pyrion_submit_cmd_stream(struct pyrion_ctx* ctx, struct pyrion_cmd_stream* stream) {
+	if (!ctx || !stream) return AOS_FALSE;
+	return gdevice->pyrion.submit_cmd_stream(ctx, stream);
 }
 
 aos_bool pyrion_conf(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t fg, uint32_t bg) {
@@ -188,6 +193,11 @@ aos_bool pyrion_pixel(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t c
     uint8_t r, g, b, a;
     pyrion_extract_rgba(ctx->cformat, color, &r, &g, &b, &a);
     return gdevice->pyrion.pixel(ctx, x, y, r, g, b, a);
+}
+
+aos_bool pyrion_blit(struct pyrion_ctx *ctx, uint32_t dst_res, uint32_t src_res, uint32_t width, uint32_t height) {
+	if (!ctx) return AOS_FALSE;
+	return gdevice->pyrion.blit(ctx, dst_res, src_res, width, height);
 }
 
 aos_bool pyrion_set_cursor(struct pyrion_ctx* ctx, uint32_t x, uint32_t y) {

@@ -212,7 +212,7 @@ void start_vshell(void) {
 	}
 
     vshell_ctx->cformat = PYRION_COLORF_RGBA;
-    if (!pyrion_viewport(vshell_ctx, &vshell_viewport)) {
+    if (!pyrion_viewport(vshell_ctx, vshell_viewport)) {
 		pyrion_destroy_ctx(vshell_ctx);
 		return;
 	}
