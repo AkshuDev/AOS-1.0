@@ -31,10 +31,16 @@ struct pyrion_display_info {
 struct pyrion_font {
     uint32_t* atlas; // Atlas data in RAM
     uint64_t atlas_phys; // Atlas data in RAM (Physical Address)
+	
     uint32_t res_id; // Resource-ID of Font
-    uint32_t w; // Width of Font
-    uint32_t h; // Height of Font
-    uint32_t total_h; // Total Height of Font
+
+    uint32_t w; // Width of Font Atlas
+    uint32_t h; // Height of Font Atlas
+
+	uint32_t glyph_w; // Width of Glyph
+	uint32_t glyph_h; // Height of Glyph
+
+	aos_bool valid; // Font is Valid
 };
 
 // Pyrion Create Info Structure
@@ -68,6 +74,7 @@ struct pyrion_ctx {
 	uint64_t res_id_2d; // Resource ID of 2D Texture
 	uint64_t res_id_scanout; // Scanout/Surface Handle
 	uint64_t res_id_rast; // Rasterization Handle
+	uint64_t res_id_blend; // Blend State Handle
 
 	uint64_t controller_idx; // Device Driver Index
 
@@ -76,13 +83,14 @@ struct pyrion_ctx {
     struct pyrion_display_info display_info; // Display Information
     enum pyrion_color_format cformat; // Color Format
 
-    aos_bool font_ready; // Built-In Font Ready (Internal)
-    struct pyrion_font font; // Built-In Font (Internal)
+    struct pyrion_font font; // Built-In Font
     
     struct pyrion_cmd_stream cmd_stream; // Default Command Stream
 
     struct pyrion_rect viewport; // Viewport
 	aos_bool viewport_set; // Viewport is initialized
+
+	aos_bool flush_needed; // A Dirty Marker, which lets flush optimise and skip non-required flushes
 
 	struct pyrion_physical_device device; // Physical Device being used
 	aos_bool device_set; // Physical Device Structures Initialized
@@ -112,10 +120,10 @@ struct pyrion_api {
     aos_bool (*pixel)(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
     aos_bool (*draw_rect)(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
 
-    uint32_t (*upload_font)(struct pyrion_ctx* ctx, uint64_t atlas_phys, uint32_t* atlas, uint32_t atlas_w, uint32_t atlas_total_h);
-    void (*destroy_font)(struct pyrion_ctx* ctx, uint32_t font_res_id, void* font_mem);
+    aos_bool (*upload_font)(struct pyrion_ctx* ctx, struct pyrion_font font, struct pyrion_font* out);
+    void (*destroy_font)(struct pyrion_ctx* ctx, struct pyrion_font* font);
 
-    aos_bool (*draw_char)(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, uint32_t w, uint32_t h, uint32_t font_res_id);
+    aos_bool (*draw_char)(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, struct pyrion_font* font);
 	aos_bool (*blit)(struct pyrion_ctx *ctx, uint32_t dst_res, uint32_t src_res, uint32_t width, uint32_t height);
 };
 
@@ -138,6 +146,9 @@ aos_bool pyrion_builtin_printc(struct pyrion_ctx* ctx, char c) __attribute__((us
 aos_bool pyrion_builtin_print(struct pyrion_ctx* ctx, const char* str) __attribute__((used));
 aos_bool pyrion_builtin_printf(struct pyrion_ctx* ctx, const char* fmt, ...) __attribute__((used));
 aos_bool pyrion_builtin_draw_rect(struct pyrion_ctx* ctx, struct pyrion_rect rect) __attribute__((used));
+
+aos_bool pyrion_upload_font(struct pyrion_ctx* ctx, struct pyrion_font font, struct pyrion_font* out) __attribute__((used));
+void pyrion_destroy_font(struct pyrion_ctx* ctx, struct pyrion_font* font) __attribute__((used));
 
 aos_bool pyrion_clear(struct pyrion_ctx* ctx, uint32_t color) __attribute__((used));
 aos_bool pyrion_pixel(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t color) __attribute__((used));

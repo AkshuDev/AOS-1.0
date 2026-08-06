@@ -1065,12 +1065,12 @@ static aos_bool virtio_destroy_context(virtio_controller* kvc, uint32_t ctx_id) 
 #define RES_ID_3D_BASE (MAX_PYRION_CONTEXTS * 2)
 #define RES_ID_SCANOUT_BASE (MAX_PYRION_CONTEXTS * 3)
 #define RES_ID_RAST_BASE (MAX_PYRION_CONTEXTS * 4)
+#define RES_ID_BLEND_BASE (MAX_PYRION_CONTEXTS * 5)
+
+#define RES_ID_FONT_BASE (RES_ID_BLEND_BASE + MAX_PYRION_CONTEXTS)
 
 static struct pyrion_ctx* p_contexts[MAX_PYRION_CONTEXTS];
 static uint64_t p_nxt_ctx = 0xFFFFFFFFFFFFFFFF;
-static uint32_t current_font_resource_id = 999;
-
-extern uint8_t font8x16[256][16];
 
 aos_bool pyrion_init_virtio(void) {
 	uint64_t init = 0;
@@ -1086,6 +1086,8 @@ aos_bool pyrion_init_virtio(void) {
 		ctx->usable = AOS_FALSE;
 		ctx->device_set = AOS_FALSE;
 		ctx->viewport_set = AOS_FALSE;
+
+		ctx->flush_needed = AOS_TRUE; // Flush is needed the first time
 
 		ctx->controller_idx = 0; // Default
         p_contexts[i] = ctx;
@@ -1136,15 +1138,12 @@ static void pyrion_push_virgl_ex(struct pyrion_ctx* ctx, struct pyrion_cmd_strea
 
     uint32_t* write_ptr = (uint32_t*)((uintptr_t)stream->stream + current_size);
     *write_ptr = VIRGL_CMD_HEADER(opcode, obj_type, arg_count & 0xFF);
-	//serial_printf("VIRGL: %02llX ", *write_ptr);
     write_ptr++;
 
     for (uint32_t i = 0; i < arg_count; i++) {
         *write_ptr = args[i];
-		//serial_printf("%02llX ", *write_ptr);
         write_ptr++;
     }
-	//serial_printc('\n');
     
     stream->stream_count += (1 + arg_count) * sizeof(uint32_t);
 }
@@ -1154,6 +1153,7 @@ static void pyrion_push_virgl(struct pyrion_ctx* ctx, uint32_t opcode, uint32_t 
 	if (!ctx->valid) return;
 	
 	pyrion_push_virgl_ex(ctx, &ctx->cmd_stream, opcode, obj_type, args, arg_count);
+	ctx->flush_needed = AOS_TRUE;
 }
 
 static uint32_t rgba_to_u32(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
@@ -1184,6 +1184,8 @@ struct pyrion_ctx* pyrion_create_ctx_virtio(struct pyrion_create_ctx_info ctx_in
     ctx->viewport.x = 0; ctx->viewport.y=0; ctx->viewport.width=0; ctx->viewport.height=0; ctx->viewport.color = 0;
     ctx->valid = AOS_TRUE;
 	ctx->usable = AOS_FALSE;
+
+	ctx->flush_needed = AOS_TRUE;
 
     serial_print("[Pyrion] Context Created\n");
     return ctx;
@@ -1223,7 +1225,7 @@ static aos_bool pyrion_create_viewport_res(struct pyrion_ctx* ctx, virtio_contro
 	memset(c2d, 0, sizeof(*c2d));
 	c2d->hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_2D;
 	c2d->resource_id = ctx->res_id_2d;
-	c2d->format = VIRTIO_GPU_FORMAT_A8B8G8R8_UNORM;
+	c2d->format = VIRTIO_GPU_FORMAT_R8G8B8A8_UNORM;
 	c2d->width = viewport.width;
 	c2d->height = viewport.height;
 
@@ -1249,12 +1251,12 @@ static aos_bool pyrion_create_viewport_res(struct pyrion_ctx* ctx, virtio_contro
 		c3d->resource_id = ctx->res_id_3d;
 		c3d->target = PIPE_TEXTURE_2D;
 		c3d->format = PIPE_FORMAT_R8G8B8A8_UNORM;
-		c3d->bind = PIPE_BIND_RENDER_TARGET;
+		c3d->bind = PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW;
 		c3d->width = viewport.width;
 		c3d->height = viewport.height;
 		c3d->depth = 1;
 		c3d->last_level = 0;
-		c3d->nr_samples = 0;
+		c3d->nr_samples = 1;
 		c3d->array_size = 1;
 		c3d->flags = VIRTIO_GPU_RESOURCE_FLAG_Y_0_TOP;
 
@@ -1388,7 +1390,7 @@ aos_bool pyrion_use_device_virtio(struct pyrion_ctx* ctx, struct pyrion_physical
 	ctx->controller_idx = dev->idx;
 	ctx->device_set = AOS_TRUE;
 
-	// Set Rasterizer and Flush VIRGL Commands
+	// Set Rasterizer
 	ctx->res_id_rast = ctx->ctx_id + RES_ID_RAST_BASE;
 	uint32_t rast_handle = ctx->res_id_rast;
     uint32_t rast_args[VIRGL_OBJ_RS_SIZE] = {0};
@@ -1399,6 +1401,17 @@ aos_bool pyrion_use_device_virtio(struct pyrion_ctx* ctx, struct pyrion_physical
     pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CREATE_OBJECT, VIRTIO_VIRGL_OBJECT_RASTERIZER, rast_args, VIRGL_OBJ_RS_SIZE);
     pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_BIND_OBJECT, VIRTIO_VIRGL_OBJECT_RASTERIZER, &rast_handle, 1);
 
+	// Set Blend State
+	ctx->res_id_blend = ctx->ctx_id + RES_ID_BLEND_BASE;
+	uint32_t blend_handle = ctx->res_id_blend;
+    uint32_t blend_args[VIRGL_OBJ_BLEND_SIZE] = {0};
+    blend_args[VIRGL_OBJ_BLEND_HANDLE] = blend_handle;
+    blend_args[VIRGL_OBJ_BLEND_S1] = VIRGL_OBJ_BLEND_S1_LOGICOP_FUNC(PIPE_LOGICOP_NOOP);
+	blend_args[VIRGL_OBJ_BLEND_S2(0)] = VIRGL_OBJ_BLEND_S2_RT_RGB_SRC_FACTOR(PIPE_BLENDFACTOR_ONE) | VIRGL_OBJ_BLEND_S2_RT_RGB_FUNC(PIPE_BLEND_ADD) | VIRGL_OBJ_BLEND_S2_RT_ALPHA_SRC_FACTOR(PIPE_BLENDFACTOR_ONE) | VIRGL_OBJ_BLEND_S2_RT_ALPHA_FUNC(PIPE_BLEND_ADD);
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CREATE_OBJECT, VIRTIO_VIRGL_OBJECT_BLEND, blend_args, VIRGL_OBJ_BLEND_SIZE);
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_BIND_OBJECT, VIRTIO_VIRGL_OBJECT_BLEND, &blend_handle, 1);
+
+	// Flush VIRGL
 	if (!pyrion_submit_cmd_stream_virtio(ctx, &ctx->cmd_stream)) {
 		pyrion_unuse_device(ctx);
 		return AOS_FALSE;
@@ -1419,9 +1432,16 @@ void pyrion_unuse_device_virtio(struct pyrion_ctx* ctx) {
 	if (ctx->res_id_rast > RES_ID_RAST_BASE && ctx->res_id_rast <= RES_ID_RAST_BASE + MAX_PYRION_CONTEXTS) {
 		uint32_t args[1] = {ctx->res_id_rast};
 		pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_DESTROY_OBJECT, VIRTIO_VIRGL_OBJECT_RASTERIZER, args, 1);
-		pyrion_submit_cmd_stream_virtio(ctx, &ctx->cmd_stream);
 	}
 	ctx->res_id_rast = 0;
+
+	if (ctx->res_id_blend > RES_ID_BLEND_BASE && ctx->res_id_blend <= RES_ID_BLEND_BASE + MAX_PYRION_CONTEXTS) {
+		uint32_t args[1] = {ctx->res_id_blend};
+		pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_DESTROY_OBJECT, VIRTIO_VIRGL_OBJECT_BLEND, args, 1);
+	}
+	ctx->res_id_blend = 0;
+
+	pyrion_submit_cmd_stream_virtio(ctx, &ctx->cmd_stream);
 }
 
 void pyrion_destroy_ctx_virtio(struct pyrion_ctx* ctx) {
@@ -1460,8 +1480,8 @@ void pyrion_destroy_ctx_virtio(struct pyrion_ctx* ctx) {
 		ctx->cmd_stream.stream_count = 0;
 	}
 
+	p_nxt_ctx = ctx->ctx_id;
 	memset(ctx, 0, sizeof(struct pyrion_ctx));
-    p_nxt_ctx = ctx->ctx_id;
 }
 
 aos_bool pyrion_submit_cmd_stream_virtio(struct pyrion_ctx* ctx, struct pyrion_cmd_stream* stream) {
@@ -1584,7 +1604,7 @@ aos_bool pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect viewp
     float width = (float)viewport.width;
     float height = (float)viewport.height;
 
-    float view_args[VIRGL_SET_VIEWPORT_STATE_SIZE(1)] = {0};
+    uint32_t view_args[VIRGL_SET_VIEWPORT_STATE_SIZE(1)] = {0};
     ((float*)view_args)[VIRGL_SET_VIEWPORT_STATE_SCALE_0(0)] = width / 2.0f; // Scale X
     ((float*)view_args)[VIRGL_SET_VIEWPORT_STATE_SCALE_1(0)] = height / 2.0f; // Scale Y
     ((float*)view_args)[VIRGL_SET_VIEWPORT_STATE_SCALE_2(0)] = 0.5f; // Scale Z (Depth)
@@ -1611,9 +1631,11 @@ aos_bool pyrion_flush_virtio(struct pyrion_ctx* ctx) {
     if (!ctx) return AOS_FALSE;
 	if (!ctx->valid || !ctx->usable || !ctx->device_set || !ctx->viewport_set) return AOS_FALSE;
 	if (ctx->controller_idx >= controller_count || !controllers) return AOS_FALSE;
+	
+	if (!ctx->flush_needed) return AOS_TRUE;
 	virtio_controller* kvc = &controllers[ctx->controller_idx];
 
-    if (kvc->acceleration_present != 1) {
+    if (!kvc->acceleration_present) {
 		uintptr_t start = (uintptr_t)ctx->fb_info.addr;
         uintptr_t end = start + (ctx->fb_info.width * ctx->fb_info.height * sizeof(uint32_t));
         for (uintptr_t i = start; i < end; i += 64) {
@@ -1636,6 +1658,8 @@ aos_bool pyrion_flush_virtio(struct pyrion_ctx* ctx) {
         if (!virtio_submit_sync(kvc, slot, sizeof(*t2d), sizeof(struct virtio_gpu_ctrl_hdr))) return AOS_FALSE;
 
         virtio_flush(kvc->gpu, ctx->viewport.x, ctx->viewport.y, ctx->viewport.width, ctx->viewport.height, ctx->res_id_2d);
+
+		ctx->flush_needed = AOS_FALSE;
         return AOS_TRUE;
     }
 
@@ -1669,6 +1693,7 @@ aos_bool pyrion_flush_virtio(struct pyrion_ctx* ctx) {
     f->resource_id = ctx->res_id_2d;
     f->padding = 0;
 
+	ctx->flush_needed = AOS_FALSE;
     return virtio_submit_async(kvc, slot, sizeof(*f), sizeof(struct virtio_gpu_ctrl_hdr));
 }
 
@@ -1686,7 +1711,7 @@ aos_bool pyrion_clear_virtio(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8
 
     float color[4] = {r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f};
     uint32_t args[VIRGL_OBJ_CLEAR_SIZE] = {0};
-    args[VIRGL_OBJ_CLEAR_BUFFERS] = 0x7;
+    args[VIRGL_OBJ_CLEAR_BUFFERS] = PIPE_CLEAR_COLOR;
 	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_0] = color[0];
 	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_1] = color[1];
 	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_2] = color[2];
@@ -1702,7 +1727,7 @@ aos_bool pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uin
 	if (ctx->controller_idx >= controller_count || !controllers) return AOS_FALSE;
 	virtio_controller* kvc = &controllers[ctx->controller_idx];
 
-    if (kvc->acceleration_present != 1) {
+    if (!kvc->acceleration_present) {
         if (!ctx->fb_info.addr) return AOS_FALSE;
         fb_put_pixel(&ctx->fb_info, x, y, rgba_to_u32(r, g, b, a));
         return AOS_TRUE;
@@ -1715,7 +1740,7 @@ aos_bool pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uin
     
     float color[4] = {r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f};
     uint32_t args[VIRGL_OBJ_CLEAR_SIZE] = {0};
-    args[VIRGL_OBJ_CLEAR_BUFFERS] = 0x7;
+    args[VIRGL_OBJ_CLEAR_BUFFERS] = PIPE_CLEAR_COLOR;
 	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_0] = color[0];
 	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_1] = color[1];
 	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_2] = color[2];
@@ -1727,24 +1752,29 @@ aos_bool pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uin
     scissor_args[VIRGL_SET_SCISSOR_MAXX_MAXY(1)] = (((ctx->viewport.y + ctx->viewport.height) & 0xFFFF) << 16) | ((ctx->viewport.x + ctx->viewport.width) & 0xFFFF);
 
     pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, VIRGL_SET_SCISSOR_STATE_SIZE(1));
-    return AOS_TRUE;
+	return AOS_TRUE;
 }
 
-aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, uint32_t w, uint32_t h, uint32_t font_res_id) {
-	if (!ctx) return AOS_FALSE;
-	if (!ctx->valid || !ctx->usable || !ctx->device_set) return AOS_FALSE;
+aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, struct pyrion_font* font) {
+	if (!ctx || !font) return AOS_FALSE;
+	if (!ctx->valid || !ctx->usable || !ctx->device_set || !font->valid) return AOS_FALSE;
 	if (ctx->controller_idx >= controller_count || !controllers) return AOS_FALSE;
 	virtio_controller* kvc = &controllers[ctx->controller_idx];
 
     if (!kvc->acceleration_present) {
         if (!ctx->fb_info.addr) return AOS_FALSE;
-		if (!ctx->font_ready) return AOS_FALSE;
+		if (!font->atlas) return AOS_FALSE;
 
-		for (uint32_t row = 0; row < h; row++) {
-			uint32_t* src = ctx->font.atlas + ((atlas_y + row) * ctx->font.w) + atlas_x;
-			uint32_t* dst = (uint32_t*)((uintptr_t)ctx->fb_info.addr + (((y + row) * ctx->fb_info.width) + x) * (ctx->fb_info.bpp * 8));
+		for (uint64_t row = 0; row < font->glyph_h; row++) {
+			uint32_t* src = (uint32_t*)((uintptr_t)font->atlas + (((atlas_y + row) * font->w) + atlas_x) * sizeof(uint32_t));
+			uint32_t* dst = (uint32_t*)((uintptr_t)ctx->fb_info.addr + (((y + row) * ctx->fb_info.width) + x) * (ctx->fb_info.bpp / 8));
 
-			memcpy(dst, src, w * (ctx->fb_info.bpp * 8));
+			for (uint32_t col = 0; col < font->glyph_w; col++) {
+				uint32_t pixel = src[col];
+
+				if ((pixel >> 24) != 0) // alpha != 0
+					dst[col] = pixel;
+			}
 		}
         
         return AOS_TRUE;
@@ -1755,55 +1785,68 @@ aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y,
     args[VIRGL_CMD_RCR_DST_X] = x; // Dest X
     args[VIRGL_CMD_RCR_DST_Y] = y; // Dest Y
     args[VIRGL_CMD_RCR_DST_Z] = 0; // Dest Z
-    args[VIRGL_CMD_RCR_SRC_RES_HANDLE] = font_res_id; // Source (The Font Atlas)
+    args[VIRGL_CMD_RCR_SRC_RES_HANDLE] = font->res_id; // Source (The Font Atlas)
     args[VIRGL_CMD_RCR_SRC_LEVEL] = 0; // Source level
     args[VIRGL_CMD_RCR_SRC_X] = atlas_x; // Source X (Where char is in atlas)
     args[VIRGL_CMD_RCR_SRC_Y] = atlas_y; // Source Y
     args[VIRGL_CMD_RCR_SRC_Z] = 0; // Source Z
-    args[VIRGL_CMD_RCR_SRC_W] = w; // Width of char
-    args[VIRGL_CMD_RCR_SRC_H] = h; // Height of char
+    args[VIRGL_CMD_RCR_SRC_W] = font->glyph_w; // Width of char
+    args[VIRGL_CMD_RCR_SRC_H] = font->glyph_h; // Height of char
     args[VIRGL_CMD_RCR_SRC_D] = 1; // Depth
 
     pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_RESOURCE_COPY_REGION, VIRTIO_VIRGL_OBJECT_NULL, args, VIRGL_CMD_RESOURCE_COPY_REGION_SIZE);
 	return AOS_TRUE;
 }
 
-void pyrion_destroy_font_virtio(struct pyrion_ctx* ctx, uint32_t font_res_id, void* font_mem) {
-	if (!ctx) return;
+void pyrion_destroy_font_virtio(struct pyrion_ctx* ctx, struct pyrion_font* font) {
+	if (!ctx || !font) return;
 	if (!ctx->valid || !ctx->usable || !ctx->device_set) return;
+	if (font->res_id < RES_ID_FONT_BASE) return;
 	if (ctx->controller_idx >= controller_count || !controllers) return;
 	virtio_controller* kvc = &controllers[ctx->controller_idx];
 
     uint64_t slot = wait_for_free_buf(kvc);
 
+	struct virtio_gpu_resource_detach_backing* db = (struct virtio_gpu_resource_detach_backing*)&kvc->cmd_buf[slot];
+    memset(db, 0, sizeof(*db));
+    db->hdr.type = VIRTIO_GPU_CMD_RESOURCE_DETACH_BACKING;
+    db->resource_id = font->res_id;
+
+    if (!virtio_submit_sync(kvc, slot, sizeof(*db), sizeof(struct virtio_gpu_ctrl_hdr))) return;
+
+	slot = wait_for_free_buf(kvc);
+
     struct virtio_gpu_resource_unref* unref = (struct virtio_gpu_resource_unref*)&kvc->cmd_buf[slot];
     memset(unref, 0, sizeof(*unref));
     unref->hdr.type = VIRTIO_GPU_CMD_RESOURCE_UNREF;
-    unref->resource_id = font_res_id;
+    unref->resource_id = font->res_id;
 
     if (!virtio_submit_sync(kvc, slot, sizeof(*unref), sizeof(struct virtio_gpu_ctrl_hdr))) return;
 
-    if (font_mem) {
-        avmf_free((uint64_t)font_mem);
+    if (font->atlas) {
+        avmf_free((uint64_t)font->atlas);
+		font->atlas = NULL;
+		font->atlas_phys = 0;
     }
 }
 
-uint32_t pyrion_upload_font_virtio(struct pyrion_ctx* ctx, uint64_t atlas_phys, uint32_t* atlas, uint32_t atlas_w, uint32_t atlas_total_h) {
-	if (!ctx) return 0;
-	if (!ctx->valid || !ctx->usable || !ctx->device_set) return 0;
-	if (ctx->controller_idx >= controller_count || !controllers) return 0;
+aos_bool pyrion_upload_font_virtio(struct pyrion_ctx* ctx, struct pyrion_font font, struct pyrion_font* out) {
+	if (!ctx || !out) return AOS_FALSE;
+	if (!ctx->valid || !ctx->usable || !ctx->device_set) return AOS_FALSE;
+	if (!font.atlas || !font.atlas_phys || font.glyph_w <= 0 || font.glyph_h <= 0 || font.w <= 0 || font.h <= 0 || font.valid) return AOS_FALSE;
+	if (ctx->controller_idx >= controller_count || !controllers) return AOS_FALSE;
 	virtio_controller* kvc = &controllers[ctx->controller_idx];
-    uint32_t res_id = current_font_resource_id++;
+    uint32_t res_id = ctx->ctx_id + RES_ID_FONT_BASE;
 
-	ctx->font.atlas = atlas;
-	ctx->font.atlas_phys = atlas_phys;
-	ctx->font.w = atlas_w;
-	ctx->font.h = atlas_total_h;
-	ctx->font.total_h = atlas_total_h;
+	*out = font;
+	out->res_id = res_id;
 
 	if (!kvc->acceleration_present) {
-		return res_id;
+		out->valid = AOS_TRUE;
+		return AOS_TRUE;
 	}
+	out->valid = AOS_FALSE;
+
 	uint64_t slot = wait_for_free_buf(kvc);
 
 	// Create 3D Resource
@@ -1813,19 +1856,19 @@ uint32_t pyrion_upload_font_virtio(struct pyrion_ctx* ctx, uint64_t atlas_phys, 
 	c3d->resource_id = res_id;
 	c3d->target = PIPE_TEXTURE_2D;
 	c3d->format = PIPE_FORMAT_R8G8B8A8_UNORM;
-	c3d->bind = PIPE_BIND_SAMPLER_VIEW;
-	c3d->width = atlas_w;
-	c3d->height = atlas_total_h;
+	c3d->bind = PIPE_BIND_TRANSFER_READ | PIPE_BIND_SAMPLER_VIEW;
+	c3d->width = font.w;
+	c3d->height = font.h;
 	c3d->depth = 1;
 	c3d->last_level = 0;
 	c3d->nr_samples = 0;
 	c3d->flags = 0;
-	if (!virtio_submit_sync(kvc, slot, sizeof(*c3d), sizeof(struct virtio_gpu_ctrl_hdr))) return 0;
+	if (!virtio_submit_sync(kvc, slot, sizeof(*c3d), sizeof(struct virtio_gpu_ctrl_hdr))) return AOS_FALSE;
 
 	struct virtio_gpu_ctrl_hdr* resp = (struct virtio_gpu_ctrl_hdr*)&kvc->resp_buf[slot];
 	if (resp->type != VIRTIO_GPU_RESP_OK_NODATA) {
 		serial_printf("[VIRTIO:PYRION] Font upload failed (during create). resp type: 0x%x\n", resp->type);
-		return 0;
+		return AOS_FALSE;
 	}
 
     // Attach Backing
@@ -1840,14 +1883,14 @@ uint32_t pyrion_upload_font_virtio(struct pyrion_ctx* ctx, uint64_t atlas_phys, 
     cmd->att.hdr.type = VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING;
     cmd->att.resource_id = res_id;
     cmd->att.nr_entries = 1;
-    cmd->entry.addr = atlas_phys;
-    cmd->entry.length = atlas_w * atlas_total_h * sizeof(uint32_t);
-    if (!virtio_submit_sync(kvc, slot, sizeof(*cmd), sizeof(struct virtio_gpu_ctrl_hdr))) return 0;
+    cmd->entry.addr = font.atlas_phys;
+    cmd->entry.length = font.w * font.h * sizeof(uint32_t);
+    if (!virtio_submit_sync(kvc, slot, sizeof(*cmd), sizeof(struct virtio_gpu_ctrl_hdr))) return AOS_FALSE;
 
     resp = (struct virtio_gpu_ctrl_hdr*)&kvc->resp_buf[slot];
     if (resp->type != VIRTIO_GPU_RESP_OK_NODATA) {
         serial_printf("[VIRTIO:PYRION] Font upload failed (during attach_backing). resp type: %x\n", resp->type);
-        return 0;
+        return AOS_FALSE;
     }
 
     // Attach to ctx
@@ -1858,12 +1901,12 @@ uint32_t pyrion_upload_font_virtio(struct pyrion_ctx* ctx, uint64_t atlas_phys, 
     link->hdr.type = VIRTIO_GPU_CMD_CTX_ATTACH_RESOURCE;
     link->hdr.ctx_id = ctx->ctx_id;
     link->resource_id = res_id;
-    if (!virtio_submit_sync(kvc, slot, sizeof(*link), sizeof(struct virtio_gpu_ctrl_hdr))) return 0;
+    if (!virtio_submit_sync(kvc, slot, sizeof(*link), sizeof(struct virtio_gpu_ctrl_hdr))) return AOS_FALSE;
 
     resp = (struct virtio_gpu_ctrl_hdr*)&kvc->resp_buf[slot];
     if (resp->type != VIRTIO_GPU_RESP_OK_NODATA) {
         serial_printf("[VIRTIO:PYRION] Font upload failed (during attach). resp type: %x\n", resp->type);
-        return 0;
+        return AOS_FALSE;
     }
 
     // Transfer to Host
@@ -1874,18 +1917,19 @@ uint32_t pyrion_upload_font_virtio(struct pyrion_ctx* ctx, uint64_t atlas_phys, 
 	t->hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D;
 	t->hdr.ctx_id = ctx->ctx_id;
 	t->resource_id = res_id;
-	t->w = atlas_w;
-	t->h = atlas_total_h;
+	t->w = font.w;
+	t->h = font.h;
 	t->d = 1;
-	if (!virtio_submit_sync(kvc, slot, sizeof(*t), sizeof(struct virtio_gpu_ctrl_hdr))) return 0;
+	if (!virtio_submit_sync(kvc, slot, sizeof(*t), sizeof(struct virtio_gpu_ctrl_hdr))) return AOS_FALSE;
 	
     resp = (struct virtio_gpu_ctrl_hdr*)&kvc->resp_buf[slot];
     if (resp->type != VIRTIO_GPU_RESP_OK_NODATA) {
         serial_printf("[VIRTIO:PYRION] Font upload failed (during transfer). resp type: %x\n", resp->type);
-        return 0;
+        return AOS_FALSE;
     }
 
-    return res_id;
+	out->valid = AOS_TRUE;
+    return AOS_TRUE;
 }
 
 aos_bool pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
@@ -1894,7 +1938,7 @@ aos_bool pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint
     if (ctx->controller_idx >= controller_count || !controllers) return AOS_FALSE;
 	virtio_controller* kvc = &controllers[ctx->controller_idx];
 	
-	if (kvc->acceleration_present != 1) {
+	if (!kvc->acceleration_present) {
         if (!ctx->fb_info.addr) return AOS_FALSE;
         fb_draw_rect(&ctx->fb_info, x, y, w, h, rgba_to_u32(r, g, b, a));
         return AOS_TRUE;
@@ -1908,7 +1952,7 @@ aos_bool pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint
     
     float color[4] = {r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f};
     uint32_t args[VIRGL_OBJ_CLEAR_SIZE] = {0};
-    args[VIRGL_OBJ_CLEAR_BUFFERS] = 0x7;
+    args[VIRGL_OBJ_CLEAR_BUFFERS] = PIPE_CLEAR_COLOR;
 	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_0] = color[0];
 	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_1] = color[1];
 	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_2] = color[2];
@@ -1927,6 +1971,9 @@ aos_bool pyrion_blit_virtio(struct pyrion_ctx *ctx, uint32_t dst_res, uint32_t s
 	if (!ctx) return AOS_FALSE;
 	if (!ctx->valid || !ctx->usable || !ctx->device_set) return AOS_FALSE;
 	if (ctx->controller_idx >= controller_count || !controllers) return AOS_FALSE;
+	virtio_controller* kvc = &controllers[ctx->controller_idx];
+	
+	if (!kvc->acceleration_present) return AOS_FALSE;
 
     uint32_t args[VIRGL_CMD_BLIT_SIZE] = {0};
     args[VIRGL_CMD_BLIT_S0] = VIRGL_CMD_BLIT_S0_MASK(PIPE_MASK_RGBA) | VIRGL_CMD_BLIT_S0_FILTER(PIPE_TEX_FILTER_NEAREST);

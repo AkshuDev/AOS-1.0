@@ -823,15 +823,6 @@ aos_bool virtio_switch_off(struct gpu_device* gpu) __attribute__((used));
 #define VIRGL_SEND_STRING_MARKER_STRING_SIZE 0
 #define VIRGL_SEND_STRING_MARKER_OFFSET 1
 
-#define PIPE_MASK_R 0x1
-#define PIPE_MASK_G 0x2
-#define PIPE_MASK_B 0x4
-#define PIPE_MASK_A 0x8
-#define PIPE_MASK_RGBA 0xF
-
-#define VIRGL_CMD_BLIT_S0_MASK(x) (((x) & 0xff) << 0)
-#define VIRGL_CMD_BLIT_S0_FILTER(x) (((x) & 0x3) << 8)
-
 enum virgl_object_types {
    VIRTIO_VIRGL_OBJECT_NULL,
    VIRTIO_VIRGL_OBJECT_BLEND,
@@ -1846,6 +1837,174 @@ enum pipe_transfer_usage {
 #define PIPE_BIND_SHARED      (1 << 15) /* get_texture_handle ??? */
 #define PIPE_BIND_LINEAR      (1 << 21)
 
+enum pipe_error {
+   PIPE_OK = 0,
+   PIPE_ERROR = -1,    /**< Generic error */
+   PIPE_ERROR_BAD_INPUT = -2,
+   PIPE_ERROR_OUT_OF_MEMORY = -3,
+   PIPE_ERROR_RETRY = -4
+   /* TODO */
+};
+
+
+#define PIPE_BLENDFACTOR_ONE                 0x1
+#define PIPE_BLENDFACTOR_SRC_COLOR           0x2
+#define PIPE_BLENDFACTOR_SRC_ALPHA           0x3
+#define PIPE_BLENDFACTOR_DST_ALPHA           0x4
+#define PIPE_BLENDFACTOR_DST_COLOR           0x5
+#define PIPE_BLENDFACTOR_SRC_ALPHA_SATURATE  0x6
+#define PIPE_BLENDFACTOR_CONST_COLOR         0x7
+#define PIPE_BLENDFACTOR_CONST_ALPHA         0x8
+#define PIPE_BLENDFACTOR_SRC1_COLOR          0x9
+#define PIPE_BLENDFACTOR_SRC1_ALPHA          0x0A
+#define PIPE_BLENDFACTOR_ZERO                0x11
+#define PIPE_BLENDFACTOR_INV_SRC_COLOR       0x12
+#define PIPE_BLENDFACTOR_INV_SRC_ALPHA       0x13
+#define PIPE_BLENDFACTOR_INV_DST_ALPHA       0x14
+#define PIPE_BLENDFACTOR_INV_DST_COLOR       0x15
+#define PIPE_BLENDFACTOR_INV_CONST_COLOR     0x17
+#define PIPE_BLENDFACTOR_INV_CONST_ALPHA     0x18
+#define PIPE_BLENDFACTOR_INV_SRC1_COLOR      0x19
+#define PIPE_BLENDFACTOR_INV_SRC1_ALPHA      0x1A
+
+#define PIPE_BLEND_ADD               0
+#define PIPE_BLEND_SUBTRACT          1
+#define PIPE_BLEND_REVERSE_SUBTRACT  2
+#define PIPE_BLEND_MIN               3
+#define PIPE_BLEND_MAX               4
+
+
+enum pipe_logicop {
+   PIPE_LOGICOP_CLEAR,
+   PIPE_LOGICOP_NOR,
+   PIPE_LOGICOP_AND_INVERTED,
+   PIPE_LOGICOP_COPY_INVERTED,
+   PIPE_LOGICOP_AND_REVERSE,
+   PIPE_LOGICOP_INVERT,
+   PIPE_LOGICOP_XOR,
+   PIPE_LOGICOP_NAND,
+   PIPE_LOGICOP_AND,
+   PIPE_LOGICOP_EQUIV,
+   PIPE_LOGICOP_NOOP,
+   PIPE_LOGICOP_OR_INVERTED,
+   PIPE_LOGICOP_COPY,
+   PIPE_LOGICOP_OR_REVERSE,
+   PIPE_LOGICOP_OR,
+   PIPE_LOGICOP_SET,
+};
+
+#define PIPE_MASK_R  0x1
+#define PIPE_MASK_G  0x2
+#define PIPE_MASK_B  0x4
+#define PIPE_MASK_A  0x8
+#define PIPE_MASK_RGBA 0xf
+#define PIPE_MASK_Z  0x10
+#define PIPE_MASK_S  0x20
+#define PIPE_MASK_ZS 0x30
+#define PIPE_MASK_RGBAZS (PIPE_MASK_RGBA|PIPE_MASK_ZS)
+
+
+/**
+ * Inequality functions.  Used for depth test, stencil compare, alpha
+ * test, shadow compare, etc.
+ */
+#define PIPE_FUNC_NEVER    0
+#define PIPE_FUNC_LESS     1
+#define PIPE_FUNC_EQUAL    2
+#define PIPE_FUNC_LEQUAL   3
+#define PIPE_FUNC_GREATER  4
+#define PIPE_FUNC_NOTEQUAL 5
+#define PIPE_FUNC_GEQUAL   6
+#define PIPE_FUNC_ALWAYS   7
+
+/** Polygon fill mode */
+#define PIPE_POLYGON_MODE_FILL  0
+#define PIPE_POLYGON_MODE_LINE  1
+#define PIPE_POLYGON_MODE_POINT 2
+
+/** Polygon face specification, eg for culling */
+#define PIPE_FACE_NONE           0
+#define PIPE_FACE_FRONT          1
+#define PIPE_FACE_BACK           2
+#define PIPE_FACE_FRONT_AND_BACK (PIPE_FACE_FRONT | PIPE_FACE_BACK)
+
+/** Stencil ops */
+#define PIPE_STENCIL_OP_KEEP       0
+#define PIPE_STENCIL_OP_ZERO       1
+#define PIPE_STENCIL_OP_REPLACE    2
+#define PIPE_STENCIL_OP_INCR       3
+#define PIPE_STENCIL_OP_DECR       4
+#define PIPE_STENCIL_OP_INCR_WRAP  5
+#define PIPE_STENCIL_OP_DECR_WRAP  6
+#define PIPE_STENCIL_OP_INVERT     7
+
+/** Texture types.
+ * See the documentation for info on PIPE_TEXTURE_RECT vs PIPE_TEXTURE_2D */
+enum pipe_texture_target {
+   PIPE_BUFFER           = 0,
+   PIPE_TEXTURE_1D       = 1,
+   PIPE_TEXTURE_2D       = 2,
+   PIPE_TEXTURE_3D       = 3,
+   PIPE_TEXTURE_CUBE     = 4,
+   PIPE_TEXTURE_RECT     = 5,
+   PIPE_TEXTURE_1D_ARRAY = 6,
+   PIPE_TEXTURE_2D_ARRAY = 7,
+   PIPE_TEXTURE_CUBE_ARRAY = 8,
+   PIPE_MAX_TEXTURE_TYPES
+};
+
+#define PIPE_TEX_FACE_POS_X 0
+#define PIPE_TEX_FACE_NEG_X 1
+#define PIPE_TEX_FACE_POS_Y 2
+#define PIPE_TEX_FACE_NEG_Y 3
+#define PIPE_TEX_FACE_POS_Z 4
+#define PIPE_TEX_FACE_NEG_Z 5
+#define PIPE_TEX_FACE_MAX   6
+
+#define PIPE_TEX_WRAP_REPEAT                   0
+#define PIPE_TEX_WRAP_CLAMP                    1
+#define PIPE_TEX_WRAP_CLAMP_TO_EDGE            2
+#define PIPE_TEX_WRAP_CLAMP_TO_BORDER          3
+#define PIPE_TEX_WRAP_MIRROR_REPEAT            4
+#define PIPE_TEX_WRAP_MIRROR_CLAMP             5
+#define PIPE_TEX_WRAP_MIRROR_CLAMP_TO_EDGE     6
+#define PIPE_TEX_WRAP_MIRROR_CLAMP_TO_BORDER   7
+
+/* Between mipmaps, ie mipfilter
+ */
+#define PIPE_TEX_MIPFILTER_NEAREST  0
+#define PIPE_TEX_MIPFILTER_LINEAR   1
+#define PIPE_TEX_MIPFILTER_NONE     2
+
+/* Within a mipmap, ie min/mag filter 
+ */
+#define PIPE_TEX_FILTER_NEAREST      0
+#define PIPE_TEX_FILTER_LINEAR       1
+
+#define PIPE_TEX_COMPARE_NONE          0
+#define PIPE_TEX_COMPARE_R_TO_TEXTURE  1
+
+/**
+ * Clear buffer bits
+ */
+#define PIPE_CLEAR_DEPTH        (1 << 0)
+#define PIPE_CLEAR_STENCIL      (1 << 1)
+#define PIPE_CLEAR_COLOR0       (1 << 2)
+#define PIPE_CLEAR_COLOR1       (1 << 3)
+#define PIPE_CLEAR_COLOR2       (1 << 4)
+#define PIPE_CLEAR_COLOR3       (1 << 5)
+#define PIPE_CLEAR_COLOR4       (1 << 6)
+#define PIPE_CLEAR_COLOR5       (1 << 7)
+#define PIPE_CLEAR_COLOR6       (1 << 8)
+#define PIPE_CLEAR_COLOR7       (1 << 9)
+/** Combined flags */
+/** All color buffers currently bound */
+#define PIPE_CLEAR_COLOR        (PIPE_CLEAR_COLOR0 | PIPE_CLEAR_COLOR1 | \
+                                 PIPE_CLEAR_COLOR2 | PIPE_CLEAR_COLOR3 | \
+                                 PIPE_CLEAR_COLOR4 | PIPE_CLEAR_COLOR5 | \
+                                 PIPE_CLEAR_COLOR6 | PIPE_CLEAR_COLOR7)
+#define PIPE_CLEAR_DEPTHSTENCIL (PIPE_CLEAR_DEPTH | PIPE_CLEAR_STENCIL)
+
 // Pyrion
 #include <inc/drivers/gpu/apis/pyrion.h>
 
@@ -1861,8 +2020,8 @@ aos_bool pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect viewp
 aos_bool pyrion_flush_virtio(struct pyrion_ctx* ctx) __attribute__((used));
 aos_bool pyrion_clear_virtio(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));
 aos_bool pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));
-aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, uint32_t w, uint32_t h, uint32_t font_res_id) __attribute__((used));
-void pyrion_destroy_font_virtio(struct pyrion_ctx* ctx, uint32_t font_res_id, void* font_mem) __attribute__((used));
-uint32_t pyrion_upload_font_virtio(struct pyrion_ctx* ctx, uint64_t atlas_phys, uint32_t* atlas, uint32_t atlas_w, uint32_t atlas_total_h) __attribute__((used));
+aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, struct pyrion_font* font) __attribute__((used));
+void pyrion_destroy_font_virtio(struct pyrion_ctx* ctx, struct pyrion_font* font) __attribute__((used));
+aos_bool pyrion_upload_font_virtio(struct pyrion_ctx* ctx, struct pyrion_font font, struct pyrion_font* out) __attribute__((used));
 aos_bool pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));
 aos_bool pyrion_blit_virtio(struct pyrion_ctx *ctx, uint32_t dst_res, uint32_t src_res, uint32_t width, uint32_t height) __attribute__((used));

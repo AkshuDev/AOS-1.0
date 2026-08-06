@@ -241,10 +241,14 @@ void start_vshell(void) {
 	}
 
     vshell_running = AOS_TRUE;
-    while (vshell_running) { 
+    while (vshell_running) {
         if (!vshell_handle_shell((char*)cmd_buf, 512, &cmd_len)) break;
         if (!pyrion_flush(vshell_ctx)) break;
     }
 
     pyrion_destroy_ctx(vshell_ctx);
+	
+	vshell_ctx = NULL;
+	prompt = DEF_PROMPT;
+	last_cmd = 0;
 }

@@ -122,7 +122,7 @@ struct pyrion_ctx* pyrion_create_ctx(struct pyrion_create_ctx_info ctx_info) {
     ctx->display_info.pitch = gdevice->framebuffer->pitch;
     ctx->display_info.size = gdevice->framebuffer->size;
 
-    ctx->font_ready = AOS_FALSE;
+    ctx->font.valid = AOS_FALSE;
 
     ctx->fb_cursor.bg_color = 0xFFFFFFFF;
     ctx->fb_cursor.fg_color = 0x000000FF;
@@ -135,9 +135,9 @@ struct pyrion_ctx* pyrion_create_ctx(struct pyrion_create_ctx_info ctx_info) {
 void pyrion_destroy_ctx(struct pyrion_ctx* ctx) {
     if (!ctx) return;
 
-    if (ctx->font_ready) {
+    if (ctx->font.valid) {
         if (ctx->font.atlas) avmf_free((uint64_t)ctx->font.atlas);
-        ctx->font_ready = AOS_FALSE;
+        ctx->font.valid = AOS_FALSE;
     }
     gdevice->pyrion.destroy_ctx(ctx);
 }
@@ -217,47 +217,45 @@ aos_bool pyrion_builtin_draw_rect(struct pyrion_ctx* ctx, struct pyrion_rect rec
 aos_bool pyrion_builtin_printc(struct pyrion_ctx* ctx, char c) {
     if (!ctx) return AOS_FALSE;
 
-    if (ctx->font_ready != 1) {
-        ctx->font.atlas = create_font_atlas_rgba(&ctx->font.atlas_phys);
-        if (!ctx->font.atlas) {
+    if (!ctx->font.valid) {
+		struct pyrion_font f = {
+			.glyph_h = 16,
+			.glyph_w = 8,
+			.w = 128,
+			.h = 256
+		};
+        f.atlas = create_font_atlas_rgba(&f.atlas_phys);
+        if (!f.atlas || !f.atlas_phys) {
             serial_print("[PYRION] Failed to create font!\n");
             return AOS_FALSE;
         }
-        ctx->font.h = 16;
-        ctx->font.w = 8;
-        ctx->font.total_h = 16*8;
-        uint32_t atlas_total_w = 128;
-        uint32_t atlas_total_h = 256;
         serial_print("[PYRION] Uploading Font...\n");
-        uint32_t res_id = gdevice->pyrion.upload_font(ctx, ctx->font.atlas_phys, ctx->font.atlas, atlas_total_w, atlas_total_h);
-        if (res_id < 1) {
+        if (!gdevice->pyrion.upload_font(ctx, f, &ctx->font)) {
             serial_print("[PYRION] Failed to upload font!\n");
             return AOS_FALSE;
         }
-        ctx->font.res_id = res_id;
-        ctx->font_ready = AOS_TRUE;
         serial_print("[PYRION] Font uploaded!\n");
     }
 
     if (c == '\n') {
         ctx->fb_cursor.x = 0;
-        ctx->fb_cursor.y += ctx->font.h;
+        ctx->fb_cursor.y += ctx->font.glyph_h;
         return AOS_TRUE;
     } else if (c == ' ') {
-        ctx->fb_cursor.x += ctx->font.w;
+        ctx->fb_cursor.x += ctx->font.glyph_w;
         return AOS_TRUE;
     }
     
     uint8_t idx = (uint8_t)c;
-    uint32_t atlas_x = (idx % 16) * 8;
-    uint32_t atlas_y = (idx / 16) * 16;
-    if (!gdevice->pyrion.draw_char(ctx, ctx->fb_cursor.x, ctx->fb_cursor.y, atlas_x, atlas_y, ctx->font.w, ctx->font.h, ctx->font.res_id)) return AOS_FALSE;
+    uint32_t atlas_x = (idx % ctx->font.glyph_h) * ctx->font.glyph_w;
+    uint32_t atlas_y = (idx / ctx->font.glyph_h) * ctx->font.glyph_h;
+    if (!gdevice->pyrion.draw_char(ctx, ctx->fb_cursor.x, ctx->fb_cursor.y, atlas_x, atlas_y, &ctx->font)) return AOS_FALSE;
 
-    ctx->fb_cursor.x += ctx->font.w;
+    ctx->fb_cursor.x += ctx->font.glyph_w;
 
-    if (ctx->fb_cursor.x + ctx->font.w > ctx->display_info.width) {
+    if (ctx->fb_cursor.x + ctx->font.glyph_w > ctx->display_info.width) {
         ctx->fb_cursor.x = 0;
-        ctx->fb_cursor.y += ctx->font.h;
+        ctx->fb_cursor.y += ctx->font.glyph_h;
     }
 	return AOS_TRUE;
 }
@@ -416,6 +414,16 @@ aos_bool pyrion_builtin_printf(struct pyrion_ctx* ctx, const char* fmt, ...) {
 
     va_end(args);
 	return AOS_TRUE;
+}
+
+aos_bool pyrion_upload_font(struct pyrion_ctx* ctx, struct pyrion_font font, struct pyrion_font* out) {
+	if (!ctx || !out) return AOS_FALSE;
+	return gdevice->pyrion.upload_font(ctx, font, out);
+}
+
+void pyrion_destroy_font(struct pyrion_ctx* ctx, struct pyrion_font* font) {
+	if (!ctx || !font) return;
+	gdevice->pyrion.destroy_font(ctx, font);
 }
 
 aos_bool pyrion_switch_off(void) {
