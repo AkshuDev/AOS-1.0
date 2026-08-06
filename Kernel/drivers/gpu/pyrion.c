@@ -237,18 +237,27 @@ aos_bool pyrion_builtin_printc(struct pyrion_ctx* ctx, char c) {
         serial_print("[PYRION] Font uploaded!\n");
     }
 
-    if (c == '\n') {
-        ctx->fb_cursor.x = 0;
-        ctx->fb_cursor.y += ctx->font.glyph_h;
-        return AOS_TRUE;
-    } else if (c == ' ') {
-        ctx->fb_cursor.x += ctx->font.glyph_w;
-        return AOS_TRUE;
-    }
+	switch (c) {
+		case '\n': {
+			ctx->fb_cursor.x = 0;
+			ctx->fb_cursor.y += ctx->font.glyph_h;
+			return AOS_TRUE;
+		}
+		case ' ': {
+			ctx->fb_cursor.x += ctx->font.glyph_w;
+        	return AOS_TRUE;
+		}
+		case '\b': {
+
+		}
+		default: break;
+	}
     
     uint8_t idx = (uint8_t)c;
-    uint32_t atlas_x = (idx % ctx->font.glyph_h) * ctx->font.glyph_w;
-    uint32_t atlas_y = (idx / ctx->font.glyph_h) * ctx->font.glyph_h;
+
+	uint32_t columns = ctx->font.w / ctx->font.glyph_w;
+    uint32_t atlas_x = (idx % columns) * ctx->font.glyph_w;
+    uint32_t atlas_y = (idx / columns) * ctx->font.glyph_h;
     if (!gdevice->pyrion.draw_char(ctx, ctx->fb_cursor.x, ctx->fb_cursor.y, atlas_x, atlas_y, &ctx->font)) return AOS_FALSE;
 
     ctx->fb_cursor.x += ctx->font.glyph_w;
@@ -342,27 +351,27 @@ aos_bool pyrion_builtin_printf(struct pyrion_ctx* ctx, const char* fmt, ...) {
             switch (*fmt) {
                 case 'c': {
                     char c = (char)va_arg(args, int);
-                    if (!pyrion_builtin_printc(ctx, c)) return AOS_FALSE;
+                    if (!pyrion_builtin_printc(ctx, c)) goto error_end;
                     break;
                 }
                 case 's': {
                     const char* s = va_arg(args, const char*);
-                    if (!pyrion_builtin_print(ctx, s ? s : "(NULL)")) return AOS_FALSE;
+                    if (!pyrion_builtin_print(ctx, s ? s : "(NULL)")) goto error_end;
                     break;
                 }
                 case 'S': {
 					const char* s = va_arg(args, const char*);
 					if (!s) {
-						if (!pyrion_builtin_print(ctx, "(NULL)")) return AOS_FALSE;
+						if (!pyrion_builtin_print(ctx, "(NULL)")) goto error_end;
 					} else {
 						for (size_t i = 0; i < width; i++) {
 							char c = s[i];
 							if (kc_is_printable(c)) {
-								if (!pyrion_builtin_printc(ctx, c)) return AOS_FALSE;
+								if (!pyrion_builtin_printc(ctx, c)) goto error_end;
 							} else {
-								if (!pyrion_builtin_printc(ctx, '\\')) return AOS_FALSE;
-								if (!pyrion_builtin_printc(ctx, 'x')) return AOS_FALSE;
-								if (!pyrion_builtin_print_ex_integer(ctx, (uint64_t)c, 16, 2, zero_pad, 0)) return AOS_FALSE;
+								if (!pyrion_builtin_printc(ctx, '\\')) goto error_end;
+								if (!pyrion_builtin_printc(ctx, 'x')) goto error_end;
+								if (!pyrion_builtin_print_ex_integer(ctx, (uint64_t)c, 16, 2, zero_pad, 0)) goto error_end;
 							}
 						}
 					}
@@ -373,14 +382,14 @@ aos_bool pyrion_builtin_printf(struct pyrion_ctx* ctx, const char* fmt, ...) {
                     int64_t d;
                     if (is_long >= 1) d = va_arg(args, int64_t);
                     else d = (int64_t)va_arg(args, int);
-                    if (!pyrion_builtin_print_ex_integer(ctx, (uint64_t)d, 10, width, zero_pad, 1)) return AOS_FALSE;
+                    if (!pyrion_builtin_print_ex_integer(ctx, (uint64_t)d, 10, width, zero_pad, 1)) goto error_end;
                     break;
                 }
                 case 'u': { // unsigned 32/64-bit
                     uint64_t u;
                     if (is_long >= 1) u = va_arg(args, uint64_t);
                     else u = (uint64_t)va_arg(args, uint32_t);
-                    if (!pyrion_builtin_print_ex_integer(ctx, u, 10, width, zero_pad, 0)) return AOS_FALSE;
+                    if (!pyrion_builtin_print_ex_integer(ctx, u, 10, width, zero_pad, 0)) goto error_end;
                     break;
                 }
                 case 'x':
@@ -394,26 +403,31 @@ aos_bool pyrion_builtin_printf(struct pyrion_ctx* ctx, const char* fmt, ...) {
                         if (is_long >= 1) p = va_arg(args, uint64_t);
                         else p = (uint64_t)va_arg(args, uint32_t);
                     }
-                    if (!pyrion_builtin_print_ex_integer(ctx, p, 16, width, zero_pad, 0)) return AOS_FALSE;
+                    if (!pyrion_builtin_print_ex_integer(ctx, p, 16, width, zero_pad, 0)) goto error_end;
                     break;
                 }
                 case '%': {
-                    if (!pyrion_builtin_printc(ctx, '%')) return AOS_FALSE;
+                    if (!pyrion_builtin_printc(ctx, '%')) goto error_end;
                     break;
                 }
                 default: {
-                    if (!pyrion_builtin_printc(ctx, *fmt)) return AOS_FALSE;
+                    if (!pyrion_builtin_printc(ctx, *fmt)) goto error_end;
                     break;
                 }
             }
         } else {
-            if (!pyrion_builtin_printc(ctx, *fmt)) return AOS_FALSE;
+            if (!pyrion_builtin_printc(ctx, *fmt)) goto error_end;
         }
         fmt++;
     }
 
     va_end(args);
 	return AOS_TRUE;
+
+	error_end: {
+		va_end(args);
+		return AOS_FALSE;
+	}
 }
 
 aos_bool pyrion_upload_font(struct pyrion_ctx* ctx, struct pyrion_font font, struct pyrion_font* out) {

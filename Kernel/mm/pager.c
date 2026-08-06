@@ -63,7 +63,7 @@ static struct page_table* alloc_page_table(uint64_t* phys_out) {
 	} else {
 		phys = first_pagemaps + first_pagemaps_ptr;
 		if (phys > first_pagemaps_end) {
-			serial_print("[PAGER] No more space for pagemaps within kernel space! Need full init of pager to continue\n");
+			serial_printf("[PAGER] No more space for pagemaps within kernel space! Need full init of pager to continue (Total: %llx Used: %llx)\n", (uint64_t)first_pagemaps_end - (uint64_t)first_pagemaps, first_pagemaps_ptr);
 			return NULL;
 		}
 		virt = phys; // Kernel Space is identity mapped

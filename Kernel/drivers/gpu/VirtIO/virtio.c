@@ -1706,6 +1706,7 @@ aos_bool pyrion_clear_virtio(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8
     if (!kvc->acceleration_present) {
         if (!ctx->fb_info.addr) return AOS_FALSE;
         fb_clear(&ctx->fb_info, rgba_to_u32(r, g, b, a));
+		ctx->flush_needed = AOS_TRUE;
         return AOS_TRUE;
     }
 
@@ -1730,11 +1731,12 @@ aos_bool pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uin
     if (!kvc->acceleration_present) {
         if (!ctx->fb_info.addr) return AOS_FALSE;
         fb_put_pixel(&ctx->fb_info, x, y, rgba_to_u32(r, g, b, a));
+		ctx->flush_needed = AOS_TRUE;
         return AOS_TRUE;
     }
     uint32_t scissor_args[VIRGL_SET_SCISSOR_STATE_SIZE(1)] = {0};
-    scissor_args[VIRGL_SET_SCISSOR_MINX_MINY(1)] = ((y & 0xFFFF) << 16) | (x & 0xFFFF);
-    scissor_args[VIRGL_SET_SCISSOR_MAXX_MAXY(1)] = (((y + 1) & 0xFFFF) << 16) | ((x + 1) & 0xFFFF);
+    scissor_args[VIRGL_SET_SCISSOR_MINX_MINY(0)] = ((y & 0xFFFF) << 16) | (x & 0xFFFF);
+    scissor_args[VIRGL_SET_SCISSOR_MAXX_MAXY(0)] = (((y + 1) & 0xFFFF) << 16) | ((x + 1) & 0xFFFF);
 
     pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, VIRGL_SET_SCISSOR_STATE_SIZE(1));
     
@@ -1748,8 +1750,8 @@ aos_bool pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uin
 
     pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CLEAR, VIRTIO_VIRGL_OBJECT_NULL, args, VIRGL_OBJ_CLEAR_SIZE);
 
-    scissor_args[VIRGL_SET_SCISSOR_MINX_MINY(1)] = ((ctx->viewport.y & 0xFFFF) << 16) | (ctx->viewport.x & 0xFFFF);
-    scissor_args[VIRGL_SET_SCISSOR_MAXX_MAXY(1)] = (((ctx->viewport.y + ctx->viewport.height) & 0xFFFF) << 16) | ((ctx->viewport.x + ctx->viewport.width) & 0xFFFF);
+    scissor_args[VIRGL_SET_SCISSOR_MINX_MINY(0)] = ((ctx->viewport.y & 0xFFFF) << 16) | (ctx->viewport.x & 0xFFFF);
+    scissor_args[VIRGL_SET_SCISSOR_MAXX_MAXY(0)] = (((ctx->viewport.y + ctx->viewport.height) & 0xFFFF) << 16) | ((ctx->viewport.x + ctx->viewport.width) & 0xFFFF);
 
     pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, VIRGL_SET_SCISSOR_STATE_SIZE(1));
 	return AOS_TRUE;
@@ -1777,6 +1779,7 @@ aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y,
 			}
 		}
         
+		ctx->flush_needed = AOS_TRUE;
         return AOS_TRUE;
     }
     uint32_t args[VIRGL_CMD_RESOURCE_COPY_REGION_SIZE] = {0};
@@ -1941,12 +1944,13 @@ aos_bool pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint
 	if (!kvc->acceleration_present) {
         if (!ctx->fb_info.addr) return AOS_FALSE;
         fb_draw_rect(&ctx->fb_info, x, y, w, h, rgba_to_u32(r, g, b, a));
+		ctx->flush_needed = AOS_TRUE;
         return AOS_TRUE;
     }
 
 	uint32_t scissor_args[VIRGL_SET_SCISSOR_STATE_SIZE(1)] = {0};
-    scissor_args[VIRGL_SET_SCISSOR_MINX_MINY(1)] = ((y & 0xFFFF) << 16) | (x & 0xFFFF);
-    scissor_args[VIRGL_SET_SCISSOR_MAXX_MAXY(1)] = (((y + h) & 0xFFFF) << 16) | ((x + w) & 0xFFFF);
+    scissor_args[VIRGL_SET_SCISSOR_MINX_MINY(0)] = ((y & 0xFFFF) << 16) | (x & 0xFFFF);
+    scissor_args[VIRGL_SET_SCISSOR_MAXX_MAXY(0)] = (((y + h) & 0xFFFF) << 16) | ((x + w) & 0xFFFF);
 
     pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, VIRGL_SET_SCISSOR_STATE_SIZE(1));
     
@@ -1960,8 +1964,8 @@ aos_bool pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint
 
     pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CLEAR, VIRTIO_VIRGL_OBJECT_NULL, args, VIRGL_OBJ_CLEAR_SIZE);
 
-    scissor_args[VIRGL_SET_SCISSOR_MINX_MINY(1)] = ((ctx->viewport.y & 0xFFFF) << 16) | (ctx->viewport.x & 0xFFFF);
-    scissor_args[VIRGL_SET_SCISSOR_MAXX_MAXY(1)] = (((ctx->viewport.y + ctx->viewport.height) & 0xFFFF) << 16) | ((ctx->viewport.x + ctx->viewport.width) & 0xFFFF);
+    scissor_args[VIRGL_SET_SCISSOR_MINX_MINY(0)] = ((ctx->viewport.y & 0xFFFF) << 16) | (ctx->viewport.x & 0xFFFF);
+    scissor_args[VIRGL_SET_SCISSOR_MAXX_MAXY(0)] = (((ctx->viewport.y + ctx->viewport.height) & 0xFFFF) << 16) | ((ctx->viewport.x + ctx->viewport.width) & 0xFFFF);
 
     pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, VIRGL_SET_SCISSOR_STATE_SIZE(1));
 	return AOS_TRUE;
