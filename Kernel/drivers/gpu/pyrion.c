@@ -218,23 +218,7 @@ aos_bool pyrion_builtin_printc(struct pyrion_ctx* ctx, char c) {
     if (!ctx) return AOS_FALSE;
 
     if (!ctx->font.valid) {
-		struct pyrion_font f = {
-			.glyph_h = 16,
-			.glyph_w = 8,
-			.w = 128,
-			.h = 256
-		};
-        f.atlas = create_font_atlas_rgba(&f.atlas_phys);
-        if (!f.atlas || !f.atlas_phys) {
-            serial_print("[PYRION] Failed to create font!\n");
-            return AOS_FALSE;
-        }
-        serial_print("[PYRION] Uploading Font...\n");
-        if (!gdevice->pyrion.upload_font(ctx, f, &ctx->font)) {
-            serial_print("[PYRION] Failed to upload font!\n");
-            return AOS_FALSE;
-        }
-        serial_print("[PYRION] Font uploaded!\n");
+		if (!pyrion_set_default_builtins_font(ctx)) return AOS_FALSE;
     }
 
 	switch (c) {
@@ -428,6 +412,47 @@ aos_bool pyrion_builtin_printf(struct pyrion_ctx* ctx, const char* fmt, ...) {
 		va_end(args);
 		return AOS_FALSE;
 	}
+}
+
+aos_bool pyrion_set_builtins_font(struct pyrion_ctx* ctx, struct pyrion_font* font) {
+	if (!ctx || !font) return AOS_FALSE;
+	if (!ctx->valid || !font->valid || font->w < 1 || font->h < 1 || font->glyph_h < 1 || font->glyph_w < 1) return AOS_FALSE;
+	if (!font->atlas || !font->atlas_phys) return AOS_FALSE;
+
+	if (ctx->font.valid) {
+		pyrion_destroy_font(ctx, &ctx->font);
+	}
+	ctx->font = *font;
+	return AOS_TRUE;
+}
+
+aos_bool pyrion_set_default_builtins_font(struct pyrion_ctx* ctx) {
+	if (!ctx) return AOS_FALSE;
+	if (!ctx->valid) return AOS_FALSE;
+
+	if (ctx->font.valid) {
+		pyrion_destroy_font(ctx, &ctx->font);
+	}
+	
+	struct pyrion_font f = {
+		.glyph_h = 16,
+		.glyph_w = 8,
+		.w = 128,
+		.h = 256
+	};
+	f.atlas = create_font_atlas_rgba(&f.atlas_phys);
+	if (!f.atlas || !f.atlas_phys) {
+		serial_print("[PYRION] Failed to create font!\n");
+		return AOS_FALSE;
+	}
+	serial_print("[PYRION] Uploading Font...\n");
+	if (!gdevice->pyrion.upload_font(ctx, f, &ctx->font)) {
+		serial_print("[PYRION] Failed to upload font!\n");
+		return AOS_FALSE;
+	}
+	serial_print("[PYRION] Font uploaded!\n");
+
+	return AOS_TRUE;
 }
 
 aos_bool pyrion_upload_font(struct pyrion_ctx* ctx, struct pyrion_font font, struct pyrion_font* out) {

@@ -9,14 +9,24 @@
 typedef struct AVMF_Header {
     uint32_t signature; // AVMF
     uint16_t version;
+
     uint64_t virt_addr;
     uint64_t phys_addr;
+
     uint64_t size;
+
     aos_bool used;
+	
     uint32_t flags;
     uint32_t attributes;
     struct AVMF_Header* next;
 } avmf_header_t;
+
+typedef struct AVMF_Range {
+    uint64_t base;
+    uint64_t size;
+    struct AVMF_Range* next;
+} avmf_range_t;
 
 typedef struct AVMF_Region_Header {
     uint32_t signature; // AVMF
@@ -25,12 +35,10 @@ typedef struct AVMF_Region_Header {
     uint64_t base;
     uint64_t limit;
 
-    uint64_t free_pages;
-    uint64_t used_pages;
+    struct AVMF_Range* free_list;
+	struct AVMF_Header* alloc_list;
+    struct AVMF_Header* cache_list;
 
-    uint8_t* bitmap;
-
-    struct AVMF_Header* cache_head;
     struct AVMF_Region_Header* next;
 } avmf_region_header_t;
 

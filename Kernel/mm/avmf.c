@@ -18,16 +18,46 @@ static spinlock_t avmf_lock = 0;
 static spinlock_t avmf_lock2 = 0;
 
 static avmf_header_t static_headers[AVMF_STATIC_SIZE];
-static int header_index = 0;
+static uint64_t static_headers_count = 0;
 
-static uint64_t avmf_limit[128];
-static uint64_t avmf_base[128];
+static avmf_range_t static_ranges[AVMF_STATIC_SIZE];
+static uint64_t static_ranges_count = 0;
+
+static avmf_region_header_t regions[AVMF_STATIC_SIZE];
+static uint64_t region_count;
+
 static uint64_t avmf_bitmap[BITMAP_SIZE];
 
 static uint64_t heap_kernel = AOS_KERNEL_SPACE_BASE;
 static uint64_t heap_driver = AOS_DRIVER_SPACE_BASE;
 static uint64_t heap_user = AOS_USER_SPACE_BASE;
 static uint64_t heap_sensitive = AOS_SENSITIVE_SPACE_BASE;
+
+static void avmf_region_init(avmf_region_header_t* r, uint64_t base, uint64_t limit) {
+	memset(r, 0, sizeof(avmf_region_header_t));
+
+	r->signature = AVMF_SIGNATURE;
+	r->version = AVMF_VERSION;
+
+	r->base = base;
+	r->limit = limit;
+
+	r->free_list = &static_ranges[static_ranges_count++];
+	r->free_list->base = base;
+	r->free_list->size = limit - base;
+	r->free_list->next = NULL;
+
+	r->alloc_list = NULL;
+	r->cache_list = NULL;
+}
+
+static void avmf_region_alloc(avmf_region_header_t* r, uint64_t size, uint64_t align) {
+	
+}
+
+static void avmf_region_free(avmf_region_header_t* r, uint64_t base, uint64_t size) {
+	
+}
 
 static inline uint64_t align4k(uint64_t value) {
     return (value + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
@@ -46,11 +76,14 @@ static aos_bool bitmap_test(uint64_t page_idx) {
 }
 
 static uint64_t avmf_alloc_phys_page(void) {
-    for (int i = 0; i < 128; i++) {
-        if (avmf_limit[i] == 0) continue;
+    for (uint64_t i = 0; i < AVMF_STATIC_SIZE; i++) {
+		avmf_region_header_t* r = &regions[i];
+		if (r->signature != AVMF_SIGNATURE) continue;
+		if (r->version != AVMF_VERSION) continue;
+		if (r->limit < 1) continue;
 
-        uint64_t start_page = avmf_base[i] / PAGE_SIZE;
-        uint64_t end_page = avmf_limit[i] / PAGE_SIZE;
+        uint64_t start_page = r->base / PAGE_SIZE;
+        uint64_t end_page = r->limit / PAGE_SIZE;
 
         for (uint64_t p = start_page; p < end_page; p++) {
             if (!bitmap_test(p)) {
@@ -105,11 +138,14 @@ uint64_t avmf_alloc_phys_contiguous(uint64_t size) {
     uint64_t sz = align4k(size);
     uint64_t pages_needed = sz / PAGE_SIZE;
 
-    for (int i = 0; i < 128; i++) {
-        if (avmf_limit[i] == 0) continue;
+    for (uint64_t i = 0; i < AVMF_STATIC_SIZE; i++) {
+		avmf_region_header_t* r = &regions[i];
+		if (r->signature != AVMF_SIGNATURE) continue;
+		if (r->version != AVMF_VERSION) continue;
+		if (r->limit < 1) continue;
 
-        uint64_t start_page = avmf_base[i] / PAGE_SIZE;
-        uint64_t end_page = avmf_limit[i] / PAGE_SIZE;
+        uint64_t start_page = r->base / PAGE_SIZE;
+        uint64_t end_page = r->limit / PAGE_SIZE;
         uint64_t consecutive = 0;
         uint64_t first_page = 0;
 
@@ -226,10 +262,10 @@ void avmf_free_phys(uint64_t virt) {
 
 void avmf_init(uint64_t* base_phys, uint64_t* limit_phys, uint8_t entries) {
     uint64_t rflags = spin_lock_irqsave(&avmf_lock);
-    uint8_t ent = entries <= 128 ? entries : 128;
-    for (uint8_t i = 0; i < ent; i++) {
-        avmf_base[i] = base_phys[i];
-        avmf_limit[i] = limit_phys[i];
+    uint64_t ent = entries <= AVMF_STATIC_SIZE ? entries : AVMF_STATIC_SIZE;
+    for (uint64_t i = 0; i < ent; i++) {
+		avmf_region_header_t* r = &regions[i];
+		avmf_region_init(r, base_phys[i], limit_phys[i]);
     }
     avmf_head = (avmf_header_t*)NULL;
     spin_unlock_irqrestore(&avmf_lock, rflags);
@@ -250,9 +286,9 @@ aos_bool avmf_alloc_region(uint64_t virt, uint64_t phys, uint64_t size, uint32_t
 
     avmf_header_t* node = (avmf_header_t*)NULL;
  
-    if (header_index >= AVMF_STATIC_SIZE) return AOS_FALSE;
+    if (static_headers_count >= AVMF_STATIC_SIZE) return AOS_FALSE;
     uint64_t rflags = spin_lock_irqsave(&avmf_lock2);
-    node = &static_headers[header_index++];
+    node = &static_headers[static_headers_count++];
     
     node->virt_addr = virt;
     node->phys_addr = phys;

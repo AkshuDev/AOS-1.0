@@ -149,6 +149,8 @@ aos_bool pyrion_builtin_draw_rect(struct pyrion_ctx* ctx, struct pyrion_rect rec
 
 aos_bool pyrion_upload_font(struct pyrion_ctx* ctx, struct pyrion_font font, struct pyrion_font* out) __attribute__((used));
 void pyrion_destroy_font(struct pyrion_ctx* ctx, struct pyrion_font* font) __attribute__((used));
+aos_bool pyrion_set_builtins_font(struct pyrion_ctx* ctx, struct pyrion_font* font)  __attribute__((used));
+aos_bool pyrion_set_default_builtins_font(struct pyrion_ctx* ctx)  __attribute__((used));
 
 aos_bool pyrion_clear(struct pyrion_ctx* ctx, uint32_t color) __attribute__((used));
 aos_bool pyrion_pixel(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t color) __attribute__((used));
