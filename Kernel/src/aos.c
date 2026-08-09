@@ -89,6 +89,16 @@ void kernel_main(void) {
 }
 
 void kernel_main_true(void) { // Supports only UniBoot
+	__asm__ volatile (
+		"cld\n\t"
+        "mov %0, %%rsp\n\t"
+        "mov %%rsp, %%rbp"
+        ::
+        "r"(stack_top)
+        :
+        "memory"
+    );
+	
     serial_init(AOS_TRUE);
     serial_print("AOS++ LOADED!\n");
 

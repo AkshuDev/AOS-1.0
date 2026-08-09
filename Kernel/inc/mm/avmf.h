@@ -6,9 +6,17 @@
 #define AVMF_VERSION 1
 #define AVMF_SIGNATURE (uint32_t)0xA1322F // A, V (13th letter), M (22nd letter), F
 
+typedef enum AVMF_HeaderType {
+	AVMF_HDR_TYPE_CORRUPT = 0,
+	AVMF_HDR_TYPE_CACHE,
+	AVMF_HDR_TYPE_ALLOC
+} avmf_header_type_t;
+
 typedef struct AVMF_Header {
     uint32_t signature; // AVMF
     uint16_t version;
+	
+	enum AVMF_HeaderType type;
 
     uint64_t virt_addr;
     uint64_t phys_addr;
@@ -16,10 +24,11 @@ typedef struct AVMF_Header {
     uint64_t size;
 
     aos_bool used;
-	
     uint32_t flags;
     uint32_t attributes;
+
     struct AVMF_Header* next;
+	struct AVMF_Header* parent;
 } avmf_header_t;
 
 typedef struct AVMF_Range {
@@ -35,11 +44,19 @@ typedef struct AVMF_Region_Header {
     uint64_t base;
     uint64_t limit;
 
-    struct AVMF_Range* free_list;
-	struct AVMF_Header* alloc_list;
-    struct AVMF_Header* cache_list;
+	spinlock_t lock;
 
-    struct AVMF_Region_Header* next;
+    struct AVMF_Range* free_list;
+	uint64_t free_count;
+	struct AVMF_Range* free_list_end;
+
+	struct AVMF_Header* alloc_list;
+	uint64_t alloc_count;
+	struct AVMF_Header* alloc_list_end;
+
+    struct AVMF_Header* cache_list;
+	uint64_t cache_count;
+	struct AVMF_Header* cache_list_end;
 } avmf_region_header_t;
 
 typedef enum {
@@ -63,22 +80,13 @@ typedef enum {
 #define AVMF_ATTR_SHARED (1 << 1)
 #define AVMF_ATTR_LOCKED (1 << 2) // not swappable
 
-uint64_t avmf_virt_to_phys(uint64_t virt) __attribute__((used));
-uint64_t avmf_phys_to_virt(uint64_t phys) __attribute__((used));
-
 uint64_t avmf_alloc_phys_contiguous(uint64_t size) __attribute__((used));
+void avmf_free_phys_contiguous(uint64_t phys, uint64_t size) __attribute__((used));
 
 void avmf_init(uint64_t* base_phys, uint64_t* limit_phys, uint8_t entries) __attribute__((used));
 
 uint64_t avmf_alloc_virt(uint64_t size, MemoryAllocType type) __attribute__((used));
 uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, uint32_t flags, uint64_t* phys_out) __attribute__((used));
-aos_bool avmf_alloc_region(uint64_t virt, uint64_t phys, uint64_t size, uint32_t flags) __attribute__((used));
-
 void avmf_free(uint64_t virt) __attribute__((used));
-void avmf_free_phys(uint64_t virt) __attribute__((used));
-
-aos_bool avmf_map(uint64_t virt, uint64_t phys, uint32_t flags) __attribute__((used));
-aos_bool avmf_map_identity_virt(uint64_t virt, uint64_t phys, uint32_t flags) __attribute__((used));
 
 avmf_header_t* avmf_find(uint64_t virt) __attribute__((used));
-void avmf__debug__print_map() __attribute__((used));

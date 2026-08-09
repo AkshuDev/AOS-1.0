@@ -58,7 +58,6 @@ static struct page_table* alloc_page_table(uint64_t* phys_out) {
 			serial_print("[PAGER] No virtual address?\n");
 			return NULL;
 		};
-		avmf_alloc_region(virt, phys, sizeof(struct page_table), AVMF_FLAG_WRITEABLE);
 		tbl = (volatile struct page_table*)(AOS_DIRECT_MAP_BASE + phys);
 	} else {
 		phys = first_pagemaps + first_pagemaps_ptr;
@@ -316,7 +315,7 @@ static void destroy_table(struct page_table* table, int level, uint64_t lock_rfl
             }
         }
     }
-    avmf_free_phys(table_phys);
+    avmf_free_phys_contiguous(table_phys, PAGE_SIZE);
 }
 
 void pager_destroy_table(int level) {
