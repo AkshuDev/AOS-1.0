@@ -69,7 +69,7 @@ typedef struct aml_node {
     aml_object_t* object;
 } aml_node_t;
 
-#define OBJECTS_PER_PAGE PAGE_SIZE / sizeof(aml_object_t)
+#define OBJECTS_PER_PAGE (PAGE_SIZE / sizeof(aml_object_t))
 
 static aml_object_t* object_pool;
 static uint64_t object_pool_cap;
@@ -79,8 +79,12 @@ static uint8_t aml_peek(aml_stream_t* s) {
     return *s->ptr;
 }
 
-static uint8_t aml_next(aml_stream_t* s) {
-    return *s->ptr++;
+static aos_bool aml_next(aml_stream_t* s, uint8_t* value) {
+	if (s->ptr >= s->end)
+        return AOS_FALSE;
+
+    *value = *s->ptr++;
+    return AOS_TRUE;
 }
 
 static uint8_t aml_eof(aml_stream_t* s) {
@@ -88,14 +92,17 @@ static uint8_t aml_eof(aml_stream_t* s) {
 }
 
 static uint32_t aml_parse_pkglen(aml_stream_t* s) {
-    uint8_t lead = aml_next(s);
+    uint8_t lead = 0;
+	if (!aml_next(s, &lead)) return 0;
 
     uint8_t bytes_follow = lead >> 6;
     if (bytes_follow == 0) return lead & 0b00111111;
 
     uint32_t length = lead & 0b00001111;
     for (uint8_t i = 0; i < bytes_follow; i++) {
-        length |= ((uint32_t)aml_next(s)) << (4 + 8 * i);
+		uint8_t v = 0;
+		if (!aml_next(s, &v)) return 0;
+        length |= ((uint32_t)v) << (4 + 8 * i);
     }
 
     return length;
