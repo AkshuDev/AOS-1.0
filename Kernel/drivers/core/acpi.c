@@ -2,6 +2,7 @@
 #include <system.h>
 #include <uniboot.h>
 
+#include <inc/core/aos.h>
 #include <inc/core/acpi.h>
 #include <inc/core/kfuncs.h>
 #include <inc/drivers/io/io.h>
@@ -328,6 +329,11 @@ void acpi_init(void) {
     spin_unlock_irqrestore(&acpi_lock, rflags);
 }
 
+static void acpi_pre_shutdown_reboot(void) {
+	aos_pre_halt_system();
+	smp_shutdown();
+}
+
 static void acpi_8042_reboot(void) {
     uint8_t good = 0x02;
     for (int i = 0; i < 100000; i++) {
@@ -357,7 +363,7 @@ static void acpi_triple_fault_reboot(void) {
 }
 
 void acpi_reboot(void) {
-    smp_shutdown();
+    acpi_pre_shutdown_reboot();
 
     if (!fadt_table) {
         acpi_8042_reboot();
@@ -390,8 +396,8 @@ void acpi_reboot(void) {
     for (;;) {__asm__ volatile("hlt");}
 }
 
-void acpi_shutdown() {;
-    smp_shutdown();
+void acpi_shutdown() {
+    acpi_pre_shutdown_reboot();
 	
 	__asm__ volatile("cli");
 	

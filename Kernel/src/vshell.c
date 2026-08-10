@@ -117,7 +117,6 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
     } else if (last_cmd == 2 || strcmp(cmd_buf, "reboot") == 0) {
         if (last_cmd == 2) {
             if ((cmd_buf[0] == 'y' || cmd_buf[0] == 'Y') && *cmd_len == 1) {
-                pager_destroy_table(4);
                 acpi_reboot();
                 if (!pyrion_builtin_print(vshell_ctx, "\nFailed to reboot!")) return AOS_FALSE;
             } else {

@@ -1727,6 +1727,8 @@ aos_bool pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uin
 	if (!ctx->valid || !ctx->usable || !ctx->device_set) return AOS_FALSE;
 	if (ctx->controller_idx >= controller_count || !controllers) return AOS_FALSE;
 	virtio_controller* kvc = &controllers[ctx->controller_idx];
+	
+	if (x > ctx->viewport.x + ctx->viewport.width || y > ctx->viewport.y + ctx->viewport.height) return AOS_FALSE; // Out of Bounds
 
     if (!kvc->acceleration_present) {
         if (!ctx->fb_info.addr) return AOS_FALSE;
@@ -1762,6 +1764,8 @@ aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y,
 	if (!ctx->valid || !ctx->usable || !ctx->device_set || !font->valid) return AOS_FALSE;
 	if (ctx->controller_idx >= controller_count || !controllers) return AOS_FALSE;
 	virtio_controller* kvc = &controllers[ctx->controller_idx];
+
+	if (x + font->glyph_w > ctx->viewport.x + ctx->viewport.width || y + font->glyph_h > ctx->viewport.y + ctx->viewport.height) return AOS_FALSE; // Out of Bounds
 
     if (!kvc->acceleration_present) {
         if (!ctx->fb_info.addr) return AOS_FALSE;
@@ -1940,6 +1944,8 @@ aos_bool pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint
 	if (!ctx->valid || !ctx->usable || !ctx->device_set) return AOS_FALSE;
     if (ctx->controller_idx >= controller_count || !controllers) return AOS_FALSE;
 	virtio_controller* kvc = &controllers[ctx->controller_idx];
+
+	if (x > ctx->viewport.x + ctx->viewport.width || y > ctx->viewport.y + ctx->viewport.height) return AOS_FALSE; // Out of Bounds
 	
 	if (!kvc->acceleration_present) {
         if (!ctx->fb_info.addr) return AOS_FALSE;

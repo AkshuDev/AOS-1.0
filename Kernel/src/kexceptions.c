@@ -38,11 +38,6 @@ static const char *exception_names[] = {
 
 static volatile uint8_t panic_depth[SMP_MAX_CORES];
 static volatile spinlock_t panic_lock;
-static void (*pre_halt_system)(void);
-
-void aos_system_exception_handler_init(void (*ppre_halt_system)(void)) {
-	pre_halt_system = ppre_halt_system;
-}
 
 void aos_system_exception(struct reg_trap_frame *r) {
 	__asm__ volatile("cli");
@@ -55,14 +50,10 @@ void aos_system_exception(struct reg_trap_frame *r) {
 	spin_unlock_irqrestore(&panic_lock, rflags);
 	if (lpanic == 2) {
 		serial_print("\nNESTED PANIC - STAGE 1 (Full reboot)\n");
-		
-		pre_halt_system();
-
 		acpi_reboot();
         for(;;) __asm__ volatile("hlt");
 	} else if (lpanic == 3) {
 		serial_print("\nNESTED PANIC - STAGE 2 (Emergency reboot)\n");
-
 		acpi_reboot();
         for(;;) __asm__ volatile("hlt");
 	} else if (lpanic == 4) {
@@ -213,7 +204,6 @@ void aos_system_exception(struct reg_trap_frame *r) {
 
 	vmem_print(&c, "\nREBOOTING SYSTEM\n");
 
-	if (pre_halt_system) pre_halt_system();
 	acpi_reboot();
 	for (;;) __asm__ volatile("hlt");
 }

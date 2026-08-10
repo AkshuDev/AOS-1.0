@@ -2,6 +2,7 @@
 #include <aos_inttypes.h>
 #include <uniboot.h>
 
+#include <inc/core/aos.h>
 #include <inc/core/kfuncs.h>
 #include <inc/core/acpi.h>
 #include <inc/core/idt.h>
@@ -64,7 +65,6 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design);
 static void cmd_print_help(struct VMemDesign* vmem_design, int* lines);
 void cmd_start(char* program, int* lines, struct VMemDesign* vmem_design);
 void aospp_start(void);
-void pre_halt_system(void);
 static int bd_read_blk(struct block_device* dev, uint64_t lba, void* buf);
 static int bd_write_blk(struct block_device* dev, uint64_t lba, const void* buf);
 static int bd_read(struct block_device* dev, uint64_t lba, uint64_t count, void* buf);
@@ -115,7 +115,6 @@ void kernel_main_true(void) { // Supports only UniBoot
 	gdt_init();
 	tss_init();
 
-	aos_system_exception_handler_init(pre_halt_system);
     idt_init();
 
 	__asm__ volatile (
@@ -256,8 +255,6 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
         *lines += 1;
     } else if (strcmp(cmd, "reboot") == 0) {
         vmem_print(vmem_design, "Rebooting...\n");
-		serial_deinit_klog("/aos/klog.log", &g_pbfs_mnt);
-        pager_destroy_table(4);
         acpi_reboot();
     } else if (strncmp(cmd, "color ", 6) == 0) {
 		char* s = cmd + 6;
@@ -464,8 +461,33 @@ void aos_vmss_start(void) {
     for (;;) __asm__("hlt");
 }
 
-void pre_halt_system(void) {
+void aos_pre_halt_system(void) {
+	serial_print("Doing Pre-Halt Routine\n");
+
+	uniboot_boot_info* binfo = kget_sysinfo();
+	if (binfo) {
+		binfo->kflag = UNIBOOT_FALSE;
+		if (current_drive_works && current_drive_mounted) {
+			uint64_t bsize = g_pbfs_mnt.dev->block_size;
+			uint8_t block[bsize];
+			memset(block, 0, bsize);
+			memcpy(block, binfo, sizeof(uniboot_boot_info));
+
+			bd_write(g_pbfs_mnt.dev, g_pbfs_mnt.header64.sysinfo_lba, 1, block);
+			serial_print("\tKFLAG reset complete\n");
+		} else {
+			serial_print("\tCurrent Drive doesn't work or isn't mounted, KFLAG cannot be reset\n");
+		}
+	} else {
+		serial_print("\tBoot Info not found, KFLAG cannot be reset\n");
+	}
+
+	serial_print("\tFlushing KLOG and Drive\n");
 	if (g_pbfs_mnt.active) serial_deinit_klog("/aos/klog.log", &g_pbfs_mnt);
+
+	if (current_drive_works) {
+		current_drive.flush(current_drive.controller_idx, current_drive.cur_port);
+	}
 }
 
 static int bd_read_blk(struct block_device* dev, uint64_t lba, void* buf) {
