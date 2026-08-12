@@ -51,9 +51,9 @@ struct core_state {
     uint32_t lapic_id;
     uint32_t core_idx;
 
-    uint8_t shutdown_core;
-
-    uint8_t reserve_core;
+    aos_bool shutdown_core;
+    aos_bool reserve_core;
+	
     enum core_status status;
 
     struct thread_state* cur_thread;

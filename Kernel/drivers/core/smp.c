@@ -103,15 +103,16 @@ static void send_wakeup_ipi(uint8_t target_apic_id, uint8_t vector) {
 
 static struct thread_state* create_thread(void (*entry)(void*), void* arg, uint64_t tid) {
     uint64_t thread_virt = (uint64_t)avmf_alloc(sizeof(struct thread_state), MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
-    if (thread_virt == NULL) 
-        return NULL;
+    if (thread_virt == NULL) return NULL;
     struct thread_state* thread = (struct thread_state*)thread_virt;
+	memset(thread, 0, sizeof(struct thread_state));
     
-    uint64_t stack_virt = (uint64_t)avmf_alloc(16384, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
-    if (stack_virt == NULL)
-        return NULL;
+    uint64_t stack_virt = (uint64_t)avmf_alloc(PAGE_SIZE*2, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
+    if (stack_virt == NULL) return NULL;
     void* stack_raw = (void*)stack_virt;
-    uint64_t* stack = (uint64_t*)((uint8_t*)stack_raw + 16384);
+	memset(stack_raw, 0, PAGE_SIZE*2);
+
+    uint64_t* stack = (uint64_t*)((uint8_t*)stack_raw + PAGE_SIZE*2);
 
     *(--stack) = (uintptr_t)entry; // RIP
 	*(--stack) = (uintptr_t)arg;   // RDI
@@ -183,22 +184,24 @@ static void ap_kernel_entry(void) {
     while (1) {
         __asm__ volatile("" : : : "memory");
         __asm__ volatile("cli");
-        if (core->shutdown_core == 1) {
+        if (core->shutdown_core) {
             break;
-        } else if (*(struct thread_state* volatile*)&core->ready_list != NULL) {
+        } else if (*(volatile struct thread_state**)&core->ready_list != NULL) {
             __asm__ volatile("sti");
-            spin_lock(&core->queue_lock);
+            uint64_t rflags = spin_lock_irqsave(&core->queue_lock);
             struct thread_state* next = core->ready_list;
             core->ready_list = next->next;
-            spin_unlock(&core->queue_lock);
+            spin_unlock_irqrestore(&core->queue_lock, rflags);
 
             struct thread_state* prev = core->cur_thread;
             core->cur_thread = next;
             next->status = THREAD_STATUS_RUNNING;
 
-            serial_printf("[SMP : CORE %d] Found Task!\n", core->core_idx);
-
+            serial_printf("[SMP : CORE %d] Found Task (TID: %llu)\n", core->core_idx, next->tid);
             thread_context_switch(prev, next);
+
+			if (prev) avmf_free((uint64_t)prev);
+			if (next) avmf_free((uint64_t)next);
         } else {
             core->status = core->reserve_core ? CORE_STATUS_RESERVED : CORE_STATUS_READY;
             __asm__ volatile("sti");
@@ -329,7 +332,7 @@ void smp_reserve_core(uint32_t core_idx) {
     struct core_state* target = cores[core_idx];
     uint64_t flags = spin_lock_irqsave(&target->command_lock);
 
-    target->reserve_core = 1;
+    target->reserve_core = AOS_TRUE;
     if (target->status != CORE_STATUS_RUNNING) {
         serial_printf("[SMP] Sending Awake command for core %d\n", core_idx);
         send_wakeup_ipi(target->lapic_id, SMP_IPI_VECTOR);
@@ -348,7 +351,7 @@ void smp_unreserve_core(uint32_t core_idx) {
     struct core_state* target = cores[core_idx];
     uint64_t flags = spin_lock_irqsave(&target->command_lock);
 
-    target->reserve_core = 0;
+    target->reserve_core = AOS_FALSE;
     if (target->status != CORE_STATUS_RUNNING) {
         serial_printf("[SMP] Sending Awake command for core %d\n", core_idx);
         send_wakeup_ipi(target->lapic_id, SMP_IPI_VECTOR);
@@ -383,25 +386,30 @@ void smp_init(void) {
         spin_lock(&boot_lock);
         ap_boot_flag = AOS_FALSE;
 
-        void* ap_stack = (void*)avmf_alloc(16384, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
+        void* ap_stack = (void*)avmf_alloc(PAGE_SIZE*4, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
         if (!ap_stack) {
             serial_printf("[SMP] Error: Could not allocate stack for core %lld\n", id);
             spin_unlock(&boot_lock);
             continue;
         }
-        void* ap_state = (void*)avmf_alloc(sizeof(struct core_state), MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
+        memset(ap_stack, 0, PAGE_SIZE*4);
+
+		void* ap_state = (void*)avmf_alloc(sizeof(struct core_state), MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
         if (!ap_state) {
             serial_printf("[SMP] Error: Could not allocate state structure for core %lld\n", id);
             spin_unlock(&boot_lock);
             continue;
         }
-        struct core_state* ap_core_state = (struct core_state*)ap_state;
+        memset(ap_state, 0, sizeof(struct core_state));
+		
+		struct core_state* ap_core_state = (struct core_state*)ap_state;
         uint64_t idle_thread_virt = (uint64_t)avmf_alloc(sizeof(struct thread_state), MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
         if (idle_thread_virt == 0) {
             serial_printf("[SMP] Error: Could not allocate idle thread state structure for core %lld\n", id);
             spin_unlock(&boot_lock);
             continue;
         }
+		memset((void*)idle_thread_virt, 0, sizeof(struct thread_state));
 
         ap_core_state->self = ap_core_state;
         ap_core_state->lapic_id = id;
@@ -415,7 +423,7 @@ void smp_init(void) {
         ap_core_state->stack = (void*)((uintptr_t)ap_stack + 16384);
         ap_core_state->status = CORE_STATUS_READY;
         ap_core_state->next_tid = 0;
-        ap_core_state->shutdown_core = 0;
+        ap_core_state->shutdown_core = AOS_FALSE;
         
         memcpy((void*)(AOS_DIRECT_MAP_BASE + 0x8000), &smp_trampoline_start, trampoline_len);
         *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x500) = current_cr3;
@@ -448,6 +456,8 @@ void smp_init(void) {
     void* bsp_state_virt = (void*)avmf_alloc(sizeof(struct core_state), MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
     if (!bsp_state_virt) return;
     struct core_state* bsp_state = (struct core_state*)bsp_state_virt;
+	memset(bsp_state, 0, sizeof(struct core_state));
+
     bsp_state->self = bsp_state;
     bsp_state->lapic_id = bsp_apic_id;
     bsp_state->core_idx = bsp_core_idx;
@@ -455,10 +465,13 @@ void smp_init(void) {
     bsp_state->queue_lock = 0;
     bsp_state->status = CORE_STATUS_RUNNING;
     bsp_state->next_tid = 0;
+	bsp_state->shutdown_core = AOS_FALSE;
 
     void* idle_thread_virt = (void*)avmf_alloc(sizeof(struct thread_state), MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
     if (idle_thread_virt) {
         struct thread_state* idle_thread = (struct thread_state*)idle_thread_virt;
+		memset(idle_thread, 0, sizeof(struct thread_state));
+
         idle_thread->tid = 0;
         idle_thread->status = THREAD_STATUS_RUNNING;
         bsp_state->idle_thread = idle_thread;
@@ -493,7 +506,7 @@ void smp_shutdown_core(uint32_t core_idx) {
     struct core_state* target = cores[core_idx];
 
     uint64_t flags = spin_lock_irqsave(&target->command_lock);
-    target->shutdown_core = 1;
+    target->shutdown_core = AOS_TRUE;
 	send_wakeup_ipi(target->lapic_id, SMP_IPI_VECTOR);
 	spin_unlock_irqrestore(&target->command_lock, flags);
 
@@ -525,7 +538,7 @@ void smp_reset_core(uint32_t core_idx) {
     struct core_state* target = cores[core_idx];
 
     uint64_t flags = spin_lock_irqsave(&target->command_lock);
-    target->shutdown_core = 1;
+    target->shutdown_core = AOS_TRUE;
 	send_wakeup_ipi(target->lapic_id, SMP_IPI_VECTOR);
     spin_unlock_irqrestore(&target->command_lock, flags);
 
@@ -552,7 +565,7 @@ void smp_reset_core(uint32_t core_idx) {
 	target->command_lock = 0;
 	target->status = CORE_STATUS_READY;
 	target->next_tid = 0;
-	target->shutdown_core = 0;
+	target->shutdown_core = AOS_FALSE;
 
 	uintptr_t trampoline_len = (uintptr_t)&smp_trampoline_end - (uintptr_t)&smp_trampoline_start;
     uint64_t current_cr3;
