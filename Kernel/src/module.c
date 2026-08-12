@@ -8,6 +8,7 @@
 #include <inc/drivers/io/io.h>
 
 #include <inc/drivers/io/sata.h>
+#include <inc/drivers/io/nvme.h>
 #include <inc/drivers/gpu/virtio.h>
 #include <inc/drivers/gpu/gpu.h>
 #include <inc/drivers/gpu/apis/pyrion.h>
@@ -51,9 +52,9 @@ aos_bool modules_init(void) {
 	modules[id].Modules.driver_module = (struct AOS_ModuleDriver){
         .type = MODULE_DRIVER_TYPE_SATA,
         
-        .target_class = MASS_STORAGE_CLASS,
-        .target_subclass = SATA_SUBCLASS,
-        .target_progifclass = AHCI_PROGIF,
+        .target_class = PCI_CLASS_MASS_STORAGE,
+        .target_subclass = PCI_SUBCLASS_AHCI,
+        .target_progifclass = PCI_PROGIF_AHCI,
         .target_use_progifclass = 1,
         .target_revision = 0,
         .target_use_revision = 0,
@@ -67,6 +68,46 @@ aos_bool modules_init(void) {
             .write_blk = sata_write_blk,
             .flush = sata_flush,
             .get_block_device = sata_get_block_device,
+            .cur_port = 0,
+			.controller_idx = 0,
+            .pcie_device = NULL,
+            .name = NULL,
+            .block_dev = (struct block_device){0}
+        }
+    };
+	#endif
+
+	// NVMe
+	#ifndef MODULE_NNVMe
+	id = module_count++;
+    modules[id].hdr = (struct AOS_ModuleHeader){
+        .name = "AOS-inb-driver-NVMe",
+        .signature = AOS_MODULE_SIGN(id),
+        .version = AOS_MODULE_PACK_VERSION(1, 0, 0),
+        .type = MODULE_TYPE_DRIVER,
+        .registered = AOS_FALSE
+    };
+    modules[id].initialize_on_register = AOS_TRUE;
+	modules[id].init_module = nvme_init;
+	modules[id].Modules.driver_module = (struct AOS_ModuleDriver){
+        .type = MODULE_DRIVER_TYPE_NVMe,
+        
+        .target_class = PCI_CLASS_MASS_STORAGE,
+        .target_subclass = PCI_SUBCLASS_NVMe,
+        .target_progifclass = PCI_PROGIF_NVMe,
+        .target_use_progifclass = 1,
+        .target_revision = 0,
+        .target_use_revision = 0,
+        .target_vendor = 0,
+        .target_use_vendor = 0,
+
+        .DriverConnections.drive_connector = (struct drive_device){
+            .active = AOS_FALSE,
+            .init = nvme_init,
+            .read_blk = NULL,
+            .write_blk = NULL,
+            .flush = NULL,
+            .get_block_device = NULL,
             .cur_port = 0,
 			.controller_idx = 0,
             .pcie_device = NULL,
