@@ -12,115 +12,140 @@
 #include <PBFS/headers/pbfs-fs.h>
 #undef PBFS_NDRIVERS
 
-typedef uint32_t nvme_nssr_t;
-typedef uint64_t nvme_asq_t;
-typedef uint64_t nvme_acq_t;
+// NVMe Capabilities
+#define NVME_CAP_MQES_SHIFT 0
+#define NVME_CAP_MQES_MASK (0xFFFFULL << NVME_CAP_MQES_SHIFT)
+#define NVME_CAP_MQES(v) (((v) & NVME_CAP_MQES_MASK) >> NVME_CAP_MQES_SHIFT)
 
-union nvme_cap {
-    uint64_t val;
-    struct {
-        uint16_t mqes; // Max Queue Entries Supported
-        uint8_t cqr : 1; // Contiguous Queues Required
-        uint8_t ams : 2; // Arbitration Mechanism Supported
-        uint8_t rsvd1 : 5;
-        uint8_t to; // Timeout value in 500ms units
-        uint8_t dstrd : 4; // Doorbell Stride (2 ^ (2 + dstrd) bytes)
-        uint8_t nssrs : 1; // NVM Subsystem Reset Supported
-        uint8_t css; // Command Sets Supported
-        uint8_t bps : 1; // Boot Partition Support
-        uint8_t rsvd2 : 2;
-        uint8_t mpsmin: 4; // Memory Page Size Minimum (2 ^ (12 + mpsmin))
-        uint8_t mpsmax : 4; // Memory Page Size Maximum (2 ^ (12 + mpsmax))
-        uint8_t pmrs : 1; // Persistent Memory Region Supported
-        uint8_t cmbs : 1; // Controller Memory Buffer Supported
-        uint8_t rsvd3 : 6;
-    };
-} __attribute__((packed));
+#define NVME_CAP_CQR_SHIFT 16
+#define NVME_CAP_CQR_MASK (0x1ULL << NVME_CAP_CQR_SHIFT)
+#define NVME_CAP_CQR(v) (((v) & NVME_CAP_CQR_MASK) >> NVME_CAP_CQR_SHIFT)
 
-union nvme_vs {
-    uint32_t value;
+#define NVME_CAP_AMS_SHIFT 17
+#define NVME_CAP_AMS_MASK (0x7ULL << NVME_CAP_AMS_SHIFT)
+#define NVME_CAP_AMS(v) (((v) & NVME_CAP_AMS_MASK) >> NVME_CAP_AMS_SHIFT)
 
-    struct {
-        uint8_t ter; // Tertiary Version
-        uint8_t min; // Minor Version
-        uint16_t maj; // Major Version
-    };
-} __attribute__((packed));
+#define NVME_CAP_TO_SHIFT 24
+#define NVME_CAP_TO_MASK (0xFFULL << NVME_CAP_TO_SHIFT)
+#define NVME_CAP_TO(v) (((v) & NVME_CAP_TO_MASK) >> NVME_CAP_TO_SHIFT)
 
-union nvme_intms {
-    uint32_t value;
+#define NVME_CAP_DSTRD_SHIFT 32
+#define NVME_CAP_DSTRD_MASK (0xFULL << NVME_CAP_DSTRD_SHIFT)
+#define NVME_CAP_DSTRD(v) (((v) & NVME_CAP_DSTRD_MASK) >> NVME_CAP_DSTRD_SHIFT)
 
-    struct {
-        uint32_t ivms;
-    };
-} __attribute__((packed));
+#define NVME_CAP_NSSRS_SHIFT 36
+#define NVME_CAP_NSSRS_MASK (0x1ULL << NVME_CAP_NSSRS_SHIFT)
+#define NVME_CAP_NSSRS(v) (((v) & NVME_CAP_NSSRS_MASK) >> NVME_CAP_NSSRS_SHIFT)
 
-union nvme_intmc {
-    uint32_t value;
+#define NVME_CAP_CSS_SHIFT 37
+#define NVME_CAP_CSS_MASK (0xFFULL << NVME_CAP_CSS_SHIFT)
+#define NVME_CAP_CSS(v) (((v) & NVME_CAP_CSS_MASK) >> NVME_CAP_CSS_SHIFT)
 
-    struct {
-        uint32_t ivmc;
-    };
-} __attribute__((packed));
+#define NVME_CAP_BPS_SHIFT 45
+#define NVME_CAP_BPS_MASK (0x1ULL << NVME_CAP_BPS_SHIFT)
+#define NVME_CAP_BPS(v) (((v) & NVME_CAP_BPS_MASK) >> NVME_CAP_BPS_SHIFT)
 
-union nvme_cc {
-    uint32_t value;
+#define NVME_CAP_MPSMIN_SHIFT 48
+#define NVME_CAP_MPSMIN_MASK (0xFULL << NVME_CAP_MPSMIN_SHIFT)
+#define NVME_CAP_MPSMIN(v) (((v) & NVME_CAP_MPSMIN_MASK) >> NVME_CAP_MPSMIN_SHIFT)
 
-    struct {
-        uint8_t en : 1; // Enable
-        uint8_t rsvd1 : 3;
+#define NVME_CAP_MPSMAX_SHIFT 52
+#define NVME_CAP_MPSMAX_MASK (0xFULL << NVME_CAP_MPSMAX_SHIFT)
+#define NVME_CAP_MPSMAX(v) (((v) & NVME_CAP_MPSMAX_MASK) >> NVME_CAP_MPSMAX_SHIFT)
 
-        uint8_t css : 3; // I/O Command Set Selected
-        uint8_t mps : 4; // Memory Page Size
+#define NVME_CAP_PMRS_SHIFT 56
+#define NVME_CAP_PMRS_MASK (0x1ULL << NVME_CAP_PMRS_SHIFT)
+#define NVME_CAP_PMRS(v) (((v) & NVME_CAP_PMRS_MASK) >> NVME_CAP_PMRS_SHIFT)
 
-        uint8_t ams : 3; // Arbitration Mechanism Selected
+#define NVME_CAP_CMBS_SHIFT 57
+#define NVME_CAP_CMBS_MASK (0x1ULL << NVME_CAP_CMBS_SHIFT)
+#define NVME_CAP_CMBS(v) (((v) & NVME_CAP_CMBS_MASK) >> NVME_CAP_CMBS_SHIFT)
 
-        uint8_t shn : 2; // Shutdown Notification
-        uint8_t iosqes : 4; // I/O SQ Entry Size
-        uint8_t iocqes : 4; // I/O CQ Entry Size
+// NVMe Version
+#define NVME_VS_TER_SHIFT 0
+#define NVME_VS_TER_MASK (0xFFU << NVME_VS_TER_SHIFT)
+#define NVME_VS_TER(v) (((v) & NVME_VS_TER_MASK) >> NVME_VS_TER_SHIFT)
 
-        uint8_t rsvd2 : 4;
-    };
-} __attribute__((packed));
+#define NVME_VS_MIN_SHIFT 8
+#define NVME_VS_MIN_MASK (0xFFU << NVME_VS_MIN_SHIFT)
+#define NVME_VS_MIN(v) (((v) & NVME_VS_MIN_MASK) >> NVME_VS_MIN_SHIFT)
 
-union nvme_csts {
-    uint32_t value;
+#define NVME_VS_MAJ_SHIFT 16
+#define NVME_VS_MAJ_MASK (0xFFFFU << NVME_VS_MAJ_SHIFT)
+#define NVME_VS_MAJ(v) (((v) & NVME_VS_MAJ_MASK) >> NVME_VS_MAJ_SHIFT)
 
-    struct {
-        uint8_t rdy : 1;  // Ready
-        uint8_t cfs : 1;  // Controller Fatal Status
-        uint8_t shst : 2;  // Shutdown Status
-        uint8_t nssro : 1; // NVM Subsystem Reset Occurred
-        uint8_t pp : 1; // Processing Paused
- 
-        uint32_t rsvd : 26;
-    };
-} __attribute__((packed));
+// NVMe Controller Configuration
+#define NVME_CC_EN_SHIFT 0
+#define NVME_CC_EN_MASK (0x1U << NVME_CC_EN_SHIFT)
+#define NVME_CC_EN(v) (((v) & NVME_CC_EN_MASK) >> NVME_CC_EN_SHIFT)
 
-union nvme_aqa {
-    uint32_t value;
+#define NVME_CC_CSS_SHIFT 4
+#define NVME_CC_CSS_MASK (0x7U << NVME_CC_CSS_SHIFT)
+#define NVME_CC_CSS(v) (((v) & NVME_CC_CSS_MASK) >> NVME_CC_CSS_SHIFT)
 
-    struct {
-        uint16_t asqs : 12; // Admin SQ Size
-        uint8_t rsvd : 4;
-        uint16_t acqs : 12; // Admin CQ Size
-        uint8_t rsvd2 : 4;
-    };
-} __attribute__((packed));
+#define NVME_CC_MPS_SHIFT 7
+#define NVME_CC_MPS_MASK (0xFU << NVME_CC_MPS_SHIFT)
+#define NVME_CC_MPS(v) (((v) & NVME_CC_MPS_MASK) >> NVME_CC_MPS_SHIFT)
+
+#define NVME_CC_AMS_SHIFT 11
+#define NVME_CC_AMS_MASK (0x7U << NVME_CC_AMS_SHIFT)
+#define NVME_CC_AMS(v) (((v) & NVME_CC_AMS_MASK) >> NVME_CC_AMS_SHIFT)
+
+#define NVME_CC_SHN_SHIFT 14
+#define NVME_CC_SHN_MASK (0x3U << NVME_CC_SHN_SHIFT)
+#define NVME_CC_SHN(v) (((v) & NVME_CC_SHN_MASK) >> NVME_CC_SHN_SHIFT)
+
+#define NVME_CC_IOSQES_SHIFT 16
+#define NVME_CC_IOSQES_MASK (0xFU << NVME_CC_IOSQES_SHIFT)
+#define NVME_CC_IOSQES(v) (((v) & NVME_CC_IOSQES_MASK) >> NVME_CC_IOSQES_SHIFT)
+
+#define NVME_CC_IOCQES_SHIFT 20
+#define NVME_CC_IOCQES_MASK (0xFU << NVME_CC_IOCQES_SHIFT)
+#define NVME_CC_IOCQES(v) (((v) & NVME_CC_IOCQES_MASK) >> NVME_CC_IOCQES_SHIFT)
+
+// NVMe Controller Status
+#define NVME_CSTS_RDY_SHIFT 0
+#define NVME_CSTS_RDY_MASK (0x1U << NVME_CSTS_RDY_SHIFT)
+#define NVME_CSTS_RDY(v) (((v) & NVME_CSTS_RDY_MASK) >> NVME_CSTS_RDY_SHIFT)
+
+#define NVME_CSTS_CFS_SHIFT 1
+#define NVME_CSTS_CFS_MASK (0x1U << NVME_CSTS_CFS_SHIFT)
+#define NVME_CSTS_CFS(v) (((v) & NVME_CSTS_CFS_MASK) >> NVME_CSTS_CFS_SHIFT)
+
+#define NVME_CSTS_SHST_SHIFT 2
+#define NVME_CSTS_SHST_MASK (0x3U << NVME_CSTS_SHST_SHIFT)
+#define NVME_CSTS_SHST(v) (((v) & NVME_CSTS_SHST_MASK) >> NVME_CSTS_SHST_SHIFT)
+
+#define NVME_CSTS_NSSRO_SHIFT 4
+#define NVME_CSTS_NSSRO_MASK (0x1U << NVME_CSTS_NSSRO_SHIFT)
+#define NVME_CSTS_NSSRO(v) (((v) & NVME_CSTS_NSSRO_MASK) >> NVME_CSTS_NSSRO_SHIFT)
+
+#define NVME_CSTS_PP_SHIFT 5
+#define NVME_CSTS_PP_MASK (0x1U << NVME_CSTS_PP_SHIFT)
+#define NVME_CSTS_PP(v) (((v) & NVME_CSTS_PP_MASK) >> NVME_CSTS_PP_SHIFT)
+
+// NVMe Admin Queue Attributes
+#define NVME_AQA_ASQS_SHIFT 0
+#define NVME_AQA_ASQS_MASK (0xFFFU << NVME_AQA_ASQS_SHIFT)
+#define NVME_AQA_ASQS(v) (((v) & NVME_AQA_ASQS_MASK) >> NVME_AQA_ASQS_SHIFT)
+
+#define NVME_AQA_ACQS_SHIFT 16
+#define NVME_AQA_ACQS_MASK (0xFFFU << NVME_AQA_ACQS_SHIFT)
+#define NVME_AQA_ACQS(v) (((v) & NVME_AQA_ACQS_MASK) >> NVME_AQA_ACQS_SHIFT)
 
 struct nvme_regs {
-    volatile union nvme_cap cap;
-    volatile union nvme_vs vs;
-    volatile union nvme_intms intms;
-    volatile union nvme_intmc intmc;
-    volatile union nvme_cc cc;
+    volatile uint64_t cap;
+    volatile uint32_t vs;
+    volatile uint32_t intms;
+    volatile uint32_t intmc;
+    volatile uint32_t cc;
     volatile uint32_t rsvd1;
-    volatile union nvme_csts csts;
-    volatile nvme_nssr_t nssr;
-    volatile union nvme_aqa aqa;
-    volatile nvme_asq_t asq;
-    volatile nvme_acq_t acq;
-} __attribute__((packed));
+    volatile uint32_t csts;
+    volatile uint32_t nssr;
+    volatile uint32_t aqa;
+    volatile uint64_t asq;
+    volatile uint64_t acq;
+};
 
 struct nvme_command {
     uint32_t cdw0;
@@ -140,7 +165,7 @@ struct nvme_command {
     uint32_t cdw13;
     uint32_t cdw14;
     uint32_t cdw15;
-} __attribute__((packed));
+};
 
 struct nvme_completion {
     uint32_t dw0;
@@ -149,17 +174,76 @@ struct nvme_completion {
     uint16_t sq_id;
     uint16_t cid;
     uint16_t status;
-} __attribute__((packed));
+};
 
+
+#define NVME_ADMIN_QUEUE_SIZE 64
 struct nvme_admin_queue {
     struct nvme_command* sq;
     uint64_t sq_phys;
 	uint16_t sq_tail;
+	uint16_t sq_count;
 
     struct nvme_completion* cq;
     uint64_t cq_phys;
     uint16_t cq_head;
     uint8_t cq_phase;
+
+	volatile uint32_t* sq_db;
+	volatile uint32_t* cq_db;
+
+	uint16_t next_cid;
+    uint64_t cid_bitmap[NVME_ADMIN_QUEUE_SIZE / 64];
+};
+
+typedef struct {
+    aos_bool valid;
+
+    uint32_t nsid;
+	
+    uint64_t block_count;
+    uint32_t block_size;
+} nvme_namespace;
+
+
+enum nvme_opcodes {
+	NVME_CMD_FLUSH = 0x0,
+	NVME_CMD_WRITE,
+	NVME_CMD_READ,
+	NVME_CMD_WRITE_UNCOR = 0x4,
+	NVME_CMD_COMPARE,
+	NVME_CMD_WRITE_ZEROES = 0x8,
+	NVME_CMD_DSM,
+	NVME_CMD_VERIFY = 0xC,
+	NVME_CMD_RESV_REGISTER,
+	NVME_CMD_RESV_REPORT,
+	NVME_CMD_RESV_AQUIRE = 0x11,
+	NVME_CMD_IO_MGMT_RECV,
+	NVME_CMD_RESV_RELEASE = 0x15,
+	NVME_CMD_ZONE_MGMT_SEND	= 0x79,
+	NVME_CMD_ZONE_MGMT_RESV	= 0x7A,
+	NVME_CMD_ZONE_APPEND = 0x7D,
+	NVME_CMD_VENDOR_START = 0x80,
+};
+
+enum nvme_admin_opcodes {
+	NVME_ADMIN_CMD_DELETE_SQ = 0x0,
+	NVME_ADMIN_CMD_CREATE_SQ,
+	NVME_ADMIN_CMD_GET_LOG_PAGE,
+	NVME_ADMIN_CMD_DELETE_CQ = 0x4,
+	NVME_ADMIN_CMD_CREATE_CQ,
+	NVME_ADMIN_CMD_IDENTIFY,
+	NVME_ADMIN_CMD_ABORT_CMD = 0x08,
+	NVME_ADMIN_CMD_SET_FEATURES,
+	NVME_ADMIN_CMD_GET_FEATURES,
+	NVME_ADMIN_CMD_ASYNC_EVENT = 0x0C,
+	NVME_ADMIN_CMD_NS_MGMT,
+	NVME_ADMIN_CMD_FIRMWARE_ACTIVATE = 0x10,
+	NVME_ADMIN_CMD_FIRMWARE_DOWNLOAD,
+	NVME_ADMIN_CMD_FORMAT_NVM = 0x80,
+	NVME_ADMIN_CMD_SECURITY_SEND,
+	NVME_ADMIN_CMD_SECURITY_RECV = 0x82,
+	NVME_ADMIN_CMD_SANATIZE_NVM = 0x84
 };
 
 aos_bool nvme_init(struct AOS_Module* m) __attribute__((used));

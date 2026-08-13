@@ -20,9 +20,7 @@
 #include <PBFS/headers/pbfs-fs.h>
 #undef PBFS_NDRIVERS
 
-#define NVMe_ADMIN_QUEUE_SIZE 64
-
-#define KNVME_MAX_PORTS 32
+#define KNVME_MAX_NAMESPACES 32
 #define KNVME_ALLOC_STEP 16
 #define KNVME_MAX_CONTROLLERS 256
 
@@ -37,6 +35,9 @@ typedef struct {
 	volatile struct nvme_regs* regs;
 
 	struct nvme_admin_queue admin_queue;
+
+	nvme_namespace namespaces[KNVME_MAX_NAMESPACES];
+    uint32_t namespace_count;
 
 	spinlock_t drive_lock;
 } nvme_controller;
@@ -122,6 +123,11 @@ static aos_bool nvme_map_bar(nvme_controller* knc) {
 	pcie_toggle_busmaster(bus, slot, func, AOS_TRUE);
 
 	knc->regs = (volatile struct nvme_regs*)(AOS_DIRECT_MAP_BASE + bar_phys);
+
+	uint32_t doorbell_stride = 4U << NVME_CAP_DSTRD(knc->regs->cap);
+	knc->admin_queue.sq_db = (volatile uint32_t*)((uintptr_t)knc->regs + 0x1000);
+	knc->admin_queue.cq_db = (volatile uint32_t*)((uintptr_t)knc->regs + 0x1000 + doorbell_stride);
+
 	serial_printf("[NVMe] Mapped all NVMe (Size: 0x%llx)\n", knc->mapping_size);
 	return AOS_TRUE;
 }
@@ -130,19 +136,19 @@ static aos_bool nvme_setup_admin_queue(nvme_controller* knc) {
 	if (!knc) return AOS_FALSE;
 
 	uint32_t page_shift = 12; // PAGE_SIZE == 4096
-	if (page_shift < 12 + knc->regs->cap.mpsmin || page_shift > 12 + knc->regs->cap.mpsmax) {
+	if (page_shift < 12 + NVME_CAP_MPSMIN(knc->regs->cap) || page_shift > 12 + NVME_CAP_MPSMAX(knc->regs->cap)) {
 		serial_print("[NVMe] Controller does not support kernel page size\n");
 		nvme_destroy(knc);
 		return AOS_FALSE;
 	}
 
-	knc->admin_queue.sq = (struct nvme_command*)avmf_alloc(NVMe_ADMIN_QUEUE_SIZE*sizeof(struct nvme_command), MALLOC_TYPE_DRIVER, AVMF_FLAG_NO_CACHE | AVMF_FLAG_RW, &knc->admin_queue.sq_phys);
+	knc->admin_queue.sq = (struct nvme_command*)avmf_alloc(NVME_ADMIN_QUEUE_SIZE*sizeof(struct nvme_command), MALLOC_TYPE_DRIVER, AVMF_FLAG_NO_CACHE | AVMF_FLAG_RW, &knc->admin_queue.sq_phys);
 	if (!knc->admin_queue.sq || !knc->admin_queue.sq_phys) {
 		serial_print("[NVMe] Failed to allocate Admin Submission Queue!\n");
 		return AOS_FALSE;
 	}
 
-	knc->admin_queue.cq = (struct nvme_completion*)avmf_alloc(NVMe_ADMIN_QUEUE_SIZE*sizeof(struct nvme_completion), MALLOC_TYPE_DRIVER, AVMF_FLAG_NO_CACHE | AVMF_FLAG_RW, &knc->admin_queue.cq_phys);
+	knc->admin_queue.cq = (struct nvme_completion*)avmf_alloc(NVME_ADMIN_QUEUE_SIZE*sizeof(struct nvme_completion), MALLOC_TYPE_DRIVER, AVMF_FLAG_NO_CACHE | AVMF_FLAG_RW, &knc->admin_queue.cq_phys);
 	if (!knc->admin_queue.cq || !knc->admin_queue.cq_phys) {
 		serial_print("[NVMe] Failed to allocate Admin Completion Queue!\n");
 		avmf_free((uint64_t)knc->admin_queue.sq);
@@ -151,28 +157,165 @@ static aos_bool nvme_setup_admin_queue(nvme_controller* knc) {
 		return AOS_FALSE;
 	}
 
-	memset(knc->admin_queue.sq, 0, NVMe_ADMIN_QUEUE_SIZE*sizeof(struct nvme_command));
-    memset(knc->admin_queue.cq, 0, NVMe_ADMIN_QUEUE_SIZE*sizeof(struct nvme_completion));
+	memset(knc->admin_queue.sq, 0, NVME_ADMIN_QUEUE_SIZE*sizeof(struct nvme_command));
+    memset(knc->admin_queue.cq, 0, NVME_ADMIN_QUEUE_SIZE*sizeof(struct nvme_completion));
 
 	knc->admin_queue.sq_tail = 0;
+	knc->admin_queue.sq_count = 0;
     knc->admin_queue.cq_head = 0;
     knc->admin_queue.cq_phase = 1;
+	knc->admin_queue.next_cid = 0;
+	knc->admin_queue.cid_bitmap[0] = 0;
 
-	knc->regs->aqa.asqs = NVMe_ADMIN_QUEUE_SIZE-1;
-	knc->regs->aqa.acqs = NVMe_ADMIN_QUEUE_SIZE-1;
-	knc->regs->asq = (volatile nvme_asq_t)knc->admin_queue.sq_phys;
-	knc->regs->acq = (volatile nvme_acq_t)knc->admin_queue.cq_phys;
+	knc->regs->aqa &= ~NVME_AQA_ASQS_MASK;
+	knc->regs->aqa |= ((NVME_ADMIN_QUEUE_SIZE-1) << NVME_AQA_ASQS_SHIFT) & NVME_AQA_ASQS_MASK;
+	
+	knc->regs->aqa &= ~NVME_AQA_ACQS_MASK;
+	knc->regs->aqa |= ((NVME_ADMIN_QUEUE_SIZE-1) << NVME_AQA_ACQS_SHIFT) & NVME_AQA_ACQS_MASK;
+	
+	knc->regs->asq = knc->admin_queue.sq_phys;
+	knc->regs->acq = knc->admin_queue.cq_phys;
 	__asm__ volatile("mfence" ::: "memory");
 	
-	knc->regs->cc.css = 0;
-	knc->regs->cc.mps = page_shift - 12;
-	knc->regs->cc.iosqes = 6;
-	knc->regs->cc.iocqes = 4;
-	knc->regs->cc.ams = 0;
+	knc->regs->cc &= ~NVME_CC_CSS_MASK;
+	knc->regs->cc &= ~NVME_CC_AMS_MASK;
+	
+	knc->regs->cc &= ~NVME_CC_MPS_MASK;
+	knc->regs->cc |= ((page_shift - 12) << NVME_CC_MPS_SHIFT) & NVME_CC_MPS_MASK;
+	
+	knc->regs->cc &= ~NVME_CC_IOSQES_MASK;
+	knc->regs->cc |= (6 << NVME_CC_IOSQES_SHIFT) & NVME_CC_IOSQES_MASK;
+
+	knc->regs->cc &= ~NVME_CC_IOCQES_MASK;
+	knc->regs->cc |= (4 << NVME_CC_IOCQES_SHIFT) & NVME_CC_IOCQES_MASK;
 	__asm__ volatile("mfence" ::: "memory");
 
 	serial_print("[NVMe] Admin Queues Created!\n");
 	return AOS_TRUE;
+}
+
+static aos_bool nvme_send_cmd(nvme_controller* knc, struct nvme_command* cmd, uint16_t* out_cid) {
+    if (!knc || !cmd || !out_cid) return AOS_FALSE;
+
+    struct nvme_admin_queue* aq = &knc->admin_queue;
+    if (!aq->sq) return AOS_FALSE;
+	if (aq->sq_count >= NVME_ADMIN_QUEUE_SIZE) return AOS_FALSE;
+
+    uint16_t cid = aq->next_cid;
+	aos_bool found = AOS_FALSE;
+    for (uint16_t i = 0; i < NVME_ADMIN_QUEUE_SIZE; i++) {
+        uint16_t candidate = (uint16_t)((cid + i) % NVME_ADMIN_QUEUE_SIZE);
+
+        uint64_t mask = 1ULL << candidate;
+        if ((aq->cid_bitmap[0] & mask) == 0) {
+            cid = candidate;
+            aq->cid_bitmap[0] |= mask;
+            
+			found = AOS_TRUE;
+			break;
+        }
+    }
+	if (!found) return AOS_FALSE;
+
+	aq->next_cid = (uint16_t)((cid + 1U) % NVME_ADMIN_QUEUE_SIZE);
+
+	// CDW0[31:16] = CID
+	uint16_t slot = aq->sq_tail;
+	struct nvme_command* sq_cmd = &aq->sq[slot];
+	memcpy(sq_cmd, cmd, sizeof(*sq_cmd));
+
+	sq_cmd->cdw0 &= 0x0000FFFFU;
+	sq_cmd->cdw0 |= ((uint32_t)cid << 16);
+
+	aq->sq_tail++;
+	if (aq->sq_tail >= NVME_ADMIN_QUEUE_SIZE) aq->sq_tail = 0;
+	aq->sq_count++;
+
+	__asm__ volatile("mfence" ::: "memory");
+
+	*out_cid = cid;
+
+	return AOS_TRUE;
+}
+
+static void nvme_notify_device(nvme_controller* knc) {
+    if (!knc) return;
+
+    struct nvme_admin_queue* aq = &knc->admin_queue;
+    if (!aq->sq_db) return;
+
+    *aq->sq_db = aq->sq_tail;
+    __asm__ volatile("mfence" ::: "memory");
+}
+
+static aos_bool nvme_poll_cmd_sync(nvme_controller* knc, uint16_t cid, struct nvme_completion* out_cqe) {
+    if (!knc || !out_cqe) return AOS_FALSE;
+
+    struct nvme_admin_queue* aq = &knc->admin_queue;
+    if (!aq->cq || !aq->cq_db) return AOS_FALSE;
+
+    uint64_t timeout = kget_ms_passed();
+    while (1) {
+        struct nvme_completion* cqe = &aq->cq[aq->cq_head];
+
+        uint16_t status = cqe->status;
+        if ((status & 0x1U) == aq->cq_phase) {
+            __asm__ volatile("mfence" ::: "memory");
+
+            uint16_t completed_cid = cqe->cid;
+            if (completed_cid == cid) {
+                memcpy(out_cqe, cqe, sizeof(*out_cqe));
+
+                aq->cq_head++;
+                if (aq->cq_head >= NVME_ADMIN_QUEUE_SIZE) {
+                    aq->cq_head = 0;
+                    aq->cq_phase ^= 1U;
+                }
+				if (aq->sq_count > 0) aq->sq_count--;
+				aq->cid_bitmap[0] &= ~(1ULL << completed_cid);
+
+				*aq->cq_db = aq->cq_head;
+                __asm__ volatile("mfence" ::: "memory");
+
+                return AOS_TRUE;
+            }
+        }
+
+        if (NVME_CSTS_CFS(knc->regs->csts)) {
+            serial_print("[NVMe] Controller Fatal Status!\n");
+            return AOS_FALSE;
+        }
+
+        if (kget_ms_passed() - timeout > 10000) {
+            serial_print("[NVMe] Command Completion Timeout!\n");
+            return AOS_FALSE;
+        }
+    }
+}
+
+static aos_bool nvme_cmd_sync(nvme_controller* knc, struct nvme_command* cmd, struct nvme_completion* out_cqe) {
+    if (!knc || !cmd || !out_cqe) return AOS_FALSE;
+
+    uint16_t cid;
+    if (!nvme_send_cmd(knc, cmd, &cid)) return AOS_FALSE;
+    nvme_notify_device(knc);
+
+    if (!nvme_poll_cmd_sync(knc, cid, out_cqe)) return AOS_FALSE;
+    return AOS_TRUE;
+}
+
+static aos_bool nvme_identify_controller(nvme_controller* knc) {
+	if (!knc) return AOS_FALSE;
+
+	struct nvme_command cmd = {0};
+	struct nvme_completion cqe;
+
+	// cmd.cdw0 = NVME_ADMIN_CMD_IDENTIFY;
+	// cmd.prp1 = identify_phys;
+	// cmd.cdw10 = 0x01;
+
+	if (!nvme_cmd_sync(knc, &cmd, &cqe))
+		return AOS_FALSE;
 }
 
 aos_bool nvme_init(struct AOS_Module* m) {
@@ -208,18 +351,18 @@ aos_bool nvme_init(struct AOS_Module* m) {
 		return AOS_FALSE;
 	}
     // Reset
-	knc->regs->cc.en = 0;
+	knc->regs->cc &= ~NVME_CC_EN_MASK;
 	__asm__ volatile("mfence" ::: "memory");
 
     uint64_t timeout = kget_ms_passed();
-	while (knc->regs->csts.rdy != 0) {
+	while (NVME_CSTS_RDY(knc->regs->csts) != 0) {
 		if (kget_ms_passed() - timeout > 10000) {
 			serial_print("[NVMe] Controller Disable Timeout!\n");
 			nvme_destroy(knc);
 			return AOS_FALSE;
 		}
 	}
-	if (knc->regs->csts.cfs) {
+	if (NVME_CSTS_CFS(knc->regs->csts)) {
 		serial_print("[NVMe] Controller Fatal Status!\n");
 		nvme_destroy(knc);
 		return AOS_FALSE;
@@ -230,18 +373,18 @@ aos_bool nvme_init(struct AOS_Module* m) {
 		return AOS_FALSE;
 	}
 
-	knc->regs->cc.en = 1;
+	knc->regs->cc |= NVME_CC_EN_MASK;
 	__asm__ volatile("mfence" ::: "memory");
 
 	timeout = kget_ms_passed();
-	while (knc->regs->csts.rdy == 0) {
+	while (NVME_CSTS_RDY(knc->regs->csts) == 0) {
 		if (kget_ms_passed() - timeout > 10000) {
 			serial_print("[NVMe] Controller Enable Timeout!\n");
 			nvme_destroy(knc);
 			return AOS_FALSE;
 		}
 	}
-	if (knc->regs->csts.cfs) {
+	if (NVME_CSTS_CFS(knc->regs->csts)) {
 		serial_print("[NVMe] Controller Fatal Status!\n");
 		nvme_destroy(knc);
 		return AOS_FALSE;
