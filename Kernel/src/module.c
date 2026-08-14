@@ -107,7 +107,7 @@ aos_bool modules_init(void) {
             .read_blk = NULL,
             .write_blk = NULL,
             .flush = NULL,
-            .get_block_device = NULL,
+            .get_block_device = nvme_get_block_device,
             .cur_port = 0,
 			.controller_idx = 0,
             .pcie_device = NULL,

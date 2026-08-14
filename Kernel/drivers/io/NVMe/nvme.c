@@ -27,14 +27,15 @@
 typedef struct {
 	uint64_t idx;
 	aos_bool valid;
-
 	pcie_device_t nvme_device;
-	aos_bool found_nvme;
 
 	uint64_t mapping_size;
 	volatile struct nvme_regs* regs;
 
 	struct nvme_admin_queue admin_queue;
+	struct nvme_io_queue io_queue;
+	
+	struct nvme_identify_controller* controller_identity;
 
 	nvme_namespace namespaces[KNVME_MAX_NAMESPACES];
     uint32_t namespace_count;
@@ -49,6 +50,32 @@ static uint64_t controller_cap;
 static void nvme_destroy(nvme_controller* knc) {
 	if (!knc) return;
 
+	if (knc->namespace_count > 0) {
+		for (uint32_t i = 0; i < knc->namespace_count; i++) {
+			if (i >= KNVME_MAX_NAMESPACES) break;
+			nvme_namespace* ns = &knc->namespaces[i];
+			if (!ns->valid) continue;
+			if (ns->identity) {
+				avmf_free((uint64_t)ns->identity);
+				ns->identity = NULL;
+			}
+			ns->valid = AOS_FALSE;
+		}
+	}
+
+	if (knc->controller_identity) {
+		avmf_free((uint64_t)knc->controller_identity);
+		knc->controller_identity = NULL;
+	}
+	
+	if (knc->io_queue.cq) {
+		avmf_free((uint64_t)knc->io_queue.cq);
+		knc->io_queue.cq = NULL;
+	}
+	if (knc->io_queue.sq) {
+		avmf_free((uint64_t)knc->io_queue.sq);
+		knc->io_queue.sq = NULL;
+	}
 	if (knc->admin_queue.cq) {
 		avmf_free((uint64_t)knc->admin_queue.cq);
 		knc->admin_queue.cq = NULL;
@@ -58,7 +85,6 @@ static void nvme_destroy(nvme_controller* knc) {
 		knc->admin_queue.sq = NULL;
 	}
 
-	knc->found_nvme = AOS_FALSE;
 	knc->valid = AOS_FALSE;
 	if (knc->idx == controller_count-1) controller_count--;
 }
@@ -125,8 +151,17 @@ static aos_bool nvme_map_bar(nvme_controller* knc) {
 	knc->regs = (volatile struct nvme_regs*)(AOS_DIRECT_MAP_BASE + bar_phys);
 
 	uint32_t doorbell_stride = 4U << NVME_CAP_DSTRD(knc->regs->cap);
-	knc->admin_queue.sq_db = (volatile uint32_t*)((uintptr_t)knc->regs + 0x1000);
-	knc->admin_queue.cq_db = (volatile uint32_t*)((uintptr_t)knc->regs + 0x1000 + doorbell_stride);
+
+	uint64_t required_mapping = PAGE_SIZE + ((2ULL * NVME_IO_QUEUE_ID + 2ULL) * doorbell_stride);
+	if (knc->mapping_size < required_mapping) {
+		serial_printf("[NVMe] BAR too small for doorbells: BAR=0x%llX Required=0x%llX\n", knc->mapping_size, required_mapping);
+		return AOS_FALSE;
+	}
+
+	knc->admin_queue.sq_db = (volatile uint32_t*)((uintptr_t)knc->regs + PAGE_SIZE);
+	knc->admin_queue.cq_db = (volatile uint32_t*)((uintptr_t)knc->regs + PAGE_SIZE + doorbell_stride);
+	knc->io_queue.sq_db = (volatile uint32_t*)((uintptr_t)knc->regs + PAGE_SIZE + ((2*NVME_IO_QUEUE_ID)*doorbell_stride));
+	knc->io_queue.cq_db = (volatile uint32_t*)((uintptr_t)knc->regs + PAGE_SIZE + ((2*NVME_IO_QUEUE_ID+1)*doorbell_stride));
 
 	serial_printf("[NVMe] Mapped all NVMe (Size: 0x%llx)\n", knc->mapping_size);
 	return AOS_TRUE;
@@ -135,10 +170,15 @@ static aos_bool nvme_map_bar(nvme_controller* knc) {
 static aos_bool nvme_setup_admin_queue(nvme_controller* knc) {
 	if (!knc) return AOS_FALSE;
 
+	uint32_t max_queue_entries = NVME_CAP_MQES(knc->regs->cap) + 1;
+	if (NVME_ADMIN_QUEUE_SIZE > max_queue_entries) {
+		serial_printf("[NVMe] Admin queue size (%llu entries) exceeds controller maximum (%llu entries)\n", NVME_ADMIN_QUEUE_SIZE, max_queue_entries);
+		return AOS_FALSE;
+	}
+
 	uint32_t page_shift = 12; // PAGE_SIZE == 4096
 	if (page_shift < 12 + NVME_CAP_MPSMIN(knc->regs->cap) || page_shift > 12 + NVME_CAP_MPSMAX(knc->regs->cap)) {
 		serial_print("[NVMe] Controller does not support kernel page size\n");
-		nvme_destroy(knc);
 		return AOS_FALSE;
 	}
 
@@ -194,7 +234,7 @@ static aos_bool nvme_setup_admin_queue(nvme_controller* knc) {
 	return AOS_TRUE;
 }
 
-static aos_bool nvme_send_cmd(nvme_controller* knc, struct nvme_command* cmd, uint16_t* out_cid) {
+static aos_bool nvme_send_admin_cmd(nvme_controller* knc, struct nvme_command* cmd, uint16_t* out_cid) {
     if (!knc || !cmd || !out_cid) return AOS_FALSE;
 
     struct nvme_admin_queue* aq = &knc->admin_queue;
@@ -238,7 +278,7 @@ static aos_bool nvme_send_cmd(nvme_controller* knc, struct nvme_command* cmd, ui
 	return AOS_TRUE;
 }
 
-static void nvme_notify_device(nvme_controller* knc) {
+static void nvme_admin_notify_device(nvme_controller* knc) {
     if (!knc) return;
 
     struct nvme_admin_queue* aq = &knc->admin_queue;
@@ -248,7 +288,7 @@ static void nvme_notify_device(nvme_controller* knc) {
     __asm__ volatile("mfence" ::: "memory");
 }
 
-static aos_bool nvme_poll_cmd_sync(nvme_controller* knc, uint16_t cid, struct nvme_completion* out_cqe) {
+static aos_bool nvme_admin_poll_cmd_sync(nvme_controller* knc, uint16_t cid, struct nvme_completion* out_cqe) {
     if (!knc || !out_cqe) return AOS_FALSE;
 
     struct nvme_admin_queue* aq = &knc->admin_queue;
@@ -259,24 +299,26 @@ static aos_bool nvme_poll_cmd_sync(nvme_controller* knc, uint16_t cid, struct nv
         struct nvme_completion* cqe = &aq->cq[aq->cq_head];
 
         uint16_t status = cqe->status;
-        if ((status & 0x1U) == aq->cq_phase) {
+        if (NVME_CQE_PHASE(status) == aq->cq_phase) {
             __asm__ volatile("mfence" ::: "memory");
 
             uint16_t completed_cid = cqe->cid;
+			struct nvme_completion completed;
+			memcpy(&completed, cqe, sizeof(completed));
+
+			aq->cq_head++;
+			if (aq->cq_head >= NVME_ADMIN_QUEUE_SIZE) {
+				aq->cq_head = 0;
+				aq->cq_phase ^= 1U;
+			}
+			if (aq->sq_count > 0) aq->sq_count--;
+			aq->cid_bitmap[0] &= ~(1ULL << completed_cid);
+
+			*aq->cq_db = aq->cq_head;
+			__asm__ volatile("mfence" ::: "memory");
+
             if (completed_cid == cid) {
-                memcpy(out_cqe, cqe, sizeof(*out_cqe));
-
-                aq->cq_head++;
-                if (aq->cq_head >= NVME_ADMIN_QUEUE_SIZE) {
-                    aq->cq_head = 0;
-                    aq->cq_phase ^= 1U;
-                }
-				if (aq->sq_count > 0) aq->sq_count--;
-				aq->cid_bitmap[0] &= ~(1ULL << completed_cid);
-
-				*aq->cq_db = aq->cq_head;
-                __asm__ volatile("mfence" ::: "memory");
-
+                memcpy(out_cqe, &completed, sizeof(completed));
                 return AOS_TRUE;
             }
         }
@@ -293,32 +335,292 @@ static aos_bool nvme_poll_cmd_sync(nvme_controller* knc, uint16_t cid, struct nv
     }
 }
 
-static aos_bool nvme_cmd_sync(nvme_controller* knc, struct nvme_command* cmd, struct nvme_completion* out_cqe) {
+static aos_bool nvme_admin_cmd_sync(nvme_controller* knc, struct nvme_command* cmd, struct nvme_completion* out_cqe) {
     if (!knc || !cmd || !out_cqe) return AOS_FALSE;
 
     uint16_t cid;
-    if (!nvme_send_cmd(knc, cmd, &cid)) return AOS_FALSE;
-    nvme_notify_device(knc);
+    if (!nvme_send_admin_cmd(knc, cmd, &cid)) return AOS_FALSE;
+    nvme_admin_notify_device(knc);
 
-    if (!nvme_poll_cmd_sync(knc, cid, out_cqe)) return AOS_FALSE;
+    if (!nvme_admin_poll_cmd_sync(knc, cid, out_cqe)) return AOS_FALSE;
     return AOS_TRUE;
 }
 
-static aos_bool nvme_identify_controller(nvme_controller* knc) {
+static aos_bool nvme_create_io_cq(nvme_controller* knc) {
 	if (!knc) return AOS_FALSE;
+
+    struct nvme_command cmd = {0};
+    struct nvme_completion cqe = {0};
+
+    cmd.cdw0 = NVME_ADMIN_CMD_CREATE_CQ;
+    cmd.prp1 = knc->io_queue.cq_phys;
+    cmd.cdw10 = ((NVME_IO_QUEUE_SIZE - 1) << 16) | NVME_IO_QUEUE_ID;
+    cmd.cdw11 = NVME_CQ_PC;
+
+    if (!nvme_admin_cmd_sync(knc, &cmd, &cqe)) return AOS_FALSE;
+    if (NVME_CQE_STATUS(cqe.status) != NVME_SC_SUCCESS) return AOS_FALSE;
+
+    return AOS_TRUE;
+}
+
+static aos_bool nvme_create_io_sq(nvme_controller* knc) {
+	if (!knc) return AOS_FALSE;
+
+    struct nvme_command cmd = {0};
+    struct nvme_completion cqe = {0};
+
+    cmd.cdw0 = NVME_ADMIN_CMD_CREATE_SQ;
+    cmd.prp1 = knc->io_queue.sq_phys;
+    cmd.cdw10 = ((NVME_IO_QUEUE_SIZE - 1) << 16) | NVME_IO_QUEUE_ID;
+    cmd.cdw11 = NVME_IO_QUEUE_ID | NVME_SQ_PRIO_URGENT | NVME_SQ_PC;
+
+    if (!nvme_admin_cmd_sync(knc, &cmd, &cqe)) return AOS_FALSE;
+    if (NVME_CQE_STATUS(cqe.status) != NVME_SC_SUCCESS) return AOS_FALSE;
+
+    return AOS_TRUE;
+}
+
+static aos_bool nvme_setup_io_queue(nvme_controller* knc) {
+	if (!knc) return AOS_FALSE;
+	
+	uint32_t max_queue_entries = NVME_CAP_MQES(knc->regs->cap) + 1;
+	if (NVME_IO_QUEUE_SIZE > max_queue_entries) {
+		serial_printf("[NVMe] IO queue size (%u entries) exceeds controller maximum (%u entries)\n", NVME_IO_QUEUE_SIZE, max_queue_entries);
+		return AOS_FALSE;
+	}
+
+	uint32_t page_shift = 12; // PAGE_SIZE == 4096
+	if (page_shift < 12 + NVME_CAP_MPSMIN(knc->regs->cap) || page_shift > 12 + NVME_CAP_MPSMAX(knc->regs->cap)) {
+		serial_print("[NVMe] Controller does not support kernel page size\n");
+		return AOS_FALSE;
+	}
+
+	knc->io_queue.sq = (struct nvme_command*)avmf_alloc(NVME_IO_QUEUE_SIZE*sizeof(struct nvme_command), MALLOC_TYPE_DRIVER, AVMF_FLAG_NO_CACHE | AVMF_FLAG_RW, &knc->io_queue.sq_phys);
+	if (!knc->io_queue.sq || !knc->io_queue.sq_phys) {
+		serial_print("[NVMe] Failed to allocate Admin Submission Queue!\n");
+		return AOS_FALSE;
+	}
+
+	knc->io_queue.cq = (struct nvme_completion*)avmf_alloc(NVME_IO_QUEUE_SIZE*sizeof(struct nvme_completion), MALLOC_TYPE_DRIVER, AVMF_FLAG_NO_CACHE | AVMF_FLAG_RW, &knc->io_queue.cq_phys);
+	if (!knc->io_queue.cq || !knc->io_queue.cq_phys) {
+		serial_print("[NVMe] Failed to allocate Admin Completion Queue!\n");
+		avmf_free((uint64_t)knc->io_queue.sq);
+		knc->io_queue.sq = NULL;
+
+		return AOS_FALSE;
+	}
+
+	memset(knc->io_queue.sq, 0, NVME_IO_QUEUE_SIZE*sizeof(struct nvme_command));
+    memset(knc->io_queue.cq, 0, NVME_IO_QUEUE_SIZE*sizeof(struct nvme_completion));
+
+	knc->io_queue.sq_tail = 0;
+	knc->io_queue.sq_count = 0;
+    knc->io_queue.cq_head = 0;
+    knc->io_queue.cq_phase = 1;
+	knc->io_queue.next_cid = 0;
+	knc->io_queue.cid_bitmap[0] = 0;
+
+	if (!nvme_create_io_cq(knc)) {
+		serial_print("[NVMe] Failed to create IO Completion Queue!\n");
+		
+		avmf_free((uint64_t)knc->io_queue.sq);
+		knc->io_queue.sq = NULL;
+		avmf_free((uint64_t)knc->io_queue.cq);
+		knc->io_queue.cq = NULL;
+
+		return AOS_FALSE;
+	}
+
+	if (!nvme_create_io_sq(knc)) {
+		serial_print("[NVMe] Failed to create IO Submission Queue!\n");
+		
+		avmf_free((uint64_t)knc->io_queue.sq);
+		knc->io_queue.sq = NULL;
+		avmf_free((uint64_t)knc->io_queue.cq);
+		knc->io_queue.cq = NULL;
+
+		return AOS_FALSE;
+	}
+
+	serial_print("[NVMe] IO Queues Created!\n");
+	return AOS_TRUE;
+}
+
+static aos_bool nvme_send_io_cmd(nvme_controller* knc, struct nvme_command* cmd, uint16_t* out_cid) {
+    if (!knc || !cmd || !out_cid) return AOS_FALSE;
+
+    struct nvme_io_queue* ioq = &knc->io_queue;
+    if (!ioq->sq) return AOS_FALSE;
+	if (ioq->sq_count >= NVME_IO_QUEUE_SIZE) return AOS_FALSE;
+
+    uint16_t cid = ioq->next_cid;
+	aos_bool found = AOS_FALSE;
+    for (uint16_t i = 0; i < NVME_IO_QUEUE_SIZE; i++) {
+        uint16_t candidate = (uint16_t)((cid + i) % NVME_IO_QUEUE_SIZE);
+
+        uint64_t mask = 1ULL << candidate;
+        if ((ioq->cid_bitmap[0] & mask) == 0) {
+            cid = candidate;
+            ioq->cid_bitmap[0] |= mask;
+            
+			found = AOS_TRUE;
+			break;
+        }
+    }
+	if (!found) return AOS_FALSE;
+
+	ioq->next_cid = (uint16_t)((cid + 1U) % NVME_IO_QUEUE_SIZE);
+
+	// CDW0[31:16] = CID
+	uint16_t slot = ioq->sq_tail;
+	struct nvme_command* sq_cmd = &ioq->sq[slot];
+	memcpy(sq_cmd, cmd, sizeof(*sq_cmd));
+
+	sq_cmd->cdw0 &= 0x0000FFFFU;
+	sq_cmd->cdw0 |= ((uint32_t)cid << 16);
+
+	ioq->sq_tail++;
+	if (ioq->sq_tail >= NVME_IO_QUEUE_SIZE) ioq->sq_tail = 0;
+	ioq->sq_count++;
+
+	__asm__ volatile("mfence" ::: "memory");
+
+	*out_cid = cid;
+
+	return AOS_TRUE;
+}
+
+static void nvme_io_notify_device(nvme_controller* knc) {
+    if (!knc) return;
+
+    struct nvme_io_queue* ioq = &knc->io_queue;
+    if (!ioq->sq_db) return;
+
+    *ioq->sq_db = ioq->sq_tail;
+    __asm__ volatile("mfence" ::: "memory");
+}
+
+static aos_bool nvme_io_poll_cmd_sync(nvme_controller* knc, uint16_t cid, struct nvme_completion* out_cqe) {
+    if (!knc || !out_cqe) return AOS_FALSE;
+
+    struct nvme_io_queue* ioq = &knc->io_queue;
+    if (!ioq->cq || !ioq->cq_db) return AOS_FALSE;
+
+    uint64_t timeout = kget_ms_passed();
+    while (1) {
+        struct nvme_completion* cqe = &ioq->cq[ioq->cq_head];
+
+        uint16_t status = cqe->status;
+        if (NVME_CQE_PHASE(status) == ioq->cq_phase) {
+            __asm__ volatile("mfence" ::: "memory");
+
+            uint16_t completed_cid = cqe->cid;
+            struct nvme_completion completed;
+            memcpy(&completed, cqe, sizeof(completed));
+
+            ioq->cq_head++;
+			if (ioq->cq_head >= NVME_IO_QUEUE_SIZE) {
+				ioq->cq_head = 0;
+				ioq->cq_phase ^= 1U;
+			}
+			if (ioq->sq_count > 0) ioq->sq_count--;
+			ioq->cid_bitmap[0] &= ~(1ULL << completed_cid);
+
+			*ioq->cq_db = ioq->cq_head;
+			__asm__ volatile("mfence" ::: "memory");
+
+            if (completed_cid == cid) {
+                memcpy(out_cqe, &completed, sizeof(completed));
+                return AOS_TRUE;
+            }
+        }
+
+        if (NVME_CSTS_CFS(knc->regs->csts)) {
+            serial_print("[NVMe] Controller Fatal Status!\n");
+            return AOS_FALSE;
+        }
+
+        if (kget_ms_passed() - timeout > 10000) {
+            serial_print("[NVMe] Command Completion Timeout!\n");
+            return AOS_FALSE;
+        }
+    }
+}
+
+static aos_bool nvme_io_cmd_sync(nvme_controller* knc, struct nvme_command* cmd, struct nvme_completion* out_cqe) {
+    if (!knc || !cmd || !out_cqe) return AOS_FALSE;
+
+    uint16_t cid;
+    if (!nvme_send_io_cmd(knc, cmd, &cid)) return AOS_FALSE;
+    nvme_io_notify_device(knc);
+
+    if (!nvme_io_poll_cmd_sync(knc, cid, out_cqe)) return AOS_FALSE;
+    return AOS_TRUE;
+}
+
+static aos_bool nvme_identify_cnt(nvme_controller* knc, struct nvme_identify_controller** out) {
+	if (!knc || !out) return AOS_FALSE;
 
 	struct nvme_command cmd = {0};
 	struct nvme_completion cqe;
 
-	// cmd.cdw0 = NVME_ADMIN_CMD_IDENTIFY;
-	// cmd.prp1 = identify_phys;
-	// cmd.cdw10 = 0x01;
+	uint64_t iden_phys = 0;
+	struct nvme_identify_controller* iden = (struct nvme_identify_controller*)avmf_alloc(ALIGN_UP(sizeof(struct nvme_identify_controller), PAGE_SIZE), MALLOC_TYPE_DRIVER, AVMF_FLAG_RW, &iden_phys);
+	if (!iden_phys || !iden) return AOS_FALSE;
 
-	if (!nvme_cmd_sync(knc, &cmd, &cqe))
+	memset(iden, 0, ALIGN_UP(sizeof(struct nvme_identify_controller), PAGE_SIZE));
+
+	cmd.cdw0 = NVME_ADMIN_CMD_IDENTIFY;
+	cmd.prp1 = iden_phys;
+	cmd.cdw10 = NVME_IDENTIFY_CNS_CONTROLLER;
+
+	if (!nvme_admin_cmd_sync(knc, &cmd, &cqe)) {
+		avmf_free((uint64_t)iden);
 		return AOS_FALSE;
+	}
+
+	if (NVME_CQE_STATUS(cqe.status) != NVME_SC_SUCCESS) {
+		avmf_free((uint64_t)iden);
+		return AOS_FALSE;
+	}
+
+	*out = iden;
+	return AOS_TRUE;
+}
+
+static aos_bool nvme_identify_namespace(nvme_controller* knc, uint32_t nsid, struct nvme_identify_namespace** out) {
+	if (!knc || !out) return AOS_FALSE;
+
+	struct nvme_command cmd = {0};
+	struct nvme_completion cqe;
+
+	uint64_t iden_phys = 0;
+	struct nvme_identify_namespace* iden = (struct nvme_identify_namespace*)avmf_alloc(ALIGN_UP(sizeof(struct nvme_identify_namespace), PAGE_SIZE), MALLOC_TYPE_DRIVER, AVMF_FLAG_RW, &iden_phys);
+	if (!iden_phys || !iden) return AOS_FALSE;
+
+	memset(iden, 0, ALIGN_UP(sizeof(struct nvme_identify_namespace), PAGE_SIZE));
+
+	cmd.cdw0 = NVME_ADMIN_CMD_IDENTIFY;
+	cmd.prp1 = iden_phys;
+	cmd.cdw10 = NVME_IDENTIFY_CNS_NAMESPACE;
+	cmd.nsid = nsid;
+
+	if (!nvme_admin_cmd_sync(knc, &cmd, &cqe)) {
+		avmf_free((uint64_t)iden);
+		return AOS_FALSE;
+	}
+
+	if (NVME_CQE_STATUS(cqe.status) != NVME_SC_SUCCESS) {
+		avmf_free((uint64_t)iden);
+		return AOS_FALSE;
+	}
+
+	*out = iden;
+	return AOS_TRUE;
 }
 
 aos_bool nvme_init(struct AOS_Module* m) {
+	if (!m) return AOS_FALSE;
     if (m->hdr.type != MODULE_TYPE_DRIVER) return AOS_FALSE;
     if (m->Modules.driver_module.type != MODULE_DRIVER_TYPE_NVMe) return AOS_FALSE;
 
@@ -389,6 +691,100 @@ aos_bool nvme_init(struct AOS_Module* m) {
 		nvme_destroy(knc);
 		return AOS_FALSE;
 	}
+
+	if (!nvme_setup_io_queue(knc)) {
+		nvme_destroy(knc);
+		return AOS_FALSE;
+	}
+
+	if (!nvme_identify_cnt(knc, &knc->controller_identity)) {
+		serial_print("[NVMe] Failed to identify device!\n");
+		nvme_destroy(knc);
+		return AOS_FALSE;
+	}
+
+	if (knc->controller_identity->nn < 1) {
+		serial_print("[NVMe] Controller has no namespaces!\n");
+		nvme_destroy(knc);
+		return AOS_FALSE;
+	}
+
+	for (uint32_t i = 1; i <= knc->controller_identity->nn; i++) {
+		if (i > KNVME_MAX_NAMESPACES) {
+			serial_print("[NVMe] Controller has too many namespaces to register, skipping extra.\n");
+			break;
+		}
+		nvme_namespace* ns = &knc->namespaces[knc->namespace_count++];
+		memset(ns, 0, sizeof(nvme_namespace));
+
+		if (!nvme_identify_namespace(knc, i, &ns->identity)) {
+			serial_printf("[NVMe] Failed to identify namespace %u!\n", i);
+			nvme_destroy(knc);
+			return AOS_FALSE;
+		}
+		ns->valid = AOS_TRUE;
+		ns->nsid = i;
+	}
+
+	knc->valid = AOS_TRUE;
+	return AOS_TRUE;
+}
+
+aos_bool nvme_get_pcie(uint64_t cidx, pcie_device_t* out) {
+	if (!out) return AOS_FALSE;
+	if (cidx >= controller_count) return AOS_FALSE;
+	nvme_controller* knc = &controllers[cidx];
+	if (!knc->valid) return AOS_FALSE;
+
+    memcpy(out, &knc->nvme_device, sizeof(pcie_device_t));
+
+	return AOS_TRUE;
+}
+
+aos_bool nvme_get_block_device(uint64_t cidx, uint64_t port_id, struct block_device* out) {
+	if (!out) return AOS_FALSE;
+	if (cidx >= controller_count) return AOS_FALSE;
+	nvme_controller* knc = &controllers[cidx];
+	if (!knc->valid || !knc->controller_identity || knc->namespace_count < 1 || port_id >= knc->namespace_count) return AOS_FALSE;
+
+	nvme_namespace* ns = &knc->namespaces[port_id];
+	if (!ns->valid || !ns->identity) return AOS_FALSE;
+
+	out->block_count = ns->identity->nsze;
+	uint8_t flbas = ns->identity->flbas & 0x0F;
+	out->block_size = 1U << ns->identity->lbaf[flbas].ds;
+
+	char* name = (char*)avmf_alloc(80 * sizeof(char), MALLOC_TYPE_DRIVER, AVMF_FLAG_RW, NULL);
+	if (!name) return AOS_FALSE;
+	memset(name, 0, 80 * sizeof(char));
+
+	memcpy(name, "nvme", 4);
+	ku64_to_str(cidx, (char*)((uint8_t*)name + 4), 10, AOS_FALSE);
+
+	size_t len = strlen(name);
+	if (len+1 > 80*sizeof(char)) {
+		avmf_free((uint64_t)name);
+		return AOS_FALSE;
+	}
+	name[len++] = 'n';
+	ku64_to_str(ns->nsid, (char*)((uint8_t*)name + len), 10, AOS_FALSE);
+
+	out->name = name;
+	return AOS_TRUE;
+}
+
+aos_bool nvme_get_available_ports(uint64_t cidx, uint8_t* out, uint64_t out_size) {
+	if (!out) return AOS_FALSE;
+	if (out_size == 0) return AOS_TRUE;
+	
+	if (cidx >= controller_count) return AOS_FALSE;
+	nvme_controller* knc = &controllers[cidx];
+	if (!knc->valid || knc->namespace_count < 1) return AOS_FALSE;
+
+    for (uint64_t i = 0; i < knc->namespace_count; i++) {
+        if (i + 1 > out_size || i >= KNVME_MAX_NAMESPACES) break;
+        out[i] = knc->namespaces[i].valid;
+    }
 
 	return AOS_TRUE;
 }

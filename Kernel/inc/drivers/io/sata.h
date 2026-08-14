@@ -241,9 +241,9 @@ struct sata_port_state {
 };
 
 aos_bool sata_init(struct AOS_Module* m) __attribute__((used));
-void sata_get_pcie(uint64_t cidx, pcie_device_t* out) __attribute__((used));
-aos_bool sata_read_blk(uint64_t cidx, int port_id, uint64_t lba, uint32_t count, void* buffer) __attribute__((used));
-aos_bool sata_write_blk(uint64_t cidx, int port_id, uint64_t lba, uint32_t count, void* buffer) __attribute__((used));
-aos_bool sata_flush(uint64_t cidx, int port_id) __attribute__((used));
-aos_bool sata_get_block_device(uint64_t cidx, int port_id, struct block_device* out) __attribute__((used));
-void sata_get_available_ports(uint64_t cidx, uint8_t* out, int out_size) __attribute__((used));
+aos_bool sata_get_pcie(uint64_t cidx, pcie_device_t* out) __attribute__((used));
+aos_bool sata_read_blk(uint64_t cidx, uint64_t port_id, uint64_t lba, uint32_t count, void* buffer) __attribute__((used));
+aos_bool sata_write_blk(uint64_t cidx, uint64_t port_id, uint64_t lba, uint32_t count, void* buffer) __attribute__((used));
+aos_bool sata_flush(uint64_t cidx, uint64_t port_id) __attribute__((used));
+aos_bool sata_get_block_device(uint64_t cidx, uint64_t port_id, struct block_device* out) __attribute__((used));
+aos_bool sata_get_available_ports(uint64_t cidx, uint8_t* out, uint64_t out_size) __attribute__((used));

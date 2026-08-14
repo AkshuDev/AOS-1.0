@@ -16,7 +16,7 @@
 #include <inc/mm/pager.h>
 
 // Legacy-ATA
-aos_bool legacy_ata_read(uint64_t cidx, int port_id, uint64_t lba, uint32_t count, void* buffer) {
+aos_bool legacy_ata_read(uint64_t cidx, uint64_t port_id, uint64_t lba, uint32_t count, void* buffer) {
 	struct ATA_DP dp = {
 		.lba = lba,
 		.count = count
@@ -24,7 +24,7 @@ aos_bool legacy_ata_read(uint64_t cidx, int port_id, uint64_t lba, uint32_t coun
 	return (ata_read_sectors(&dp, buffer, (uint8_t)port_id) == 0);
 }
 
-aos_bool legacy_ata_write(uint64_t cidx, int port_id, uint64_t lba, uint32_t count, void* buffer) {
+aos_bool legacy_ata_write(uint64_t cidx, uint64_t port_id, uint64_t lba, uint32_t count, void* buffer) {
 	struct ATA_DP dp = {
 		.lba = lba,
 		.count = count
@@ -32,7 +32,7 @@ aos_bool legacy_ata_write(uint64_t cidx, int port_id, uint64_t lba, uint32_t cou
 	return (ata_write_sectors(&dp, buffer, (uint8_t)port_id) == 0);
 }
 
-aos_bool legacy_ata_get_block_device(uint64_t cidx, int port_id, struct block_device* out) {
+aos_bool legacy_ata_get_block_device(uint64_t cidx, uint64_t port_id, struct block_device* out) {
 	uniboot_boot_info* sinfo = kget_sysinfo();
 	if (!sinfo) return AOS_FALSE;
 
