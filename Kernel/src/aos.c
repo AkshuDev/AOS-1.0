@@ -11,6 +11,7 @@
 #include <inc/core/smp.h>
 #include <inc/core/module.h>
 #include <inc/core/tss_gdt.h>
+#include <inc/core/fs.h>
 
 #include <inc/drivers/io/drive.h>
 
@@ -42,6 +43,7 @@ static char* help_shell = "Usage: [COMMAND]\n"
     "\tmkdir <dir>: Makes a new dir\n"
     "\tcd <dir>: Changes Current Working Dir\n"
 	"\tls <dir>: Lists the specified dir\n"
+	"\trf <file>: Prints the data in an existing file, in the appropriate format\n"
 	"\tflush-klog: Flushes all kernel logs\n";
 
 static int help_shell_nlines = 8;
@@ -386,6 +388,37 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
                         vmem_printf(vmem_design, "%s (lba %llu)\n", items[i].name, uint128_to_u64(items[i].lba));
                     }
                 }
+            }
+        }
+    } else if (strncmp(cmd, "rf ", 3) == 0) {
+        if (!current_drive_works) {
+            vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
+            *lines += 1;
+        } else {
+            if (!current_drive_mounted) {
+                vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
+                *lines += 1;
+            } else {
+                char* _path = NULL;
+                if (strlen(cmd) > 3) {
+                    if (cmd[3] != ' ') {
+                        _path = cmd + 3;
+                    } else {
+                        _path = ".";
+                    }
+                }
+                char path[PBFS_MAX_PATH_LEN];
+                make_path(path, g_pbfs_cwd, _path);
+
+                struct aos_file* f = fs_open(path);
+				if (!f) {
+					vmem_print(vmem_design, "Error: Could not open file!\n");
+                	*lines += 1;
+				} else {
+					f->seek(f, 0, FS_SEEK_MODE_END);
+					uint64_t size = f->tell(f);
+					f->seek
+				}
             }
         }
     } else if (strcmp(cmd, "flush-klog") == 0) {
