@@ -655,30 +655,43 @@ void vmem_printc(struct VMemDesign* design, char c) {
 
     volatile uint16_t* vmem = (volatile uint16_t*)IO_VMEM_true;
     uint16_t attr = (design->bg << 4) | design->fg;
-    if (c == '\n') {
-        design->x = 0;
-        design->y++;
-        spin_unlock_irqrestore(&vmemc_lock, rflags);
-        return;
-    } else if (c == '\b') {
-		if (design->x == 0 && design->y == 0) {
+
+	switch (c) {
+		case '\n': {
+			design->x = 0;
+			design->y++;
+
+			if (design->y + 1 > IO_VMEM_MAX_ROWS_true) {
+				if (design->auto_scroll) vmem_scroll_up(design, )
+			}
+
 			spin_unlock_irqrestore(&vmemc_lock, rflags);
 			return;
 		}
-		if (design->x > 0) design->x--;
-		else {
-			design->x = IO_VMEM_MAX_COLS_true;
-			design->y--;
+
+		case '\b': {
+			if (design->x == 0 && design->y == 0) {
+				spin_unlock_irqrestore(&vmemc_lock, rflags);
+				return;
+			}
+			if (design->x > 0) design->x--;
+			else {
+				design->x = IO_VMEM_MAX_COLS_true;
+				design->y--;
+			}
+
+			vmem_set_cursor(design->x, design->y);
+			vmem[design->y * IO_VMEM_MAX_COLS_true + design->x] = ((uint16_t)attr << 8) | ' ';
+
+			spin_unlock_irqrestore(&vmemc_lock, rflags);
+			return;
 		}
-
-        vmem_set_cursor(design->x, design->y);
-		vmem[design->y * IO_VMEM_MAX_COLS_true + design->x] = ((uint16_t)attr << 8) | ' ';
-
-		spin_unlock_irqrestore(&vmemc_lock, rflags);
-        return;
 	}
+
     vmem[design->y * IO_VMEM_MAX_COLS_true + design->x] = ((uint16_t)attr << 8) | c;
     design->x++;
+
+	if (design->x > 0)
 
     spin_unlock_irqrestore(&vmemc_lock, rflags);
 }
@@ -857,27 +870,22 @@ void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
     va_end(args);
     spin_unlock_irqrestore(&vmemf_lock, rflags);
 }
-void vmem_scroll_up(struct VMemDesign* design, uint32_t top, uint32_t bottom, uint32_t width) {
+void vmem_scroll_up(struct VMemDesign* design, uint32_t lines, enum VMemColors color) {
 	if (vmem_mode == UNIBOOT_FB_MODE_UEFI_GOP) {
-		design->x = 0;
-		design->y = 0;
+		fb_scroll_up(vmem_fbi, lines, vmem_convert_color_to_rgba(color));
 		return;
 	}
-    uint16_t* vmem = (uint16_t*)IO_VMEM_true;
-    uint32_t stride = IO_VMEM_MAX_COLS_true; 
 
-    for (size_t y = top; y < bottom - 1; y++) {
-        for (size_t x = 0; x < width; x++) {
-            vmem[y * stride + x] = vmem[(y + 1) * stride + x];
-        }
+	uint32_t scroll = lines;
+    if (scroll >= IO_VMEM_MAX_ROWS_true) {
+        vmem_clear_screen(design, color);
+        return;
     }
 
-    uint16_t blank_attr = (uint8_t)design->fg | (uint8_t)(design->bg << 4);
-    uint16_t blank_char = (uint16_t)' ' | (uint16_t)(blank_attr << 8);
+    uint8_t* base = (uint8_t*)IO_VMEM_true;
+    uint64_t move_size = (uint64_t)(IO_VMEM_MAX_ROWS_true - scroll);
 
-    for (size_t x = 0; x < width; x++) {
-        vmem[(bottom - 1) * stride + x] = blank_char;
-    }
+    memmove(base, base + (uint64_t)scroll, move_size);
 }
 
 // ATA stuff

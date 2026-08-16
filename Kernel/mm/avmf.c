@@ -1044,26 +1044,26 @@ static void avmf_print_info_region(aos_bool vmem, struct VMemDesign* design, avm
 		return;
 	}
 
-	if (vmem_out) vmem_printf(design, "\nBase Address: 0x%llX\n", region->base);
-	else serial_printf("\nBase Address: 0x%llX\n", region->base);
+	if (vmem_out) vmem_printf(design, "\n\tBase Address: 0x%llX\n", region->base);
+	else serial_printf("\n\tBase Address: 0x%llX\n", region->base);
 
 	double pretty_size = 0.0;
 	const char* pretty_unit = kbeautify_memory_size(region->limit, &pretty_size);
 
-	if (vmem_out) vmem_printf(design, "\n\tSize: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
-	else serial_printf("\n\tSize: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
+	if (vmem_out) vmem_printf(design, "\tSize: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
+	else serial_printf("\tSize: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
 
 	pretty_size = 0.0;
 	pretty_unit = kbeautify_memory_size(region->allocated_bytes, &pretty_size);
 
-	if (vmem_out) vmem_printf(design, "\n\tAllocated: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
-	else serial_printf("\n\tAllocated: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
+	if (vmem_out) vmem_printf(design, "\tAllocated: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
+	else serial_printf("\tAllocated: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
 
 	pretty_size = 0.0;
 	pretty_unit = kbeautify_memory_size(region->limit - region->allocated_bytes, &pretty_size);
 
-	if (vmem_out) vmem_printf(design, "\n\tFree: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
-	else serial_printf("\n\tFree: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
+	if (vmem_out) vmem_printf(design, "\tFree: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
+	else serial_printf("\tFree: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
 }
 
 void avmf_print_info(aos_bool vmem, struct VMemDesign* design) {

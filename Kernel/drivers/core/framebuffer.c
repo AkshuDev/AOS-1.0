@@ -44,6 +44,12 @@ void fb_printc(FB_Info_t* fb, FB_Cursor_t* cur, char c) {
 				}
 			}
             return;
+		case '\t':
+			fb_printc(fb, cur, ' ');
+			fb_printc(fb, cur, ' ');
+			fb_printc(fb, cur, ' ');
+			fb_printc(fb, cur, ' ');
+			return;
         case '\b':
             if (cur->x == 0 && cur->y != 0) {
                 cur->x = fb->width;
