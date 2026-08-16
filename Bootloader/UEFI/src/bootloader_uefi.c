@@ -449,7 +449,8 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
         .y = 0,
         .fg = ambrc->display.fg_color,
         .bg = ambrc->display.bg_color,
-        .serial_out = 0
+        .serial_out = AOS_FALSE,
+		.auto_scroll = AOS_FALSE
     };
 
 	EFI_PHYSICAL_ADDRESS UniBootPhys = 0;

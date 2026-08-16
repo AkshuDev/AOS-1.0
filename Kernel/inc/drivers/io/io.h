@@ -38,9 +38,12 @@ enum VMemColors {
 struct VMemDesign {
     int x;
     int y;
-    enum VMemColors fg;
+    
+	enum VMemColors fg;
     enum VMemColors bg;
+
     aos_bool serial_out;
+	aos_bool auto_scroll;
 };
 
 struct ATA_DP {

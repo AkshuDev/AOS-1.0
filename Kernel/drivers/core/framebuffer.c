@@ -2,6 +2,7 @@
 #include <asm.h>
 #include <system.h>
 
+#include <inc/core/kfuncs.h>
 #include <inc/drivers/core/framebuffer.h>
 
 extern uint8_t font8x16[256][16];
@@ -34,7 +35,14 @@ void fb_printc(FB_Info_t* fb, FB_Cursor_t* cur, char c) {
         case '\n':
             cur->x = 0;
             cur->y += 16;
-            if (cur->y + 16 > fb->height) cur->y = 0;
+            if (cur->y + 16 > fb->height) {
+				if (cur->auto_scroll) {
+					fb_scroll_up(fb, 1, cur->bg_color);
+					cur->y -= 16;
+				} else {
+					cur->y = 0;
+				}
+			}
             return;
         case '\b':
             if (cur->x == 0 && cur->y != 0) {
@@ -72,7 +80,12 @@ void fb_printc(FB_Info_t* fb, FB_Cursor_t* cur, char c) {
     }
 
     if (cur->y + 16 > fb->height) {
-        cur->y = 0;
+        if (cur->auto_scroll) {
+			fb_scroll_up(fb, 1, cur->bg_color);
+			cur->y -= 16;
+		} else {
+			cur->y = 0;
+		}
     }
 }
 
@@ -88,4 +101,19 @@ void fb_set_cursor(FB_Info_t* fb, FB_Cursor_t* cur, uint32_t x, uint32_t y) {
     cur->y = y;
 }
 
+void fb_scroll_up(FB_Info_t* fb, uint32_t lines, uint32_t color) {
+    if (!fb || lines == 0) return;
 
+    uint32_t scroll_pixels = lines * 16;
+
+    if (scroll_pixels >= fb->height) {
+        fb_clear(fb, color);
+        return;
+    }
+
+    uint8_t* base = (uint8_t*)fb->addr;
+    uint64_t move_size = (uint64_t)(fb->height - scroll_pixels) * fb->pitch;
+
+    memmove(base, base + (uint64_t)scroll_pixels * fb->pitch, move_size);
+    fb_draw_rect(fb, 0, fb->height - scroll_pixels, fb->width, scroll_pixels, color);
+}

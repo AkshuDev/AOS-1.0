@@ -13,6 +13,7 @@ typedef volatile int spinlock_t;
 void* memset(void* s, int c, size_t n) __attribute__((used));
 void* memcpy(void* dest, const void* src, size_t n) __attribute__((used));
 int memcmp(const void* s1, const void* s2, size_t n) __attribute__((used));
+void* memmove(void* dest, const void* src, size_t n) __attribute__((used));
 
 int strcmp(char* s1, char* s2) __attribute__((used));
 int strncmp(char* s1, char* s2, size_t n) __attribute__((used));
@@ -63,3 +64,5 @@ double kstr_to_double(const char* str) __attribute__((used));
 char* ki64_to_str(int64_t v, char* buf, int base, aos_bool caps) __attribute__((used));
 char* ku64_to_str(uint64_t v, char* buf, int base, aos_bool caps) __attribute__((used));
 char* kdouble_to_str(double v, char* buf, int precision) __attribute__((used));
+
+const char* kbeautify_memory_size(uint64_t size_in_bytes, double* out_size) __attribute__((used));

@@ -665,7 +665,8 @@ EFIAPI void start_ambrc(struct drive_device* drive) {
         .y = 0,
         .bg = ambrc->display.ambrc_bg_color,
         .fg = ambrc->display.ambrc_fg_color,
-        .serial_out=0
+        .serial_out = AOS_FALSE,
+		.auto_scroll = AOS_FALSE
     };
     struct VMemDesign* design = &design_raw;
 

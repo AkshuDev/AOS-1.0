@@ -304,11 +304,12 @@ EFIAPI void start_panic_shell(struct drive_device* current_drive, const char* er
     size_t t_h = uefi_height - 2;
 
     struct VMemDesign design_raw = {
-        .bg=ambrc->display.bg_color,
-        .fg=ambrc->display.fg_color,
-        .x=start_x,
-        .y=start_y,
-        .serial_out=0
+        .bg = ambrc->display.bg_color,
+        .fg = ambrc->display.fg_color,
+        .x = start_x,
+        .y = start_y,
+        .serial_out = AOS_FALSE,
+		.auto_scroll = AOS_FALSE
     };
     struct VMemDesign* design = &design_raw;
 

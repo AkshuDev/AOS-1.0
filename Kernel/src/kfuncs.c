@@ -16,42 +16,66 @@
 
 // Memory and Stuff
 void* memset(void* s, int c, size_t n) {
+	if (!s) return NULL;
+	if (n == 0) return s;
+
 	size_t remaining = n;
 	void* ptr = s;
-	if (n > 8) {
+	if (n >= 8) {
 		size_t size = remaining / 8;
+		
+		uint8_t byte = (uint8_t)c;
+		uint64_t pattern = 0x0101010101010101ULL * byte;
+
 		__asm__ volatile(
+			"cld\n\t"
 			"rep stosq"
+			::
+			"D"(ptr), "c"(size), "a"((uint64_t)pattern)
 			:
-			: "D"(ptr), "a"((uint64_t)c), "c"(size)
-			: "memory"
+			"memory", "cc"
 		);
 		remaining -= size * 8;
 		ptr = (void*)((uint8_t*)ptr + size * 8);
 	}
     __asm__ volatile(
+		"cld\n\t"
         "rep stosb"
         :
-        : "D"(ptr), "a"((uint8_t)c), "c"(remaining)
-        : "memory"
+		"+D"(ptr), "+c"(remaining)
+		:
+		"a"((uint8_t)c)
+        :
+		"memory", "cc"
     );
     return s;
 }
 
 void* memcpy(void* dest, const void* src, size_t n) {
+	if (!dest || !src) return NULL;
+	if (n == 0 || dest == src) return dest;
+
 	__asm__ volatile(
+		"cld\n\t"
         "rep movsb"
         :
-        : "D"(dest), "S"(src), "c"(n)
-        : "memory"
+		"+D"(dest), "+S"(src), "+c"(n)
+        ::
+		"memory", "cc"
     );
     return dest;
 }
 
 int memcmp(const void* s1, const void* s2, size_t n) {
+	if (!s1 || !s2) return -1;
+	if (n == 0) return 0;
+
+	if (s1 == s2) return 0;
+
 	int res = 0;
 
 	__asm__ volatile(
+        "cld\n\t"
         "repe cmpsb\n\t"
         "je 1f\n\t"
         "movzbl -1(%%rsi), %%eax\n\t"
@@ -62,17 +86,47 @@ int memcmp(const void* s1, const void* s2, size_t n) {
         "xor %%eax, %%eax\n"
         "2:"
         :
-		"=&a"(res)
-        :
-		"S"(s1), "D"(s2), "c"(n)
-        :
-		"rdx", "memory"
+		"=a"(res), "+S"(s1), "+D"(s2), "+c"(n)
+        ::
+		"rdx", "memory", "cc"
     );
 
 	return res;
 }
 
+void* memmove(void* dest, const void* src, size_t n) {
+	if (!dest || !src) return NULL;
+	if (n == 0 || dest == src) return dest;
+
+	uint8_t* d = dest;
+	const uint8_t* s = src;
+
+	if (d < s) {
+		// Normal Copy
+		return memcpy(dest, src, n);
+	}
+
+	// Backwards Copy
+	d += n - 1;
+    s += n - 1;
+
+	__asm__ volatile(
+		"std\n\t"
+		"rep movsb\n\t"
+		"cld"
+		:
+		"+D"(dest), "+S"(src), "+c"(n)
+		::
+		"memory"
+	);
+
+	return dest;
+}
+
 int strcmp(char* s1, char* s2) {
+	if (!s1 || !s2) return -1;
+	if (s1 == s2) return 0;
+
     while (*s1 && (*s1 == *s2)) {
         s1++;
         s2++;
@@ -81,6 +135,11 @@ int strcmp(char* s1, char* s2) {
 }
 
 int strncmp(char* s1, char* s2, size_t n) {
+	if (!s1 || !s2) return -1;
+	if (n == 0) return 0;
+
+	if (s1 == s2) return 0;
+
     while (n && *s1 && (*s1 == *s2)) {
         s1++;
         s2++;
@@ -93,38 +152,49 @@ int strncmp(char* s1, char* s2, size_t n) {
 }
 
 size_t strlen(char* s) {
+	if (!s) return 0;
+
     size_t len;
 
     __asm__ volatile(
-        "xor %%al, %%al\n\t"
+        "cld\n\t"
+        "xor %%eax, %%eax\n\t"
         "mov $-1, %%rcx\n\t"
         "repne scasb\n\t"
         "not %%rcx\n\t"
         "dec %%rcx"
         :
-		"=c"(len)
-        :
-		"D"(s)
-        :
-		"rax", "memory"
+		"=c"(len), "+D"(s)
+        ::
+		"rax", "memory", "cc"
     );
 
     return len;
 }
 
 char* strcpy(char* dest, char* src) {
+	if (!dest || !src) return NULL;
+	if (dest == src) return dest;
+
     char *ret=dest;
     while((*dest++=*src++)) ;
     return ret;
 }
 
 char* strncpy(char* dest, char* src, size_t n) {
+	if (!dest || !src) return NULL;
+	if (n == 0) return dest;
+
+	if (dest == src) return dest;
+	char* ret = dest;
+
 	while (n && *src) {
 		*dest++=*src++;
 		n--;
 	}
 
 	while (n--) *dest++=0;
+	return ret;
 }
 
 uint32_t str_to_uint(const char* str) {
@@ -153,16 +223,22 @@ uint32_t str_to_uint(const char* str) {
 }
 
 void spin_lock(spinlock_t* lock) {
+	if (!lock) return;
+
     while (__sync_lock_test_and_set(lock, 1)) {
         while (*lock);
     }
 }
 
 void spin_unlock(spinlock_t* lock) {
+	if (!lock) return;
+
     __sync_lock_release(lock);
 }
 
 uint64_t spin_lock_irqsave(spinlock_t* lock) {
+	if (!lock) return 0;
+
     uint64_t flags = 0;
     __asm__ volatile(
         "pushfq\n\t"
@@ -183,6 +259,8 @@ uint64_t spin_lock_irqsave(spinlock_t* lock) {
 }
 
 void spin_unlock_irqrestore(spinlock_t* lock, uint64_t flags) {
+	if (!lock) return;
+
     __sync_lock_release(lock);
     __asm__ volatile(
         "push %0\n\t"
@@ -858,4 +936,33 @@ char* kdouble_to_str(double v, char* buf, int precision) {
 
     *p = 0;
     return buf;
+}
+
+const char* kbeautify_memory_size(uint64_t size_in_bytes, double* out_size) {
+	static const char* units[] = {
+        "Bytes",
+        "Kilobytes",
+        "Megabytes",
+        "Gigabytes",
+        "Terabytes",
+        "Petabytes",
+        "Exabytes",
+        "Zettabytes",
+        "Yottabytes"
+    };
+
+    unsigned int unit = 0;
+
+	uint64_t sz = (uint64_t)size_in_bytes;
+    double value = (double)size_in_bytes;
+
+    while (sz >= 1024 && unit < sizeof(units) / sizeof(units[0]) - 1) {
+        sz /= 1024;
+		value /= 1024.0;
+        unit++;
+    }
+
+	if (out_size) *out_size = value;
+
+    return units[unit];
 }

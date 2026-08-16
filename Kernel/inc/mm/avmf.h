@@ -1,7 +1,9 @@
 #pragma once
 // AOS Virtual Memory Format
 #include <aos_inttypes.h>
+
 #include <inc/core/kfuncs.h>
+#include <inc/drivers/io/io.h>
 
 #define AVMF_VERSION 1
 #define AVMF_SIGNATURE (uint32_t)0xA1322F // A, V (13th letter), M (22nd letter), F
@@ -43,6 +45,8 @@ typedef struct AVMF_Region_Header {
     
     uint64_t base;
     uint64_t limit;
+
+	uint64_t allocated_bytes;
 
 	spinlock_t lock;
 
@@ -90,3 +94,5 @@ uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, uint32_t flags, uint64_
 void avmf_free(uint64_t virt) __attribute__((used));
 
 avmf_header_t* avmf_find(uint64_t virt) __attribute__((used));
+
+void avmf_print_info(aos_bool vmem, struct VMemDesign* design) __attribute__((used));

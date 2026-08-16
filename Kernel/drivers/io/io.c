@@ -40,7 +40,6 @@ uint64_t IO_VMEM_MAX_ROWS_true;
 uint64_t IO_VMEM_true;
 static uint8_t vmem_mode;
 static FB_Info_t vmem_fbi;
-static FB_Cursor_t vmem_fbc;
 
 // Kernel Log
 
@@ -102,7 +101,7 @@ static void klog_printc(char c) {
 
 	if (klog_pos + 32 >= klog_cap) { if (!klog_realloc()) return; }
 	if (!klog_msg_started) {
-		memcpy(&klog[klog_pos], "\n[AOS - ", 8); klog_pos += 8; // \n prevents collisions with prev logs as well as prev data
+		memcpy(&klog[klog_pos], "[AOS - ", 8); klog_pos += 8; // \n prevents collisions with prev logs as well as prev data
 
 		uint64_t val = kget_timestamp_seconds();
 		char buf[64];
@@ -200,7 +199,7 @@ void serial_flush_klog(const char* path, struct pbfs_mount* mnt) {
 	}
 	
 	if (klog_present) pbfs_update_file(mnt, path, klog, klog_end);
-	else pbfs_add(mnt, path, 0, 0, METADATA_FLAG_SYS, PERM_READ | PERM_WRITE, klog, klog_end);
+	else pbfs_add(mnt, path, 0, 0, METADATA_FLAG_FILE, PERM_READ | PERM_WRITE | PERM_SYS, klog, klog_end);
 }
 
 void serial_deinit_klog(const char* path, struct pbfs_mount* mnt) {
@@ -522,7 +521,6 @@ static uint32_t vmem_convert_color_to_rgba(enum VMemColors color){
 }
 
 void vmem_init(uniboot_boot_info* sysinfo) {
-	vmem_fbc = (FB_Cursor_t){0};
 	if (!sysinfo) {
 		vmem_mode = UNIBOOT_FB_MODE_VGA;
 		IO_VMEM_true = IO_VMEM;
@@ -566,9 +564,6 @@ void vmem_set_cursor(uint16_t x, uint16_t y) {
     uint64_t rflags = spin_lock_irqsave(&vmem_cur_lock);
 
 	if (vmem_mode == UNIBOOT_FB_MODE_UEFI_GOP) {
-		vmem_fbc.x = x;
-		vmem_fbc.y = y;
-
 		spin_unlock_irqrestore(&vmem_cur_lock, rflags);
 		return;
 	}
@@ -597,15 +592,16 @@ void vmem_clear_screen(struct VMemDesign* design) {
     uint64_t rflags = spin_lock_irqsave(&vmem_lock);
 
 	if (vmem_mode == UNIBOOT_FB_MODE_UEFI_GOP) {
-		vmem_fbc.x = design->x;
-		vmem_fbc.y = design->y;
-		vmem_fbc.bg_color = vmem_convert_color_to_rgba(design->bg);
-		vmem_fbc.fg_color = vmem_convert_color_to_rgba(design->fg);
+		FB_Cursor_t vmem_fbc = {
+			.x = design->x,
+			.y = design->y,
+			.bg_color = vmem_convert_color_to_rgba(design->bg),
+			.fg_color = vmem_convert_color_to_rgba(design->fg),
+			.auto_scroll = design->auto_scroll
+		};
 		
 		fb_clear(&vmem_fbi, vmem_fbc.bg_color);
 
-		vmem_fbc.x = 0;
-		vmem_fbc.y = 0;
 		design->x = 0;
     	design->y = 0;
 
@@ -641,8 +637,13 @@ void vmem_printc(struct VMemDesign* design, char c) {
     uint64_t rflags = spin_lock_irqsave(&vmemc_lock);
 
 	if (vmem_mode == UNIBOOT_FB_MODE_UEFI_GOP) {
-		vmem_fbc.bg_color = vmem_convert_color_to_rgba(design->bg);
-		vmem_fbc.fg_color = vmem_convert_color_to_rgba(design->fg);
+		FB_Cursor_t vmem_fbc = {
+			.x = design->x,
+			.y = design->y,
+			.bg_color = vmem_convert_color_to_rgba(design->bg),
+			.fg_color = vmem_convert_color_to_rgba(design->fg),
+			.auto_scroll = design->auto_scroll
+		};
 		
 		fb_printc(&vmem_fbi, &vmem_fbc, c);
 		design->x = vmem_fbc.x;

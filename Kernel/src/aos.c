@@ -44,9 +44,8 @@ static char* help_shell = "Usage: [COMMAND]\n"
     "\tcd <dir>: Changes Current Working Dir\n"
 	"\tls <dir>: Lists the specified dir\n"
 	"\trf <file>: Prints the data in an existing file, in the appropriate format\n"
-	"\tflush-klog: Flushes all kernel logs\n";
-
-static int help_shell_nlines = 8;
+	"\tflush-klog: Flushes all kernel logs\n"
+	"\tmeminfo: Provides Current Memory status and information\n";
 
 static drive_device_t current_drive = {0};
 static aos_bool current_drive_works = AOS_FALSE;
@@ -63,9 +62,9 @@ static struct pbfs_mount g_pbfs_mnt = {0};
 // Define a static stack array
 void kernel_main_true(void) __attribute__((used, noinline, noreturn));
 void aos_shell_pm(void);
-void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design);
-static void cmd_print_help(struct VMemDesign* vmem_design, int* lines);
-void cmd_start(char* program, int* lines, struct VMemDesign* vmem_design);
+void exec_cmd(char* cmd, struct VMemDesign* vmem_design);
+static void cmd_print_help(struct VMemDesign* vmem_design);
+void cmd_start(char* program, struct VMemDesign* vmem_design);
 void aospp_start(void);
 static int bd_read_blk(struct block_device* dev, uint64_t lba, void* buf);
 static int bd_write_blk(struct block_device* dev, uint64_t lba, const void* buf);
@@ -135,7 +134,8 @@ void kernel_main_true(void) { // Supports only UniBoot
         .y = 0,
         .fg = VMEM_COLOR_WHITE,
         .bg = VMEM_COLOR_BLACK,
-        .serial_out = AOS_TRUE
+        .serial_out = AOS_TRUE,
+		.auto_scroll = AOS_TRUE
     };
 	vmem_init(kget_sysinfo());
     vmem_clear_screen(&vmem_design);
@@ -207,6 +207,8 @@ void kernel_main_true(void) { // Supports only UniBoot
             current_drive_mounted = AOS_TRUE;
 			serial_init_klog("/aos/klog.log", &g_pbfs_mnt);
 			serial_flush_klog("/aos/klog.log", &g_pbfs_mnt); // Flush the prelog
+
+			aos_fs_init(&g_pbfs_mnt);
         }
     } else {
         vmem_print(&vmem_design, "Error: Current drive doesn't work!\n");
@@ -224,11 +226,11 @@ void aos_shell_pm(void) {
         .y = 0,
         .fg = VMEM_COLOR_WHITE,
         .bg = VMEM_COLOR_BLACK,
-        .serial_out = 1
+        .serial_out = AOS_TRUE,
+		.auto_scroll = AOS_TRUE
     };
     
     char input[SHELL_MAX_INPUT];
-    int lines = 1;
 
     // Read sysinfo
     uniboot_boot_info* SystemInfo = kget_sysinfo();
@@ -236,25 +238,22 @@ void aos_shell_pm(void) {
 		vmem_print(&vmem_design, "SystemInfo:\n");
 		vmem_printf(&vmem_design, "Boot Drive: B=0x%x S=0x%x F=0x%x\nBoot Mode: 0x%x (%u)\n", SystemInfo->boot_drive.bus, SystemInfo->boot_drive.slot, SystemInfo->boot_drive.func, SystemInfo->boot_mode, SystemInfo->boot_mode);
 		vmem_printf(&vmem_design, "CPU Vendor: %s\n", (uintptr_t)&SystemInfo->cpu_info.vendor);
-		lines += 7;
 	}
 
     while (1) {
         vmem_printf(&vmem_design, "AOS: %s $> ", g_pbfs_cwd);
         ps2_read_line(input, SHELL_MAX_INPUT, &vmem_design);
 
-        exec_cmd(input, &lines, &vmem_design);
+        exec_cmd(input, &vmem_design);
     }
 }
 
-void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
+void exec_cmd(char* cmd, struct VMemDesign* vmem_design) {
     if (strcmp(cmd, "help") == 0) {
         vmem_print(vmem_design, help_shell);
-        *lines += help_shell_nlines;
     } else if (strncmp(cmd, "echo ", 5) == 0) {
         vmem_print(vmem_design, cmd + 5);
         vmem_print(vmem_design, "\n");
-        *lines += 1;
     } else if (strcmp(cmd, "reboot") == 0) {
         vmem_print(vmem_design, "Rebooting...\n");
         acpi_reboot();
@@ -270,209 +269,291 @@ void exec_cmd(char* cmd, int* lines, struct VMemDesign* vmem_design) {
 		vmem_design->fg = attr & 0xF;
 	} else if (strcmp(cmd, "clear") == 0) {
         vmem_clear_screen(vmem_design);
-        *lines = 0;
     } else if (strncmp(cmd, "start ", 6) == 0) {
-        cmd_start(cmd + 6, lines, vmem_design);
+        cmd_start(cmd + 6, vmem_design);
     } else if (strcmp(cmd, "pbfsctl-fmt") == 0) {
         if (current_drive_works != 1) {
             vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
-            *lines += 1;
-        } else {
-            int out = pbfs_format(&current_drive.block_dev, 1, 1024, 2048, current_drive.cur_port);
-            if (out != PBFS_RES_SUCCESS) {
-                vmem_printf(vmem_design, "Error: %s\n", pbfs_get_err_str(out));
-                *lines += 1;
-            } else {
-                bd_flush(&current_drive.block_dev);
-            }
-            current_drive_mounted = AOS_FALSE;
+			goto cmd_pbfsctl_fmt_end;
         }
+
+		int out = pbfs_format(&current_drive.block_dev, 1, 1024, 2048, current_drive.cur_port);
+		if (out != PBFS_RES_SUCCESS) {
+			vmem_printf(vmem_design, "Error: %s\n", pbfs_get_err_str(out));
+			goto cmd_pbfsctl_fmt_end;
+		}
+
+		bd_flush(&current_drive.block_dev);
+		current_drive_mounted = AOS_FALSE;
+
+		cmd_pbfsctl_fmt_end: {}
     } else if (strcmp(cmd, "pbfsctl-mnt") == 0) {
         if (current_drive_works != 1) {
             vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
-            *lines += 1;
-        } else {
-            int out = pbfs_mount(&current_drive.block_dev, &g_pbfs_mnt);
-            if (out != PBFS_RES_SUCCESS) {
-                vmem_printf(vmem_design, "Error: %s\n", pbfs_get_err_str(out));
-                *lines += 1;
-                current_drive_mounted = AOS_FALSE;
-            } else {
-                current_drive_mounted = AOS_TRUE;
-            }
+
+			goto cmd_pbfsctl_mnt_end;
         }
+		int out = pbfs_mount(&current_drive.block_dev, &g_pbfs_mnt);
+		if (out != PBFS_RES_SUCCESS) {
+			vmem_printf(vmem_design, "Error: %s\n", pbfs_get_err_str(out));
+			current_drive_mounted = AOS_FALSE;
+
+			goto cmd_pbfsctl_mnt_end;
+		}
+		current_drive_mounted = AOS_TRUE;
+
+		cmd_pbfsctl_mnt_end: {}
     } else if (strncmp(cmd, "cd ", 3) == 0) {
         if (!current_drive_works) {
             vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
-            *lines += 1;
-        } else {
-            if (!current_drive_mounted) {
-                vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
-                *lines += 1;
-            } else {
-                char* _path = cmd + 3;
-                char path[PBFS_MAX_PATH_LEN];
-                make_path(path, g_pbfs_cwd, _path);
 
-                PBFS_DMM_Entry entry;
-                uint64_t tmplba = 0;
-                int out = pbfs_find_entry(path, &entry, &tmplba, &g_pbfs_mnt);
-                if ((out != PBFS_RES_SUCCESS && out != -1) || (!(entry.type & METADATA_FLAG_DIR) && out != -1)) {
-                    vmem_print(vmem_design, "Error: No such directory!\n");
-                    *lines += 1;
-                } else {
-                    strncpy(g_pbfs_cwd, path, PBFS_MAX_PATH_LEN);
-                }
-            }
+			goto cmd_cd_end;
         }
+		if (!current_drive_mounted) {
+			vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
+
+			goto cmd_cd_end;
+		}
+
+		char* _path = cmd + 3;
+		char path[PBFS_MAX_PATH_LEN];
+		make_path(path, g_pbfs_cwd, _path);
+
+		PBFS_DMM_Entry entry;
+		uint64_t tmplba = 0;
+		int out = pbfs_find_entry(path, &entry, &tmplba, &g_pbfs_mnt);
+		if ((out != PBFS_RES_SUCCESS && out != -1) || (!(entry.type & METADATA_FLAG_DIR) && out != -1)) {
+			vmem_print(vmem_design, "Error: No such directory!\n");
+			
+			goto cmd_cd_end;
+		}
+
+		strncpy(g_pbfs_cwd, path, PBFS_MAX_PATH_LEN);
+
+    	cmd_cd_end: {}
     } else if (strncmp(cmd, "mkdir ", 6) == 0) {
         if (!current_drive_works) {
             vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
-            *lines += 1;
-        } else {
-            if (!current_drive_mounted) {
-                vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
-                *lines += 1;
-            } else {
-                char* _path = cmd + 6;
-                char path[PBFS_MAX_PATH_LEN];
-                make_path(path, g_pbfs_cwd, _path);
 
-                PBFS_DMM_Entry entry;
-                uint64_t tmplba = 0;
-                int out = pbfs_find_entry(path, &entry, &tmplba, &g_pbfs_mnt);
-                if (out == PBFS_RES_SUCCESS || out == -1) {
-                    vmem_print(vmem_design, "Error: File or Directory already exists!\n");
-                    *lines += 1;
-                } else {
-                    int out = pbfs_add_dir(&g_pbfs_mnt, path, 0, 0, (PBFS_Permission_Flags)(PERM_READ | PERM_WRITE));
-                    if (out != PBFS_RES_SUCCESS) {
-                        vmem_printf(vmem_design, "Error: %s\n", pbfs_get_err_str(out));
-                        *lines += 1;
-                    } else {
-                        bd_flush(&current_drive.block_dev);
-                    }
-                }
-            }
+			goto cmd_mkdir_end;
         }
+
+		if (!current_drive_mounted) {
+			vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
+
+			goto cmd_mkdir_end;
+		}
+
+		char* _path = cmd + 6;
+		char path[PBFS_MAX_PATH_LEN];
+		make_path(path, g_pbfs_cwd, _path);
+
+		PBFS_DMM_Entry entry;
+		uint64_t tmplba = 0;
+		int out = pbfs_find_entry(path, &entry, &tmplba, &g_pbfs_mnt);
+		if (out == PBFS_RES_SUCCESS || out == -1) {
+			vmem_print(vmem_design, "Error: File or Directory already exists!\n");
+
+			goto cmd_mkdir_end;
+		}
+
+		out = pbfs_add_dir(&g_pbfs_mnt, path, 0, 0, (PBFS_Permission_Flags)(PERM_READ | PERM_WRITE));
+		if (out != PBFS_RES_SUCCESS) {
+			vmem_printf(vmem_design, "Error: %s\n", pbfs_get_err_str(out));
+
+			goto cmd_mkdir_end;
+		}
+		bd_flush(&current_drive.block_dev);
+
+		cmd_mkdir_end: {}
     } else if (strncmp(cmd, "ls ", 3) == 0) {
         if (!current_drive_works) {
             vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
-            *lines += 1;
-        } else {
-            if (!current_drive_mounted) {
-                vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
-                *lines += 1;
-            } else {
-                char* _path = NULL;
-                if (strlen(cmd) > 3) {
-                    if (cmd[3] != ' ') {
-                        _path = cmd + 3;
-                    } else {
-                        _path = ".";
-                    }
-                }
-                char path[PBFS_MAX_PATH_LEN];
-                make_path(path, g_pbfs_cwd, _path);
 
-                PBFS_DMM_Entry items[256];
-                size_t item_count;
-                int out = pbfs_list_items(&g_pbfs_mnt, path, items, 256, &item_count);
-                if (out != PBFS_RES_SUCCESS) {
-                    vmem_printf(vmem_design, "Error: %s\n", pbfs_get_err_str(out));
-                    *lines += 1;
-                } else {
-                    vmem_printf(vmem_design, "Listing: %s\n", path);
-                    *lines += 1 + item_count;
-                    for (size_t i = 0; i < item_count; i++) {
-                        vmem_printf(vmem_design, "%s (lba %llu)\n", items[i].name, uint128_to_u64(items[i].lba));
-                    }
-                }
-            }
+			goto cmd_ls_end;
         }
+
+		if (!current_drive_mounted) {
+			vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
+
+			goto cmd_ls_end;
+		}
+
+		char* _path = NULL;
+		if (strlen(cmd) > 3) {
+			if (cmd[3] != ' ') {
+				_path = cmd + 3;
+			} else {
+				_path = ".";
+			}
+		}
+		char path[PBFS_MAX_PATH_LEN];
+		make_path(path, g_pbfs_cwd, _path);
+
+		PBFS_DMM_Entry items[256];
+		size_t item_count;
+		int out = pbfs_list_items(&g_pbfs_mnt, path, items, 256, &item_count);
+		if (out != PBFS_RES_SUCCESS) {
+			vmem_printf(vmem_design, "Error: %s\n", pbfs_get_err_str(out));
+
+			goto cmd_ls_end;
+		}
+
+		vmem_printf(vmem_design, "Listing: %s\n", path);
+		for (size_t i = 0; i < item_count; i++) {
+			vmem_printf(vmem_design, "%s (lba %llu)\n", items[i].name, uint128_to_u64(items[i].lba));
+		}
+
+		cmd_ls_end: {}
     } else if (strncmp(cmd, "rf ", 3) == 0) {
         if (!current_drive_works) {
             vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
-            *lines += 1;
-        } else {
-            if (!current_drive_mounted) {
-                vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
-                *lines += 1;
-            } else {
-                char* _path = NULL;
-                if (strlen(cmd) > 3) {
-                    if (cmd[3] != ' ') {
-                        _path = cmd + 3;
-                    } else {
-                        _path = ".";
-                    }
-                }
-                char path[PBFS_MAX_PATH_LEN];
-                make_path(path, g_pbfs_cwd, _path);
 
-                struct aos_file* f = fs_open(path);
-				if (!f) {
-					vmem_print(vmem_design, "Error: Could not open file!\n");
-                	*lines += 1;
-				} else {
-					f->seek(f, 0, FS_SEEK_MODE_END);
-					uint64_t size = f->tell(f);
-					f->seek
-				}
-            }
+			goto cmd_rf_end;
         }
+
+		if (!current_drive_mounted) {
+			vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
+
+			goto cmd_rf_end;
+		}
+		
+		char* _path = NULL;
+		if (strlen(cmd) > 3) {
+			if (cmd[3] != ' ') {
+				_path = cmd + 3;
+			} else {
+				_path = ".";
+			}
+		}
+		char path[PBFS_MAX_PATH_LEN];
+		make_path(path, g_pbfs_cwd, _path);
+
+		struct aos_file* f = fs_open(path);
+		if (!f) {
+			vmem_print(vmem_design, "Error: Could not open file!\n");
+
+			goto cmd_rf_end;
+		}
+
+		f->seek(f, 0, FS_SEEK_MODE_END);
+		uint64_t size = f->tell(f);
+		f->seek(f, 0, FS_SEEK_MODE_SET);
+
+		if (size == 0) {
+			vmem_printc(vmem_design, '\n');
+
+			fs_close(f);
+			goto cmd_rf_end;
+		}
+
+		uint8_t* buf = (uint8_t*)avmf_alloc(size, MALLOC_TYPE_USER, AVMF_FLAG_RW, NULL);
+		if (!buf) {
+			vmem_printf(vmem_design, "Error: Could not allocate for file! (REQ=0x%llX bytes)\n", size);
+			fs_close(f);
+
+			goto cmd_rf_end;
+		}
+
+		if (f->read(f, size, buf)) {
+			for (uint64_t i = 0; i < size; i++) {
+				uint8_t c = buf[i];
+
+				// Special Codings
+				switch (c) {
+					case '\\': {
+						vmem_printc(vmem_design, '\\');
+						vmem_printc(vmem_design, c);
+						continue;
+					}
+					
+					case '\a': {
+						vmem_printc(vmem_design, '\\');
+						vmem_printc(vmem_design, 'a');
+						continue;
+					}
+					case '\b': {
+						vmem_printc(vmem_design, '\\');
+						vmem_printc(vmem_design, 'b');
+						continue;
+					}
+					case '\e': {
+						vmem_printc(vmem_design, '\\');
+						vmem_printc(vmem_design, 'e');
+						continue;
+					}
+					case '\f': {
+						vmem_printc(vmem_design, '\\');
+						vmem_printc(vmem_design, 'f');
+						continue;
+					}
+					case '\r': {
+						vmem_printc(vmem_design, '\\');
+						vmem_printc(vmem_design, 'r');
+						continue;
+					}
+					case '\v': {
+						vmem_printc(vmem_design, '\\');
+						vmem_printc(vmem_design, 'v');
+						continue;
+					}
+					default: break;
+				}
+
+				if (kc_is_printable(c)) {
+					vmem_printc(vmem_design, c);
+				} else {
+					vmem_printf(vmem_design, "\\x%02X", c);
+				}
+			}
+		}
+		fs_close(f);
+
+		cmd_rf_end: {}
     } else if (strcmp(cmd, "flush-klog") == 0) {
         if (!current_drive_works) {
             vmem_print(vmem_design, "Error: Current Drive doesn't work!\n");
-            *lines += 1;
-        } else {
-            if (!current_drive_mounted) {
-                vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
-                *lines += 1;
-            } else if (g_pbfs_mnt.active) {
-                serial_flush_klog("/aos/klog.log", &g_pbfs_mnt);
-            }
+
+			goto cmd_flush_klog_end;
         }
-    } else {
+		if (!current_drive_mounted) {
+			vmem_print(vmem_design, "Error: Current Drive isn't mounted!\n");
+
+			goto cmd_flush_klog_end;
+		}
+		
+		if (g_pbfs_mnt.active) {
+			serial_flush_klog("/aos/klog.log", &g_pbfs_mnt);
+		}
+    
+		cmd_flush_klog_end: {}
+	} else if (strcmp(cmd, "meminfo") == 0) {
+		avmf_print_info(AOS_TRUE, vmem_design);
+	} else {
         vmem_print(vmem_design, "Unknown command\n");
-        *lines += 1;
-    }
-    *lines += 1;
-    if (*lines > IO_VMEM_MAX_ROWS_true) {
-        vmem_scroll_up(vmem_design, 0, IO_VMEM_MAX_ROWS_true, IO_VMEM_MAX_COLS_true);
-        vmem_design->x = 0;
-        vmem_design->y = IO_VMEM_MAX_ROWS_true - 2;
-        for (int i = 0; i < IO_VMEM_MAX_COLS_true; i++) vmem_printc(vmem_design, ' ');
-        vmem_design->x = 0;
-        vmem_design->y = IO_VMEM_MAX_ROWS_true - 2;
-        *lines--;
     }
 }
 
-void cmd_print_help(struct VMemDesign* vmem_design, int* lines) {
+void cmd_print_help(struct VMemDesign* vmem_design) {
     const char* help = "Usage: start <program | -[OPTIONS]>\n"
         "OPTIONS:\n"
         "\thelp: Prints this help message\n"
         "Available Programs:\n"
         "\taos++/aospp: AfterGreat Operating System ++ (Enters GUI Mode)\n";
     vmem_print(vmem_design, help);
-    *lines += 6;
 }
 
-void cmd_start(char* program, int* lines, struct VMemDesign* vmem_design) {
+void cmd_start(char* program, struct VMemDesign* vmem_design) {
     if (strcmp(program, "-help") == 0) {
-        cmd_print_help(vmem_design, lines);
+        cmd_print_help(vmem_design);
     } else if (strcmp(program, "aospp") == 0 || strcmp(program, "aos++") == 0) {
         vmem_print(vmem_design, "Starting AOS++\n");
-        *lines += 1;
         aospp_start();
         vmem_print(vmem_design, "AOS++ Failed to load!\n");
-        *lines += 1;
     } else {
         vmem_print(vmem_design, "Unknown Program: ");
         vmem_print(vmem_design, program);
         vmem_print(vmem_design, "\n");
-        *lines += 1;
     }
 }
 

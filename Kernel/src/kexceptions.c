@@ -142,7 +142,8 @@ void aos_system_exception(struct reg_trap_frame *r) {
 	struct VMemDesign c = {
 		.bg = VMEM_COLOR_BLACK,
 		.fg = VMEM_COLOR_WHITE,
-		.serial_out = 0,
+		.serial_out = AOS_FALSE,
+		.auto_scroll = AOS_TRUE,
 		.x = 0,
 		.y = 0
 	};

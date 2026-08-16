@@ -605,6 +605,7 @@ static avmf_header_t* avmf_region_alloc(avmf_region_header_t* r, uint64_t size, 
 							if (!avmf_free_list_append(r, range)) {
 								avmf_free_irange(range);
 							} else {
+								r->allocated_bytes -= c->size;
 								avmf_unlink_header(r, c);
 							}
 						}
@@ -700,6 +701,8 @@ static avmf_header_t* avmf_region_alloc(avmf_region_header_t* r, uint64_t size, 
                 avmf_free_ihdr(hdr);
                 return NULL;
             }
+
+			r->allocated_bytes += hdr->size;
             return hdr;
 		}
 
@@ -784,6 +787,8 @@ static void avmf_region_free(avmf_region_header_t* r, uint64_t base, uint64_t si
 			}
 			avmf_unlink_header(r, c);
 			c->used = AOS_FALSE;
+			r->allocated_bytes -= c->size;
+
 			return;
 		}
     }
@@ -1020,4 +1025,78 @@ avmf_header_t* avmf_find(uint64_t virt) {
         cur = cur->next;
     }
     return NULL;
+}
+
+static void avmf_print_info_region(aos_bool vmem, struct VMemDesign* design, avmf_region_header_t* region, const char* name) {
+	aos_bool vmem_out = vmem && design;
+
+	if (name) {
+		if (vmem_out) vmem_printf(design, "%s: ", name);
+		else serial_printf("%s: ", name);
+	} else {
+		if (vmem_out) vmem_print(design, "Unnamed Region: ");
+		else serial_print("Unnamed Region: ");
+	}
+
+	if (!region) {
+		if (vmem_out) vmem_print(design, "Null Region\n");
+		else serial_print("Null Region\n");
+		return;
+	}
+
+	if (vmem_out) vmem_printf(design, "\nBase Address: 0x%llX\n", region->base);
+	else serial_printf("\nBase Address: 0x%llX\n", region->base);
+
+	double pretty_size = 0.0;
+	const char* pretty_unit = kbeautify_memory_size(region->limit, &pretty_size);
+
+	if (vmem_out) vmem_printf(design, "\n\tSize: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
+	else serial_printf("\n\tSize: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
+
+	pretty_size = 0.0;
+	pretty_unit = kbeautify_memory_size(region->allocated_bytes, &pretty_size);
+
+	if (vmem_out) vmem_printf(design, "\n\tAllocated: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
+	else serial_printf("\n\tAllocated: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
+
+	pretty_size = 0.0;
+	pretty_unit = kbeautify_memory_size(region->limit - region->allocated_bytes, &pretty_size);
+
+	if (vmem_out) vmem_printf(design, "\n\tFree: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
+	else serial_printf("\n\tFree: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
+}
+
+void avmf_print_info(aos_bool vmem, struct VMemDesign* design) {
+	aos_bool vmem_out = vmem && design;
+
+	if (vmem_out) vmem_print(design, "Physical:\n");
+	else serial_print("Physical:\n");
+
+	for (uint64_t i = 0; i < physical_region_count; i++) {
+		avmf_region_header_t* r = &physical_regions[i];
+		if (r->signature != AVMF_SIGNATURE || r->version != AVMF_VERSION) continue;
+		if (r->limit < r->allocated_bytes || r->limit == 0) continue;
+
+		avmf_print_info_region(vmem, design, r, NULL);
+	}
+
+	if (vmem_out) vmem_print(design, "Virtual:\n");
+	else serial_print("Virtual:\n");
+
+	for (uint64_t i = 0; i < region_count; i++) {
+		avmf_region_header_t* r = &regions[i];
+		if (r->signature != AVMF_SIGNATURE || r->version != AVMF_VERSION) continue;
+		if (r->limit < r->allocated_bytes || r->limit == 0) continue;
+
+		const char* name = NULL;
+		switch (i) {
+			case 0: name = "User Space"; break;
+			case 1: name = "Kernel Space"; break;
+			case 2: name = "Driver Space"; break;
+			case 3: name = "Sensitive Space"; break;
+			default: break;
+		}
+
+		avmf_print_info_region(vmem, design, r, name);
+	}
 }

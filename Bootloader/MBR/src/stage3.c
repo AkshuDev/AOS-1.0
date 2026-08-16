@@ -368,7 +368,8 @@ void stage3(void) {
         .y = 0,
         .fg = ambrc->display.fg_color,
         .bg = ambrc->display.bg_color,
-        .serial_out = 0
+        .serial_out = AOS_FALSE,
+		.auto_scroll = AOS_FALSE
     };
 
 	pager_init();

@@ -247,7 +247,8 @@ EFIAPI static void uefi_printvf(const char* fmt, va_list args) {
 		.bg = (enum VMemColors)(last_attr >> 4),
 		.x = last_x,
 		.y = last_y,
-		.serial_out = 0
+		.serial_out = AOS_FALSE,
+		.auto_scroll = AOS_FALSE
 	};
 	uefi_printvf_design(&design, fmt, args);
 }

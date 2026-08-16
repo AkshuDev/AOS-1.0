@@ -5,8 +5,11 @@
 typedef struct {
     uint32_t x;
     uint32_t y;
+	
     uint32_t fg_color;
     uint32_t bg_color;
+
+	aos_bool auto_scroll;
 } FB_Cursor_t;
 
 typedef struct {
@@ -27,4 +30,4 @@ void fb_draw_rect(FB_Info_t* fb, int x, int y, int w, int h, uint32_t color) __a
 void fb_printc(FB_Info_t* fb, FB_Cursor_t* cur, char c) __attribute__((used));
 void fb_print(FB_Info_t* fb, FB_Cursor_t* cur, const char* str) __attribute__((used));
 void fb_printf(FB_Info_t* fb, FB_Cursor_t* cur, const char* fmt, ...) __attribute__((used));
-
+void fb_scroll_up(FB_Info_t* fb, uint32_t lines, uint32_t color) __attribute__((used));
