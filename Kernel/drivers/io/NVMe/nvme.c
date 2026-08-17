@@ -759,7 +759,7 @@ aos_bool nvme_get_block_device(uint64_t cidx, uint64_t port_id, struct block_dev
 	memset(name, 0, 80 * sizeof(char));
 
 	memcpy(name, "nvme", 4);
-	ku64_to_str(cidx, (char*)((uint8_t*)name + 4), 10, AOS_FALSE);
+	ku64_to_str(cidx, (char*)((uint8_t*)name + 4), 80 * sizeof(char), 10, AOS_FALSE);
 
 	size_t len = strlen(name);
 	if (len+1 > 80*sizeof(char)) {
@@ -767,7 +767,7 @@ aos_bool nvme_get_block_device(uint64_t cidx, uint64_t port_id, struct block_dev
 		return AOS_FALSE;
 	}
 	name[len++] = 'n';
-	ku64_to_str(ns->nsid, (char*)((uint8_t*)name + len), 10, AOS_FALSE);
+	ku64_to_str(ns->nsid, (char*)((uint8_t*)name + len), 80 * sizeof(char), 10, AOS_FALSE);
 
 	out->name = name;
 	return AOS_TRUE;

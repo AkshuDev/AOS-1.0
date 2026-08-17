@@ -137,12 +137,15 @@ void pager_init(void) {
 		if (end_addr > max_phys_addr)
             max_phys_addr = end_addr;
 
-		serial_printf("SMMAP: %p - %p (%llu MB) (Type %s [%d])\n", e->phys_start, end_addr, (uint64_t)((float)e->size / 1024.0f / 1024.0f), uniboot_smmap_get_type_str(e->type), e->type);
+		double pretty_size = 0;
+		char* pretty_unit = kbeautify_memory_size(e->size, &pretty_size);
+
+		serial_printf("SMMAP: %p - %p (%.2lf %s) (Type %s [%d])\n", e->phys_start, end_addr, pretty_size, pretty_unit, uniboot_smmap_get_type_str(e->type), e->type);
         if (e->type == UNIBOOT_SMMAP_TYPE_FREE) {
             uint64_t start = e->phys_start;
             // Don't use the first <Kernel End>MB!
-            if (start < bss_end) {
-                if (e->size <= (bss_end - start)) continue; // Too small
+            if (start < ALIGN_UP(bss_end, PAGE_SIZE)) {
+                if (e->size <= (ALIGN_UP(bss_end, PAGE_SIZE) - start)) continue; // Too small
                 start = bss_end;
             }
             base_phys[phys_idx] = start;
@@ -167,7 +170,10 @@ void pager_init(void) {
             max_phys_addr = ~0ULL;
         else
             max_phys_addr = (1ULL << cpu_phys_bits) - 1;
-        serial_printf("[PAGER] CPU Doesn't Support required %lu bits, hence maximum memory used will be %lu bits or %lu GB\n", bits_req, cpu_phys_bits, max_phys_addr / (1024 * 1024 * 1024));
+		
+		double pretty_size = 0;
+		char* pretty_unit = kbeautify_memory_size(max_phys_addr, &pretty_size);
+        serial_printf("[PAGER] CPU Doesn't Support required %lu bits, hence maximum memory used will be %lu bits or %.2lf %s\n", bits_req, cpu_phys_bits, pretty_size, pretty_unit);
     }
 
     avmf_init((uint64_t*)base_phys, (uint64_t*)limit_phys, phys_idx);

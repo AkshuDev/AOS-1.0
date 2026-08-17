@@ -839,8 +839,12 @@ double kstr_to_double(const char* str) {
     return result * sign;
 }
 
-char* ki64_to_str(int64_t v, char* buf, int base, aos_bool caps) {
+char* ki64_to_str(int64_t v, char* buf, size_t max_size, int base, aos_bool caps) {
+	if (!buf) return NULL;
+	if (max_size == 0) return NULL;
+
     char* p = buf;
+	size_t csize = 0;
     aos_bool neg = AOS_FALSE;
 
     uint64_t val;
@@ -853,14 +857,23 @@ char* ki64_to_str(int64_t v, char* buf, int base, aos_bool caps) {
 
     do {
         uint64_t digit = val % base;
+
         *p++ = (digit < 10) ? ('0' + digit) : ((caps ? 'A' : 'a')  + digit - 10);
+		csize++;
+		if (csize == max_size) return NULL;
+
         val /= base;
     } while (val);
 
-    if (neg)
+    if (neg) {
         *p++ = '-';
+		csize++;
+		if (csize == max_size) return NULL;
+	}
 
     *p = '\0';
+	csize++;
+	if (csize == max_size) return NULL;
 
     char* start = buf;
     char* end = p - 1;
@@ -874,18 +887,28 @@ char* ki64_to_str(int64_t v, char* buf, int base, aos_bool caps) {
     return buf;
 }
 
-char* ku64_to_str(uint64_t v, char* buf, int base, aos_bool caps) {
+char* ku64_to_str(uint64_t v, char* buf, size_t max_size, int base, aos_bool caps) {
+	if (!buf) return NULL;
+	if (max_size == 0) return NULL;
+
     char* p = buf;
+	size_t csize = 0;
 
     uint64_t val = (uint64_t)v;
 
     do {
         uint64_t digit = val % base;
+
         *p++ = (digit < 10) ? ('0' + digit) : ((caps ? 'A' : 'a') + digit - 10);
+		csize++;
+		if (csize == max_size) return NULL;
+		
         val /= base;
     } while (val);
 
     *p = '\0';
+	csize++;
+	if (csize == max_size) return NULL;
 
     char* start = buf;
     char* end = p - 1;
@@ -899,20 +922,36 @@ char* ku64_to_str(uint64_t v, char* buf, int base, aos_bool caps) {
     return buf;
 }
 
-char* kdouble_to_str(double v, char* buf, int precision) {
-    if (!buf) return 0;
+char* kdouble_to_str(double v, char* buf, size_t max_size, int precision) {
+    if (!buf) return NULL;
+	if (max_size == 0) return NULL;
 
     if (precision < 0) precision = 6;
 
     char* p = buf;
+	size_t csize = 0;
 
     if (v < 0) {
         *p++ = '-';
+
+		csize++;
+		if (csize == max_size) return NULL;
+
         v = -v;
     }
 
-    int64_t int_part = (int64_t)v;
+    uint64_t int_part = (uint64_t)v;
     double frac = v - (double)int_part;
+
+	double rounding = 0.5;
+	for (int i = 0; i < precision; i++)
+		rounding /= 10.0;
+	frac += rounding;
+
+	if (frac >= 1.0) {
+		int_part++;
+		frac -= 1.0;
+	}
 
     char tmp[32];
     char* t = tmp;
@@ -922,15 +961,24 @@ char* kdouble_to_str(double v, char* buf, int precision) {
         int_part /= 10;
     } while (int_part);
 
-    while (t > tmp)
+    while (t > tmp) {
         *p++ = *--t;
+		csize++;
+		if (csize == max_size) return NULL;
+	}
 
     *p++ = '.';
+	csize++;
+	if (csize == max_size) return NULL;
 
     for (int i = 0; i < precision; i++) {
         frac *= 10.0;
         int digit = (int)frac;
+
         *p++ = '0' + digit;
+		csize++;
+		if (csize == max_size) return NULL;
+		
         frac -= digit;
     }
 

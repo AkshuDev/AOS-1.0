@@ -64,6 +64,11 @@ static uint64_t avmf_alloc_phys_page(void) {
             if (!bitmap_test(p)) {
                 bitmap_set(p);
 				spin_unlock_irqrestore(&avmf_lock, rflags);
+
+				uint64_t r_rflags = spin_lock_irqsave(&r->lock);
+				r->allocated_bytes += PAGE_SIZE;
+				spin_unlock_irqrestore(&r->lock, r_rflags);
+
                 return p * PAGE_SIZE;
             }
         }
@@ -95,6 +100,10 @@ static void avmf_free_phys_page(uint64_t phys) {
             return;
         }
         bitmap_clear(page);
+
+		uint64_t r_rflags = spin_lock_irqsave(&r->lock);
+		r->allocated_bytes = r->allocated_bytes >= PAGE_SIZE ? r->allocated_bytes - PAGE_SIZE : 0;
+		spin_unlock_irqrestore(&r->lock, r_rflags);
 
 		spin_unlock_irqrestore(&avmf_lock, rflags);
         return;
@@ -822,6 +831,11 @@ uint64_t avmf_alloc_phys_contiguous(uint64_t size) {
                         bitmap_set(j);
                     }
                     spin_unlock_irqrestore(&avmf_lock, rflags);
+
+					uint64_t r_rflags = spin_lock_irqsave(&r->lock);
+					r->allocated_bytes += pages_needed * PAGE_SIZE;
+					spin_unlock_irqrestore(&r->lock, r_rflags);
+					
                     return first_page * PAGE_SIZE;
                 }
             } else {
@@ -869,6 +883,10 @@ void avmf_free_phys_contiguous(uint64_t phys, uint64_t size) {
 			bitmap_clear(p);
 		}
 		spin_unlock_irqrestore(&avmf_lock, rflags);
+
+		uint64_t r_rflags = spin_lock_irqsave(&r->lock);
+		r->allocated_bytes = r->allocated_bytes >= pages_needed * PAGE_SIZE ? r->allocated_bytes - pages_needed * PAGE_SIZE : 0;
+		spin_unlock_irqrestore(&r->lock, r_rflags);
 		return;
     }
     spin_unlock_irqrestore(&avmf_lock, rflags);
@@ -1050,20 +1068,20 @@ static void avmf_print_info_region(aos_bool vmem, struct VMemDesign* design, avm
 	double pretty_size = 0.0;
 	const char* pretty_unit = kbeautify_memory_size(region->limit, &pretty_size);
 
-	if (vmem_out) vmem_printf(design, "\tSize: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
-	else serial_printf("\tSize: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
+	if (vmem_out) vmem_printf(design, "\tSize: %.2lf %s\n", pretty_size, pretty_unit);
+	else serial_printf("\tSize: %.2lf %s\n", pretty_size, pretty_unit);
 
 	pretty_size = 0.0;
 	pretty_unit = kbeautify_memory_size(region->allocated_bytes, &pretty_size);
 
-	if (vmem_out) vmem_printf(design, "\tAllocated: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
-	else serial_printf("\tAllocated: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
+	if (vmem_out) vmem_printf(design, "\tAllocated: %.2lf %s\n", pretty_size, pretty_unit);
+	else serial_printf("\tAllocated: %.2lf %s\n", pretty_size, pretty_unit);
 
 	pretty_size = 0.0;
 	pretty_unit = kbeautify_memory_size(region->limit - region->allocated_bytes, &pretty_size);
 
-	if (vmem_out) vmem_printf(design, "\tFree: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
-	else serial_printf("\tFree: %llu %s\n", (uint64_t)pretty_size, pretty_unit);
+	if (vmem_out) vmem_printf(design, "\tFree: %.2lf %s\n", pretty_size, pretty_unit);
+	else serial_printf("\tFree: %.2lf %s\n", pretty_size, pretty_unit);
 }
 
 void avmf_print_info(aos_bool vmem, struct VMemDesign* design) {
@@ -1077,7 +1095,7 @@ void avmf_print_info(aos_bool vmem, struct VMemDesign* design) {
 		if (r->signature != AVMF_SIGNATURE || r->version != AVMF_VERSION) continue;
 		if (r->limit < r->allocated_bytes || r->limit == 0) continue;
 
-		avmf_print_info_region(vmem, design, r, NULL);
+		avmf_print_info_region(vmem, design, r, "Physical Region");
 	}
 
 	if (vmem_out) vmem_print(design, "Virtual:\n");

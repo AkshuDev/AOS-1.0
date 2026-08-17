@@ -253,38 +253,52 @@ void serial_print(const char* str) {
 	spin_unlock_irqrestore(&serial_lock, rflags);
 }
 
+static void serial_print_ex_string(const char* str, int width, int zero_pad) {
+	int len = 0;
+	while (str[len])
+		len++;
+
+	int neg = (str[0] == '-');
+	if (width > len) {
+		int padding = width - len;
+
+		if (zero_pad && neg) {
+			serial_printc('-');
+			str++;
+
+			while (padding--)
+				serial_printc('0');
+		} else {
+			char pad = zero_pad ? '0' : ' ';
+			while (padding--)
+				serial_printc(pad);
+		}
+	}
+
+	while (*str)
+		serial_printc(*str++);
+}
+
 static void serial_print_ex_integer(uint64_t val, int base, int width, int zero_pad, aos_bool is_signed, aos_bool caps) {
-    char buf[64];
-    char* digits = caps ? "0123456789abcdef" : "0123456789ABCDEF";
-    int i = 0;
-    int neg = 0;
-    if (is_signed && (int64_t)val < 0) {
-        neg = 1;
-        val = -(int64_t)val;
-    }
-    do {
-        buf[i++] = digits[val % base];
-        val /= base;
-    } while (val > 0);
+	char buf[64];
+	char* str;
 
-    int total_len = i + (neg ? 1 : 0);
-    if (width > total_len) {
-        int padding_count = width - total_len;
-        if (zero_pad) {
-            if (neg) {
-                serial_printc('-');
-                neg = 0;
-            }
-            while (padding_count--) serial_printc('0');
-        } else {
-            while(padding_count--) serial_printc(' ');
-        }
-    }
+	if (is_signed)
+		str = ki64_to_str((int64_t)val, buf, sizeof(buf), base, caps);
+	else
+		str = ku64_to_str(val, buf, sizeof(buf), base, caps);
+	if (!str) return;
 
-    if (neg) serial_printc('-');
-    while (i > 0) {
-        serial_printc(buf[--i]);
-    }
+	serial_print_ex_string(str, width, zero_pad);
+}
+
+static void serial_print_ex_float(double val, int width, int precision, int zero_pad) {
+	char buf[128];
+
+	char* str = kdouble_to_str(val, buf, sizeof(buf), precision);
+	if (!str) return;
+
+	serial_print_ex_string(str, width, zero_pad);
 }
 
 // Serial print with formatting
@@ -300,6 +314,7 @@ void serial_printf(const char* fmt, ...) {
             int zero_pad = 0;
             int width = 0;
             int is_long = 0;
+			int precision = 0;
 
             if (*fmt == '0') {
                 zero_pad = 1;
@@ -309,7 +324,15 @@ void serial_printf(const char* fmt, ...) {
                 width = width * 10 + (*fmt - '0');
                 fmt++;
             }
-            while (*fmt == 'l') {
+            if (*fmt == '.') {
+				fmt++;
+				precision = 0;
+				while (*fmt >= '0' && *fmt <= '9') {
+					precision = precision * 10 + (*fmt - '0');
+					fmt++;
+				}
+			}
+			while (*fmt == 'l') {
                 is_long++;
                 fmt++;
             }
@@ -373,24 +396,16 @@ void serial_printf(const char* fmt, ...) {
                     serial_print_ex_integer(u, 10, width, zero_pad, AOS_FALSE, AOS_TRUE);
                     break;
                 }
-                case 'x':
-                case 'p': { // Pointer
+                case 'x': {
                     uint64_t p;
-                    if (*fmt == 'p') {
-                        p = (uintptr_t)va_arg(args, void*);
-                        serial_print("0x");
-						klog_msg_started = AOS_TRUE;
-                        if (width == 0) width = 16;
-                        zero_pad = 1;
-                    } else {
-                        if (is_long >= 1) p = va_arg(args, uint64_t);
-                        else p = (uint64_t)va_arg(args, uint32_t);
-                    }
+					if (is_long >= 1) p = va_arg(args, uint64_t);
+					else p = (uint64_t)va_arg(args, uint32_t);
+
                     serial_print_ex_integer(p, 16, width, zero_pad, AOS_TRUE, AOS_FALSE);
                     break;
-                }
+                } 
 				case 'X':
-                case 'P': { // Pointer
+                case 'p': { // Pointer
                     uint64_t p;
                     if (*fmt == 'p') {
                         p = (uintptr_t)va_arg(args, void*);
@@ -405,7 +420,15 @@ void serial_printf(const char* fmt, ...) {
                     serial_print_ex_integer(p, 16, width, zero_pad, AOS_TRUE, AOS_TRUE);
                     break;
                 }
-                case '%': {
+                case 'f': {
+					double f;
+					if (is_long >= 1) f = va_arg(args, double);
+					else f = (double)va_arg(args, float);
+
+                    serial_print_ex_float(f, width, precision, zero_pad);
+                    break;
+				}
+				case '%': {
                     serial_printc('%');
                     break;
                 }
@@ -661,14 +684,14 @@ void vmem_printc(struct VMemDesign* design, char c) {
 			design->x = 0;
 			design->y++;
 
-			if (design->y + 1 > IO_VMEM_MAX_ROWS_true) {
-				if (design->auto_scroll) vmem_scroll_up(design, )
+			if (design->y >= IO_VMEM_MAX_ROWS_true) {
+				if (design->auto_scroll) vmem_scroll_up(design, 1, design->bg);
+				else design->y = 0;
 			}
 
 			spin_unlock_irqrestore(&vmemc_lock, rflags);
 			return;
 		}
-
 		case '\b': {
 			if (design->x == 0 && design->y == 0) {
 				spin_unlock_irqrestore(&vmemc_lock, rflags);
@@ -676,7 +699,7 @@ void vmem_printc(struct VMemDesign* design, char c) {
 			}
 			if (design->x > 0) design->x--;
 			else {
-				design->x = IO_VMEM_MAX_COLS_true;
+				design->x = IO_VMEM_MAX_COLS_true - 1;
 				design->y--;
 			}
 
@@ -691,7 +714,15 @@ void vmem_printc(struct VMemDesign* design, char c) {
     vmem[design->y * IO_VMEM_MAX_COLS_true + design->x] = ((uint16_t)attr << 8) | c;
     design->x++;
 
-	if (design->x > 0)
+	if (design->x >= IO_VMEM_MAX_COLS_true) {
+		design->x = 0;
+		design->y++;
+
+		if (design->y >= IO_VMEM_MAX_ROWS_true) {
+			if (design->auto_scroll) vmem_scroll_up(design, 1, design->bg);
+			else design->y = 0;
+		}
+	}
 
     spin_unlock_irqrestore(&vmemc_lock, rflags);
 }
@@ -703,38 +734,52 @@ void vmem_print(struct VMemDesign* design, const char* str) {
     spin_unlock_irqrestore(&vmem_lock, rflags);
 }
 
+static void vmem_print_ex_string(struct VMemDesign* design, const char* str, int width, int zero_pad) {
+	int len = 0;
+	while (str[len])
+		len++;
+
+	int neg = (str[0] == '-');
+	if (width > len) {
+		int padding = width - len;
+
+		if (zero_pad && neg) {
+			vmem_printc(design, '-');
+			str++;
+
+			while (padding--)
+				vmem_printc(design, '0');
+		} else {
+			char pad = zero_pad ? '0' : ' ';
+			while (padding--)
+				vmem_printc(design, pad);
+		}
+	}
+
+	while (*str)
+		vmem_printc(design, *str++);
+}
+
 static void vmem_print_ex_integer(struct VMemDesign* design, uint64_t val, int base, int width, int zero_pad, aos_bool is_signed, aos_bool caps) {
-    char buf[64];
-    const char* digits = caps ? "0123456789abcdef" : "0123456789ABCDEF";
-    int i = 0;
-    int neg = 0;
-    if (is_signed && (int64_t)val < 0) {
-        neg = 1;
-        val = -(int64_t)val;
-    }
-    do {
-        buf[i++] = digits[val % base];
-        val /= base;
-    } while (val > 0);
+	char buf[64];
+	char* str;
 
-    int total_len = i + (neg ? 1 : 0);
-    if (width > total_len) {
-        int padding_count = width - total_len;
-        if (zero_pad) {
-            if (neg) {
-                vmem_printc(design, '-');
-                neg = 0;
-            }
-            while (padding_count--) vmem_printc(design, '0');
-        } else {
-            while(padding_count--) vmem_printc(design, ' ');
-        }
-    }
+	if (is_signed)
+		str = ki64_to_str((int64_t)val, buf, sizeof(buf), base, caps);
+	else
+		str = ku64_to_str(val, buf, sizeof(buf), base, caps);
+	if (!str) return;
 
-    if (neg) vmem_printc(design, '-');
-    while (i > 0) {
-        vmem_printc(design, buf[--i]);
-    }
+	vmem_print_ex_string(design, str, width, zero_pad);
+}
+
+static void vmem_print_ex_float(struct VMemDesign* design, double val, int width, int precision, int zero_pad) {
+	char buf[128];
+
+	char* str = kdouble_to_str(val, buf, sizeof(buf), precision);
+	if (!str) return;
+
+	vmem_print_ex_string(design, str, width, zero_pad);
 }
 
 void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
@@ -750,6 +795,7 @@ void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
             int zero_pad = 0;
             int width = 0;
             int is_long = 0;
+			int precision = 0;
 
             if (*fmt == '0') {
                 zero_pad = 1;
@@ -759,7 +805,15 @@ void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
                 width = width * 10 + (*fmt - '0');
                 fmt++;
             }
-            while (*fmt == 'l') {
+            if (*fmt == '.') {
+				fmt++;
+				precision = 0;
+				while (*fmt >= '0' && *fmt <= '9') {
+					precision = precision * 10 + (*fmt - '0');
+					fmt++;
+				}
+			}
+			while (*fmt == 'l') {
                 is_long++;
                 fmt++;
             }
@@ -822,23 +876,16 @@ void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
                     vmem_print_ex_integer(design, u, 10, width, zero_pad, AOS_FALSE, AOS_TRUE);
                     break;
                 }
-                case 'x':
-                case 'p': { // Pointer
+                case 'x': {
                     uint64_t p;
-                    if (*fmt == 'p') {
-                        p = (uintptr_t)va_arg(args, void*);
-                        vmem_print(design, "0x");
-                        if (width == 0) width = 16;
-                        zero_pad = 1;
-                    } else {
-                        if (is_long >= 1) p = va_arg(args, uint64_t);
-                        else p = (uint64_t)va_arg(args, uint32_t);
-                    }
+					if (is_long >= 1) p = va_arg(args, uint64_t);
+					else p = (uint64_t)va_arg(args, uint32_t);
+
                     vmem_print_ex_integer(design, p, 16, width, zero_pad, AOS_FALSE, AOS_FALSE);
                     break;
                 }
 				case 'X':
-                case 'P': { // Pointer
+                case 'p': { // Pointer
                     uint64_t p;
                     if (*fmt == 'p') {
                         p = (uintptr_t)va_arg(args, void*);
@@ -852,7 +899,15 @@ void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
                     vmem_print_ex_integer(design, p, 16, width, zero_pad, AOS_FALSE, AOS_TRUE);
                     break;
                 }
-                case '%': {
+				case 'f': {
+					double f;
+					if (is_long >= 1) f = va_arg(args, double);
+					else f = (double)va_arg(args, float);
+
+                    vmem_print_ex_float(design, f, width, precision, zero_pad);
+                    break;
+				}
+				case '%': {
                     vmem_printc(design, '%');
                     break;
                 }
@@ -870,22 +925,29 @@ void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
     va_end(args);
     spin_unlock_irqrestore(&vmemf_lock, rflags);
 }
+
 void vmem_scroll_up(struct VMemDesign* design, uint32_t lines, enum VMemColors color) {
 	if (vmem_mode == UNIBOOT_FB_MODE_UEFI_GOP) {
-		fb_scroll_up(vmem_fbi, lines, vmem_convert_color_to_rgba(color));
+		fb_scroll_up(&vmem_fbi, lines, vmem_convert_color_to_rgba(color));
 		return;
 	}
 
 	uint32_t scroll = lines;
     if (scroll >= IO_VMEM_MAX_ROWS_true) {
-        vmem_clear_screen(design, color);
+        vmem_clear_screen(design);
         return;
     }
 
     uint8_t* base = (uint8_t*)IO_VMEM_true;
-    uint64_t move_size = (uint64_t)(IO_VMEM_MAX_ROWS_true - scroll);
+    uint64_t move_size = (uint64_t)(IO_VMEM_MAX_ROWS_true - scroll) * 2;
 
-    memmove(base, base + (uint64_t)scroll, move_size);
+    memmove(base, base + (uint64_t)scroll * 2, move_size);
+	
+	uint16_t blank = ((uint16_t)color << 8) | ' ';
+    uint16_t* cells = (uint16_t*)(base + move_size);
+    for (uint32_t i = 0; i < scroll; i++) {
+        cells[i] = blank;
+    }
 }
 
 // ATA stuff

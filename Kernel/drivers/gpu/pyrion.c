@@ -264,45 +264,50 @@ aos_bool pyrion_builtin_print(struct pyrion_ctx* ctx, const char* str) {
 	return AOS_TRUE;
 }
 
-static aos_bool pyrion_builtin_print_ex_integer(struct pyrion_ctx* ctx, uint64_t val, int base, int width, int zero_pad, int is_signed) {
-    char buf[64];
-    const char* digits = "0123456789abcdef";
-    int i = 0;
-    int neg = 0;
-    if (is_signed && (int64_t)val < 0) {
-        neg = 1;
-        val = -(int64_t)val;
-    }
-    do {
-        buf[i++] = digits[val % base];
-        val /= base;
-    } while (val > 0);
+static aos_bool pyrion_builtin_print_ex_string(struct pyrion_ctx* ctx, const char* str, int width, int zero_pad) {
+	int len = 0;
+	while (str[len])
+		len++;
 
-    int total_len = i + (neg ? 1 : 0);
-    if (width > total_len) {
-        int padding_count = width - total_len;
-        if (zero_pad) {
-            if (neg) {
-                if (!pyrion_builtin_printc(ctx, '-')) return AOS_FALSE;
-                neg = 0;
-            }
-            while (padding_count--) {
+	int neg = (str[0] == '-');
+	if (width > len) {
+		int padding = width - len;
+
+		if (zero_pad && neg) {
+			if (!pyrion_builtin_printc(ctx, '-')) return AOS_FALSE;
+			str++;
+
+			while (padding--)
 				if (!pyrion_builtin_printc(ctx, '0')) return AOS_FALSE;
-			}
-        } else {
-            while(padding_count--) {
-				if (!pyrion_builtin_printc(ctx, ' ')) return AOS_FALSE;
-			}
-        }
-    }
-
-    if (neg) {
-		if (!pyrion_builtin_printc(ctx, '-')) return AOS_FALSE;
+		} else {
+			char pad = zero_pad ? '0' : ' ';
+			while (padding--)
+				if (!pyrion_builtin_printc(ctx, pad)) return AOS_FALSE;
+		}
 	}
-    while (i > 0) {
-        if (!pyrion_builtin_printc(ctx, buf[--i])) return AOS_FALSE;
-    }
+
+	while (*str)
+		if (!pyrion_builtin_printc(ctx, *str++)) return AOS_FALSE;
 	return AOS_TRUE;
+}
+
+static aos_bool pyrion_builtin_print_ex_integer(struct pyrion_ctx* ctx, uint64_t val, int base, int width, int zero_pad, aos_bool is_signed, aos_bool caps) {
+	char buf[64];
+	char* str;
+
+	if (is_signed) str = ki64_to_str((int64_t)val, buf, sizeof(buf), base, caps);
+	else str = ku64_to_str(val, buf, sizeof(buf), base, caps);
+
+	if (!str) return AOS_FALSE;
+
+	return pyrion_builtin_print_ex_string(ctx, str, width, zero_pad);
+}
+
+static aos_bool pyrion_builtin_print_ex_float(struct pyrion_ctx* ctx, double val, int width, int precision, int zero_pad) {
+	char buf[128];
+	if (!kdouble_to_str(val, buf, sizeof(buf), precision)) return AOS_FALSE;
+
+	return pyrion_builtin_print_ex_string(ctx, buf, width, zero_pad);
 }
 
 aos_bool pyrion_builtin_printf(struct pyrion_ctx* ctx, const char* fmt, ...) {
@@ -318,6 +323,7 @@ aos_bool pyrion_builtin_printf(struct pyrion_ctx* ctx, const char* fmt, ...) {
             int zero_pad = 0;
             int width = 0;
             int is_long = 0;
+			int precision = 0;
 
             if (*fmt == '0') {
                 zero_pad = 1;
@@ -327,6 +333,14 @@ aos_bool pyrion_builtin_printf(struct pyrion_ctx* ctx, const char* fmt, ...) {
                 width = width * 10 + (*fmt - '0');
                 fmt++;
             }
+			if (*fmt == '.') {
+				fmt++;
+				precision = 0;
+				while (*fmt >= '0' && *fmt <= '9') {
+					precision = precision * 10 + (*fmt - '0');
+					fmt++;
+				}
+			}
             while (*fmt == 'l') {
                 is_long++;
                 fmt++;
@@ -355,7 +369,7 @@ aos_bool pyrion_builtin_printf(struct pyrion_ctx* ctx, const char* fmt, ...) {
 							} else {
 								if (!pyrion_builtin_printc(ctx, '\\')) goto error_end;
 								if (!pyrion_builtin_printc(ctx, 'x')) goto error_end;
-								if (!pyrion_builtin_print_ex_integer(ctx, (uint64_t)c, 16, 2, zero_pad, 0)) goto error_end;
+								if (!pyrion_builtin_print_ex_integer(ctx, (uint64_t)c, 16, 2, zero_pad, AOS_FALSE, AOS_FALSE)) goto error_end;
 							}
 						}
 					}
@@ -366,17 +380,26 @@ aos_bool pyrion_builtin_printf(struct pyrion_ctx* ctx, const char* fmt, ...) {
                     int64_t d;
                     if (is_long >= 1) d = va_arg(args, int64_t);
                     else d = (int64_t)va_arg(args, int);
-                    if (!pyrion_builtin_print_ex_integer(ctx, (uint64_t)d, 10, width, zero_pad, 1)) goto error_end;
+                    if (!pyrion_builtin_print_ex_integer(ctx, (uint64_t)d, 10, width, zero_pad, AOS_TRUE, AOS_FALSE)) goto error_end;
                     break;
                 }
                 case 'u': { // unsigned 32/64-bit
                     uint64_t u;
                     if (is_long >= 1) u = va_arg(args, uint64_t);
                     else u = (uint64_t)va_arg(args, uint32_t);
-                    if (!pyrion_builtin_print_ex_integer(ctx, u, 10, width, zero_pad, 0)) goto error_end;
+                    if (!pyrion_builtin_print_ex_integer(ctx, u, 10, width, zero_pad, AOS_FALSE, AOS_FALSE)) goto error_end;
                     break;
                 }
-                case 'x':
+                case 'x': {
+					uint64_t p;
+
+					if (is_long >= 1) p = va_arg(args, uint64_t);
+                	else p = (uint64_t)va_arg(args, uint32_t);
+                    
+                    if (!pyrion_builtin_print_ex_integer(ctx, p, 16, width, zero_pad, AOS_FALSE, AOS_FALSE)) goto error_end;
+                    break;
+				}
+				case 'X':
                 case 'p': { // Pointer
                     uint64_t p;
                     if (*fmt == 'p') {
@@ -387,7 +410,15 @@ aos_bool pyrion_builtin_printf(struct pyrion_ctx* ctx, const char* fmt, ...) {
                         if (is_long >= 1) p = va_arg(args, uint64_t);
                         else p = (uint64_t)va_arg(args, uint32_t);
                     }
-                    if (!pyrion_builtin_print_ex_integer(ctx, p, 16, width, zero_pad, 0)) goto error_end;
+                    if (!pyrion_builtin_print_ex_integer(ctx, p, 16, width, zero_pad, AOS_FALSE, AOS_TRUE)) goto error_end;
+                    break;
+                }
+                case 'f': { // Pointer
+                    double f;
+					if (is_long >= 1) f = va_arg(args, double);
+					else f = (double)va_arg(args, float);
+
+                    if (!pyrion_builtin_print_ex_float(ctx, f, width, precision, zero_pad)) goto error_end;
                     break;
                 }
                 case '%': {

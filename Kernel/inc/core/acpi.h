@@ -144,3 +144,4 @@ void acpi_get_apic_info(uint8_t* apic_ids_out, uint64_t* apic_id_count_out) __at
 uint32_t acpi_read_timer(void) __attribute__((used));
 void acpi_mdelay(uint64_t ms) __attribute__((used));
 void acpi_reboot() __attribute__((used, noreturn));
+void acpi_shutdown() __attribute__((used, noreturn));
