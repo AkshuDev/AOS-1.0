@@ -22,10 +22,12 @@
 #define DEF_PROMPT "/ $ -> "
 
 static struct pyrion_ctx* vshell_ctx = NULL;
-static struct pyrion_rect vshell_viewport = (struct pyrion_rect){.x=0,.y=0,.width=800,.height=600,.color=0x121212FF};
+static const struct pyrion_rect vshell_viewport = (const struct pyrion_rect){.x=0,.y=0,.width=800,.height=600,.color=0x121212FF};
 static aos_bool vshell_running = AOS_FALSE;
-static char* prompt = DEF_PROMPT;
 
+static aos_bool need_reload_vshell = AOS_FALSE;
+
+static char* prompt = DEF_PROMPT;
 static int last_cmd = 0;
 
 aos_bool is_ascii(char c) {
@@ -93,9 +95,7 @@ static aos_bool vshell_handle_user_input(char* buf, int max_len, int* len) {
 static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len) {
     if (!vshell_handle_user_input(cmd_buf, max_cmd_len - 1, cmd_len)) return AOS_TRUE;
     cmd_buf[max_cmd_len - 1] = '\0';
-
     if (*cmd_len == 0) return AOS_TRUE;
-
     cmd_buf[*cmd_len] = '\0';
 
     if (last_cmd == 1 || strcmp(cmd_buf, "exit") == 0) {
@@ -133,15 +133,29 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
     } else if (last_cmd == 0) {
         if (strcmp(cmd_buf, "sysinfo") == 0) {
             if (!vshell_cmd_sysinfo()) return AOS_FALSE;
-        } else if (strncmp(cmd_buf, "echo", 4) == 0) {
-            if (max_cmd_len > 5) {
+        } else if (strncmp(cmd_buf, "echo ", 5) == 0 || strcmp(cmd_buf, "echo") == 0) {
+            if (*cmd_len > 5) {
                 if (!pyrion_builtin_print(vshell_ctx, (char*)(&(cmd_buf[5])))) return AOS_FALSE;
                 if (!pyrion_builtin_printc(vshell_ctx, '\n')) return AOS_FALSE;
-            }
+            } else {
+				if (!pyrion_builtin_printc(vshell_ctx, '\n')) return AOS_FALSE;
+			}
         } else if (strcmp(cmd_buf, "clear") == 0) {
             if (!pyrion_clear(vshell_ctx, vshell_ctx->fb_cursor.bg_color)) return AOS_FALSE;
             if (!pyrion_set_cursor(vshell_ctx, 0, 0)) return AOS_FALSE;
-        } else {
+        } else if (strncmp(cmd_buf, "set-fsz", 7) == 0 || strcmp(cmd_buf, "set-fsz") == 0) {
+			if (*cmd_len < 8) { // "set-fsz "
+                if (!pyrion_builtin_print(vshell_ctx, "Usage: set-fsz <font size>\n")) return AOS_FALSE;
+            } else {
+				uint64_t size = kstr_to_u64(cmd_buf + 8, 10);
+				if (size > 64) {
+					if (!pyrion_builtin_print(vshell_ctx, "Error: Maximum supported size is '64'\n")) return AOS_FALSE;
+				} else {
+					pyrion_set_builtins_font_size(vshell_ctx, (uint32_t)(size & 0xFFFFFFFF));
+					need_reload_vshell = AOS_TRUE;
+				}
+			}
+		} else {
             if (!pyrion_builtin_print(vshell_ctx, "Unknown Command: ")) return AOS_FALSE;
             if (!pyrion_builtin_print(vshell_ctx, cmd_buf)) return AOS_FALSE;
             if (!pyrion_builtin_printc(vshell_ctx, '\n')) return AOS_FALSE;
@@ -155,7 +169,7 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
 
     // Reset
     *cmd_len = 0;
-    if (!pyrion_builtin_print(vshell_ctx, prompt)) return AOS_FALSE;
+	if (!pyrion_builtin_print(vshell_ctx, prompt)) return AOS_FALSE;
 	return AOS_TRUE;
 }
 
@@ -234,20 +248,35 @@ void start_vshell(void) {
     char cmd_buf[512];
     int cmd_len = 0;
 
+	memset(cmd_buf, 0, sizeof(cmd_buf));
+
+	prompt = DEF_PROMPT;
+	last_cmd = 0;
+
     if (!pyrion_builtin_print(vshell_ctx, prompt)) {
 		pyrion_destroy_ctx(vshell_ctx);
 		return;
 	}
 
     vshell_running = AOS_TRUE;
+	need_reload_vshell = AOS_FALSE;
+
     while (vshell_running) {
-        if (!vshell_handle_shell((char*)cmd_buf, 512, &cmd_len)) break;
+		if (need_reload_vshell) {
+			memset(cmd_buf, 0, sizeof(cmd_buf));
+			if (!pyrion_clear(vshell_ctx, vshell_ctx->fb_cursor.bg_color)) break;
+            if (!pyrion_set_cursor(vshell_ctx, 0, 0)) break;
+			if (!pyrion_builtin_print(vshell_ctx, prompt)) break;
+
+			if (!pyrion_flush(vshell_ctx)) break;
+
+			need_reload_vshell = AOS_FALSE;
+			continue;
+		}
+
+        if (!vshell_handle_shell((char*)cmd_buf, sizeof(cmd_buf), &cmd_len)) break;
         if (!pyrion_flush(vshell_ctx)) break;
     }
 
     pyrion_destroy_ctx(vshell_ctx);
-	
-	vshell_ctx = NULL;
-	prompt = DEF_PROMPT;
-	last_cmd = 0;
 }

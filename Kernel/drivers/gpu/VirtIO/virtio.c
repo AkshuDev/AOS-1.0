@@ -1759,46 +1759,110 @@ aos_bool pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uin
 	return AOS_TRUE;
 }
 
-aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, struct pyrion_font* font) {
+aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t codepoint, struct pyrion_font* font, struct pyrion_glyph** out_glyph) {
 	if (!ctx || !font) return AOS_FALSE;
-	if (!ctx->valid || !ctx->usable || !ctx->device_set || !font->valid) return AOS_FALSE;
+	if (!ctx->valid || !ctx->usable || !ctx->device_set) return AOS_FALSE;
+	if (!font->valid || !font->glyphs) return AOS_FALSE;
+
 	if (ctx->controller_idx >= controller_count || !controllers) return AOS_FALSE;
 	virtio_controller* kvc = &controllers[ctx->controller_idx];
 
-	if (x + font->glyph_w > ctx->viewport.x + ctx->viewport.width || y + font->glyph_h > ctx->viewport.y + ctx->viewport.height) return AOS_FALSE; // Out of Bounds
+	struct pyrion_glyph* glyph = NULL;
+	for (uint64_t i = 0; i < font->glyph_count; i++) {
+		struct pyrion_glyph* g = &font->glyphs[i];
+		if (!g->valid) continue;
+
+		if (g->codepoint == codepoint) {
+			glyph = g;
+			break;
+		}
+	}
+
+	if (!glyph) {
+		if (!font->fallback_glyph.valid) return AOS_FALSE;
+		glyph = &font->fallback_glyph;
+	}
+	
+	uint32_t scale = font->font_size / font->base_font_size;
+	if (scale == 0) scale = 1;
+
+	if ((int64_t)((int64_t)x + (int64_t)glyph->bearing_x * scale) < 0) return AOS_FALSE;
+	uint32_t draw_x = x + glyph->bearing_x * scale;
+	uint32_t draw_y = y * scale;
+	uint32_t draw_width = glyph->width * scale;
+	uint32_t draw_height = glyph->height * scale;
+	
+	if (
+		draw_x < ctx->viewport.x ||
+		draw_y < ctx->viewport.y ||
+		draw_x + draw_width > ctx->viewport.x + ctx->viewport.width ||
+		draw_y + draw_height > ctx->viewport.y + ctx->viewport.height
+	) return AOS_FALSE; // Out of Bounds
+
+	if (out_glyph) *out_glyph = glyph;
 
     if (!kvc->acceleration_present) {
         if (!ctx->fb_info.addr) return AOS_FALSE;
 		if (!font->atlas) return AOS_FALSE;
 
-		for (uint64_t row = 0; row < font->glyph_h; row++) {
-			uint32_t* src = (uint32_t*)((uintptr_t)font->atlas + (((atlas_y + row) * font->w) + atlas_x) * sizeof(uint32_t));
-			uint32_t* dst = (uint32_t*)((uintptr_t)ctx->fb_info.addr + (((y + row) * ctx->fb_info.width) + x) * (ctx->fb_info.bpp / 8));
+		for (uint64_t row = 0; row < glyph->height; row++) {
+			uint32_t* src = (uint32_t*)((uintptr_t)font->atlas + (((glyph->atlas_y + row) * font->w) + glyph->atlas_x) * sizeof(uint32_t));
+			
+			for (uint32_t col = 0; col < glyph->width; col++) {
+				uint32_t src_pixel = src[col];
 
-			for (uint32_t col = 0; col < font->glyph_w; col++) {
-				uint32_t pixel = src[col];
+				uint8_t sr = src_pixel & 0xFF;
+				uint8_t sg = (src_pixel >> 8) & 0xFF;
+				uint8_t sb = (src_pixel >> 16) & 0xFF;
+				uint8_t sa = (src_pixel >> 24) & 0xFF;
 
-				if ((pixel >> 24) != 0) // alpha != 0
-					dst[col] = pixel;
+				if (sa == 0) continue;
+
+				for (uint32_t sy = 0; sy < scale; sy++) {
+					uint32_t* dst = (uint32_t*)((uintptr_t)ctx->fb_info.addr + (((draw_y + row * scale + sy) * ctx->fb_info.width) + draw_x + col * scale) * (ctx->fb_info.bpp / 8));
+					
+					for (uint32_t sx = 0; sx < scale; sx++) {
+						uint32_t dst_pixel = dst[sx];
+						
+						uint8_t dr = dst_pixel & 0xFF;
+						uint8_t dg = (dst_pixel >> 8) & 0xFF;
+						uint8_t db = (dst_pixel >> 16) & 0xFF;
+						uint8_t da = (dst_pixel >> 24) & 0xFF;
+
+						if (sa == 0xFF) {
+							dst[sx] = rgba_to_u32(sr, sg, sb, 0xFF);
+							continue;
+						}
+
+						uint8_t or = (uint8_t)(((uint32_t)sr * sa + (uint32_t)dr * (0xFF - sa) + 0x7F) / 0xFF);
+						uint8_t og = (uint8_t)(((uint32_t)sg * sa + (uint32_t)dg * (0xFF - sa) + 0x7F) / 0xFF);
+						uint8_t ob = (uint8_t)(((uint32_t)sb * sa + (uint32_t)db * (0xFF - sa) + 0x7F) / 0xFF);
+						uint8_t oa = (uint8_t)(sa + ((uint32_t)da * (0xFF - sa) + 0x7F) / 0xFF);
+
+						dst[sx] = rgba_to_u32(or, og, ob, oa);
+					}
+				}
 			}
 		}
         
 		ctx->flush_needed = AOS_TRUE;
         return AOS_TRUE;
     }
-    uint32_t args[VIRGL_CMD_RESOURCE_COPY_REGION_SIZE] = {0};
+    
+	// TODO: Add Scaling in VirGL path
+	uint32_t args[VIRGL_CMD_RESOURCE_COPY_REGION_SIZE] = {0};
     args[VIRGL_CMD_RCR_DST_RES_HANDLE] = ctx->res_id_3d; // Destination (The Window)
     args[VIRGL_CMD_RCR_DST_LEVEL] = 0; // Dest level
-    args[VIRGL_CMD_RCR_DST_X] = x; // Dest X
-    args[VIRGL_CMD_RCR_DST_Y] = y; // Dest Y
+    args[VIRGL_CMD_RCR_DST_X] = draw_x; // Dest X
+    args[VIRGL_CMD_RCR_DST_Y] = draw_y; // Dest Y
     args[VIRGL_CMD_RCR_DST_Z] = 0; // Dest Z
     args[VIRGL_CMD_RCR_SRC_RES_HANDLE] = font->res_id; // Source (The Font Atlas)
     args[VIRGL_CMD_RCR_SRC_LEVEL] = 0; // Source level
-    args[VIRGL_CMD_RCR_SRC_X] = atlas_x; // Source X (Where char is in atlas)
-    args[VIRGL_CMD_RCR_SRC_Y] = atlas_y; // Source Y
+    args[VIRGL_CMD_RCR_SRC_X] = glyph->atlas_x; // Source X (Where char is in atlas)
+    args[VIRGL_CMD_RCR_SRC_Y] = glyph->atlas_y; // Source Y
     args[VIRGL_CMD_RCR_SRC_Z] = 0; // Source Z
-    args[VIRGL_CMD_RCR_SRC_W] = font->glyph_w; // Width of char
-    args[VIRGL_CMD_RCR_SRC_H] = font->glyph_h; // Height of char
+    args[VIRGL_CMD_RCR_SRC_W] = glyph->width; // Width of char
+    args[VIRGL_CMD_RCR_SRC_H] = glyph->height; // Height of char
     args[VIRGL_CMD_RCR_SRC_D] = 1; // Depth
 
     pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_RESOURCE_COPY_REGION, VIRTIO_VIRGL_OBJECT_NULL, args, VIRGL_CMD_RESOURCE_COPY_REGION_SIZE);
@@ -1829,30 +1893,25 @@ void pyrion_destroy_font_virtio(struct pyrion_ctx* ctx, struct pyrion_font* font
     unref->resource_id = font->res_id;
 
     if (!virtio_submit_sync(kvc, slot, sizeof(*unref), sizeof(struct virtio_gpu_ctrl_hdr))) return;
-
-    if (font->atlas) {
-        avmf_free((uint64_t)font->atlas);
-		font->atlas = NULL;
-		font->atlas_phys = 0;
-    }
 }
 
 aos_bool pyrion_upload_font_virtio(struct pyrion_ctx* ctx, struct pyrion_font font, struct pyrion_font* out) {
 	if (!ctx || !out) return AOS_FALSE;
 	if (!ctx->valid || !ctx->usable || !ctx->device_set) return AOS_FALSE;
-	if (!font.atlas || !font.atlas_phys || font.glyph_w <= 0 || font.glyph_h <= 0 || font.w <= 0 || font.h <= 0 || font.valid) return AOS_FALSE;
+	if (!font.atlas || !font.atlas_phys || font.w <= 0 || font.h <= 0 || font.valid) return AOS_FALSE;
 	if (ctx->controller_idx >= controller_count || !controllers) return AOS_FALSE;
 	virtio_controller* kvc = &controllers[ctx->controller_idx];
-    uint32_t res_id = ctx->ctx_id + RES_ID_FONT_BASE;
 
 	*out = font;
-	out->res_id = res_id;
-
 	if (!kvc->acceleration_present) {
+		out->res_id = 0;
 		out->valid = AOS_TRUE;
 		return AOS_TRUE;
 	}
 	out->valid = AOS_FALSE;
+
+	uint32_t res_id = ctx->ctx_id + RES_ID_FONT_BASE;
+	out->res_id = res_id;
 
 	uint64_t slot = wait_for_free_buf(kvc);
 

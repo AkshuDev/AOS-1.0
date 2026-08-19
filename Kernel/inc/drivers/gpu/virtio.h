@@ -2020,7 +2020,7 @@ aos_bool pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect viewp
 aos_bool pyrion_flush_virtio(struct pyrion_ctx* ctx) __attribute__((used));
 aos_bool pyrion_clear_virtio(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));
 aos_bool pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));
-aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t atlas_x, uint32_t atlas_y, struct pyrion_font* font) __attribute__((used));
+aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t codepoint, struct pyrion_font* font, struct pyrion_glyph** out_glyph) __attribute__((used));
 void pyrion_destroy_font_virtio(struct pyrion_ctx* ctx, struct pyrion_font* font) __attribute__((used));
 aos_bool pyrion_upload_font_virtio(struct pyrion_ctx* ctx, struct pyrion_font font, struct pyrion_font* out) __attribute__((used));
 aos_bool pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));

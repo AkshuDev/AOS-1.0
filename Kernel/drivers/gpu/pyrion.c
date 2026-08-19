@@ -16,34 +16,83 @@ extern uint8_t font8x16[256][16];
 
 static struct gpu_device* gdevice = NULL;
 
-static uint32_t* create_font_atlas_rgba(uint64_t* out_phys) {
-    uint32_t atlas_w = 128; // 16 chars * 8 pixels
+static aos_bool create_default_builtin_font(struct pyrion_font* out) {
+	if (!out) return AOS_FALSE;
+	memset(out, 0, sizeof(*out));
+
+	uint32_t atlas_w = 128; // 16 chars * 8 pixels
     uint32_t atlas_h = 256; // 16 rows * 16 pixels
     size_t size = atlas_w * atlas_h * sizeof(uint32_t);
 
-    uint32_t* atlas = (uint32_t*)avmf_alloc(size, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, out_phys);
+	out->w = atlas_w;
+	out->h = atlas_h;
+	out->line_height = 16;
+	out->line_gap = 0;
+	out->font_size = 16;
+	out->base_font_size = 16;
+
+    uint32_t* atlas = (uint32_t*)avmf_alloc(size, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW, &out->atlas_phys);
     if (!atlas) {
-        serial_printf("[PYRION] Font Alloc failed!\n");
-        return NULL;
+        serial_printf("[PYRION] Font Atlas Allocation failed!\n");
+        return AOS_FALSE;
     }
     memset(atlas, 0, size); // Clear with transparency
 
-    for (int char_idx = 0; char_idx < 256; char_idx++) {
-        // Calculate the character's position in the 16x16 grid
-        int grid_x = (char_idx % 16) * 8;
-        int grid_y = (char_idx / 16) * 16;
+	uint32_t glyph_count = 0;
+	for (uint32_t codepoint = 0; codepoint <= 0xFF; codepoint++) {
+		if (!kc_is_printable((char)codepoint)) continue;
+		glyph_count++;
+	}
 
-        for (int row = 0; row < 16; row++) {
-            uint8_t row_data = font8x16[char_idx][row];
-            for (int col = 0; col < 8; col++) {
-                int bit = (row_data >> (7 - col)) & 1;
+	struct pyrion_glyph* glyphs = (struct pyrion_glyph*)avmf_alloc(sizeof(struct pyrion_glyph) * glyph_count, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW, NULL);
+    if (!glyphs) {
+        serial_printf("[PYRION] Font Glyph list allocation failed!\n");
+		avmf_free((uint64_t)atlas);
+        return AOS_FALSE;
+    }
+	memset(glyphs, 0, sizeof(struct pyrion_glyph) * glyph_count);
+
+	out->atlas = (uint8_t*)atlas;
+	out->glyphs = glyphs;
+	out->glyph_count = glyph_count;
+
+	uint32_t gidx = 0;
+    for (uint32_t codepoint = 0; codepoint <= 0xFF; codepoint++) {
+		if (!kc_is_printable((char)codepoint)) continue;
+
+		struct pyrion_glyph* g = &glyphs[gidx++];
+		g->codepoint = codepoint;
+        g->width = 8;
+        g->height = 16;
+        g->bearing_x = 0;
+        g->bearing_y = 16;
+        g->advance_x = 8;
+        g->advance_y = 0;
+
+        // Calculate the character's position in the 16x16 grid
+        uint32_t atlas_x = (codepoint % 16) * 8;
+        uint32_t atlas_y = (codepoint / 16) * 16;
+
+		g->atlas_x = atlas_x;
+        g->atlas_y = atlas_y;
+
+        for (uint32_t row = 0; row < 16; row++) {
+            uint8_t row_data = font8x16[codepoint][row];
+            for (uint32_t col = 0; col < 8; col++) {
+                uint32_t bit = (row_data >> (7 - col)) & 1;
                 // Offset into the 128-wide buffer
-                uint32_t pixel_idx = (grid_y + row) * atlas_w + (grid_x + col);
+                uint32_t pixel_idx = (atlas_y + row) * atlas_w + (atlas_x + col);
                 atlas[pixel_idx] = bit ? 0xFFFFFFFF : 0x00000000;
             }
         }
+
+		g->valid = AOS_TRUE;
+
+		if (codepoint == '?') out->fallback_glyph = *g;
     }
-    return atlas;
+
+    out->valid = AOS_TRUE;
+    return AOS_TRUE;
 }
 
 static void pyrion_extract_rgba(enum pyrion_color_format cf, uint32_t color, uint8_t* r, uint8_t* g, uint8_t* b, uint8_t* a) {
@@ -136,8 +185,7 @@ void pyrion_destroy_ctx(struct pyrion_ctx* ctx) {
     if (!ctx) return;
 
     if (ctx->font.valid) {
-        if (ctx->font.atlas) avmf_free((uint64_t)ctx->font.atlas);
-        ctx->font.valid = AOS_FALSE;
+        pyrion_destroy_font(ctx, &ctx->font);
     }
     gdevice->pyrion.destroy_ctx(ctx);
 }
@@ -221,35 +269,48 @@ aos_bool pyrion_builtin_printc(struct pyrion_ctx* ctx, char c) {
 		if (!pyrion_set_default_builtins_font(ctx)) return AOS_FALSE;
     }
 
+	uint32_t scale = ctx->font.font_size / ctx->font.base_font_size;
+	if (scale == 0) scale = 1;
+
+	uint32_t line_height = ctx->font.line_height * scale;
+	uint32_t line_gap = ctx->font.line_gap * scale;
+
 	switch (c) {
 		case '\n': {
-			ctx->fb_cursor.x = 0;
-			ctx->fb_cursor.y += ctx->font.glyph_h;
-			return AOS_TRUE;
-		}
-		case ' ': {
-			ctx->fb_cursor.x += ctx->font.glyph_w;
-        	return AOS_TRUE;
-		}
-		case '\b': {
+			uint32_t advance_value = line_height + line_gap;
 
+			if (ctx->fb_cursor.y + advance_value <= ctx->viewport.height) {
+				ctx->fb_cursor.x = 0;
+				ctx->fb_cursor.y += advance_value;
+				return AOS_TRUE;
+			}
+			return AOS_FALSE;
+		}
+		case '\r': {
+            ctx->fb_cursor.x = 0;
+            return AOS_TRUE;
 		}
 		default: break;
 	}
-    
-    uint8_t idx = (uint8_t)c;
 
-	uint32_t columns = ctx->font.w / ctx->font.glyph_w;
-    uint32_t atlas_x = (idx % columns) * ctx->font.glyph_w;
-    uint32_t atlas_y = (idx / columns) * ctx->font.glyph_h;
-    if (!gdevice->pyrion.draw_char(ctx, ctx->fb_cursor.x, ctx->fb_cursor.y, atlas_x, atlas_y, &ctx->font)) return AOS_FALSE;
+	struct pyrion_glyph* g_rendered = NULL;
+    if (!gdevice->pyrion.draw_char(ctx, ctx->fb_cursor.x + ctx->viewport.x, ctx->fb_cursor.y + ctx->viewport.y, (uint32_t)c, &ctx->font, &g_rendered)) return AOS_FALSE;
 
-    ctx->fb_cursor.x += ctx->font.glyph_w;
+	if (!g_rendered) return AOS_FALSE;
+	if (!g_rendered->valid) return AOS_FALSE;
 
-    if (ctx->fb_cursor.x + ctx->font.glyph_w > ctx->display_info.width) {
-        ctx->fb_cursor.x = 0;
-        ctx->fb_cursor.y += ctx->font.glyph_h;
-    }
+	uint32_t advance_x = g_rendered->advance_x * scale;
+
+	if (ctx->fb_cursor.x + advance_x > ctx->viewport.width) {
+		if (ctx->fb_cursor.y + line_height + line_gap > ctx->viewport.height) {
+			return AOS_FALSE;
+		} else {
+			ctx->fb_cursor.x = 0;
+			ctx->fb_cursor.y += line_height + line_gap;
+		}
+	} else {
+		ctx->fb_cursor.x += advance_x;
+	}
 	return AOS_TRUE;
 }
 
@@ -447,14 +508,32 @@ aos_bool pyrion_builtin_printf(struct pyrion_ctx* ctx, const char* fmt, ...) {
 
 aos_bool pyrion_set_builtins_font(struct pyrion_ctx* ctx, struct pyrion_font* font) {
 	if (!ctx || !font) return AOS_FALSE;
-	if (!ctx->valid || !font->valid || font->w < 1 || font->h < 1 || font->glyph_h < 1 || font->glyph_w < 1) return AOS_FALSE;
-	if (!font->atlas || !font->atlas_phys) return AOS_FALSE;
+	
+	if (
+		!ctx->valid ||
+        !font->valid ||
+        !font->atlas ||
+        !font->atlas_phys ||
+        !font->glyphs ||
+        font->glyph_count == 0 ||
+        font->w == 0 ||
+        font->h == 0 ||
+        font->line_height == 0
+	) {
+
+        return AOS_FALSE;
+    }
 
 	if (ctx->font.valid) {
 		pyrion_destroy_font(ctx, &ctx->font);
 	}
 	ctx->font = *font;
 	return AOS_TRUE;
+}
+
+aos_bool pyrion_set_builtins_font_size(struct pyrion_ctx* ctx, uint32_t size) {
+	if (!ctx || size < 1) return AOS_FALSE;
+	return pyrion_set_font_size(ctx, &ctx->font, size);
 }
 
 aos_bool pyrion_set_default_builtins_font(struct pyrion_ctx* ctx) {
@@ -465,19 +544,18 @@ aos_bool pyrion_set_default_builtins_font(struct pyrion_ctx* ctx) {
 		pyrion_destroy_font(ctx, &ctx->font);
 	}
 	
-	struct pyrion_font f = {
-		.glyph_h = 16,
-		.glyph_w = 8,
-		.w = 128,
-		.h = 256
-	};
-	f.atlas = create_font_atlas_rgba(&f.atlas_phys);
-	if (!f.atlas || !f.atlas_phys) {
+	struct pyrion_font f = {0};
+	if (!create_default_builtin_font(&f)) {
 		serial_print("[PYRION] Failed to create font!\n");
 		return AOS_FALSE;
 	}
+
 	serial_print("[PYRION] Uploading Font...\n");
+	f.valid = AOS_FALSE;
 	if (!gdevice->pyrion.upload_font(ctx, f, &ctx->font)) {
+		if (f.atlas) avmf_free((uint64_t)f.atlas);
+		if (f.glyphs && f.glyph_count > 0) avmf_free((uint64_t)f.glyphs);
+
 		serial_print("[PYRION] Failed to upload font!\n");
 		return AOS_FALSE;
 	}
@@ -494,6 +572,28 @@ aos_bool pyrion_upload_font(struct pyrion_ctx* ctx, struct pyrion_font font, str
 void pyrion_destroy_font(struct pyrion_ctx* ctx, struct pyrion_font* font) {
 	if (!ctx || !font) return;
 	gdevice->pyrion.destroy_font(ctx, font);
+
+	if (font->atlas) {
+		avmf_free((uint64_t)font->atlas);
+		font->atlas = NULL;
+		font->atlas_phys = 0;
+	}
+
+	if (font->glyphs && font->glyph_count > 0) {
+		avmf_free((uint64_t)font->glyphs);
+		font->glyphs = NULL;
+		font->glyph_count = 0;
+	}
+
+	font->valid = AOS_FALSE;
+}
+
+aos_bool pyrion_set_font_size(struct pyrion_ctx* ctx, struct pyrion_font* font, uint32_t size) {
+	if (!ctx || !font || size < 1) return AOS_FALSE;
+	if (!font->valid) return AOS_FALSE;
+
+	font->font_size = size;
+	return AOS_TRUE;
 }
 
 aos_bool pyrion_switch_off(void) {
