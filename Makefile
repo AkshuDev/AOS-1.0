@@ -26,6 +26,9 @@ BIN_DIR := Bin
 BUILD_DIR := Build
 
 DISK := $(BIN_DIR)/disk.pbfs
+TOTAL_DISK_BLOCKS := 32768
+
+FSROOT_DIR := FSRoot
 
 .PHONY: all clean init run build build_uefi build_mbr
 
@@ -42,11 +45,24 @@ $(BIN_DIR):
 $(DISK): $(MBR_BOOTLOADER_STAGE1) $(MBR_BOOTLOADER_STAGE2) $(MBR_BOOTLOADER_STAGE3) $(AOS_KERNEL)
 	@echo "Creating+Formatting AOS Disk and adding Kernel..."
 	$(PBFS_CLI) $(DISK) \
-		-bs 512 -tb 16384 -dn AOS_DISK -rkt -rbp 1024 2048 \
+		-bs 512 -tb $(TOTAL_DISK_BLOCKS) -dn AOS_DISK -rkt -rbp 1024 2048 \
 		-c -f \
 		--mbr -btl $(MBR_BOOTLOADER_STAGE1) \
 		-k $(AOS_KERNEL) AOS++
-	$(PBFS_CLI) $(DISK) -bs 512 -tb 16384 -dn AOS_DISK --permissions rw -ad /aos
+
+	@echo "Adding FS ROOT to AOS Disk..."
+	@find "$(FSROOT_DIR)" -mindepth 1 -type d -print0 | while IFS= read -r -d '' item; do \
+		path="/$${item#$(FSROOT_DIR)/}"; \
+		echo "Adding Folder: $$item to $$path"; \
+		$(PBFS_CLI) $(DISK) -bs 512 -tb $(TOTAL_DISK_BLOCKS) -dn AOS_DISK --type dir --permissions rws -ad "$$path"; \
+	done; \
+	@find "$(FSROOT_DIR)" -type f -print0 | while IFS= read -r -d '' item; do \
+		path="/$${item#$(FSROOT_DIR)/}"; \
+		echo "Adding File: $$item as $$path"; \
+		$(PBFS_CLI) $(DISK) -bs 512 -tb $(TOTAL_DISK_BLOCKS) -dn AOS_DISK --type file --permissions rs --name "$$path" -a "$$item"; \
+	done
+	@echo "Added FS ROOT to AOS Disk!"
+
 	@echo "Filling in the Bootloader partition..."
 	$(DD) if=$(MBR_BOOTLOADER_STAGE2) of=$(DISK) bs=512 seek=1024 conv=notrunc
 	$(DD) if=$(MBR_BOOTLOADER_STAGE3) of=$(DISK) bs=512 seek=2048 conv=notrunc
@@ -67,12 +83,23 @@ $(AOS_KERNEL):
 uefi: $(BUILD_DIR) $(BIN_DIR) $(UEFI_BOOTLOADER_EFI) $(AOS_KERNEL)
 	@echo "Creating+Formatting AOS Disk and adding Kernel (UEFI Bootloader)..."
 	$(PBFS_CLI) $(DISK) \
-		-bs 512 -tb 16384 -dn AOS_DISK -rkt -rbp 1024 2048 \
+		-bs 512 -tb $(TOTAL_DISK_BLOCKS) -dn AOS_DISK -rkt -rbp 1024 2048 \
 		-c -f \
 		--gpt -btl $(UEFI_BOOTLOADER_EFI) \
-		--permissions rw -ad /root \
+		--permissions rw \
 		-k $(AOS_KERNEL) AOS++
-	$(PBFS_CLI) $(DISK) -bs 512 -tb 16384 -dn AOS_DISK --permissions rw -ad /aos
+	@echo "Adding FS ROOT to AOS Disk..."
+	@find "$(FSROOT_DIR)" -mindepth 1 -type d -print0 | while IFS= read -r -d '' item; do \
+		path="/$${item#$(FSROOT_DIR)/}"; \
+		echo "Adding Folder: $$item to $$path"; \
+		$(PBFS_CLI) $(DISK) -bs 512 -tb $(TOTAL_DISK_BLOCKS) -dn AOS_DISK --type dir --permissions rws -ad "$$path"; \
+	done; \
+	find "$(FSROOT_DIR)" -type f -print0 | while IFS= read -r -d '' item; do \
+		path="/$${item#$(FSROOT_DIR)/}"; \
+		echo "Adding File: $$item as $$path"; \
+		$(PBFS_CLI) $(DISK) -bs 512 -tb $(TOTAL_DISK_BLOCKS) -dn AOS_DISK --type file --permissions rs --name "$$path" -a "$$item"; \
+	done
+	@echo "Added FS ROOT to AOS Disk!"
 	@echo "DONE!"
 
 clean:
