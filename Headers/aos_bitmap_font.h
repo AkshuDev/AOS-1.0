@@ -9,11 +9,22 @@
 #define AOS_BITMAP_FONT_TRUE 1
 #define AOS_BITMAP_FONT_FALSE 0
 
+enum aos_bitmap_font_format {
+	AOSBF_FORMAT_INVALID = 0,
+    AOSBF_FORMAT_MONO,
+    AOSBF_FORMAT_GRAY2,
+    AOSBF_FORMAT_GRAY4,
+    AOSBF_FORMAT_A8,
+    AOSBF_FORMAT_RGB,
+    AOSBF_FORMAT_RGBA
+};
+
 struct aos_bitmap_font_hdr {
 	char magic[AOS_BITMAP_FONT_MAGIC_LEN]; // Signature
 	uint32_t version; // Version
 	uint16_t revision; // Revision
 
+	uint64_t string_table; // An Offset in the file pointing to the string table
 	uint64_t font_name; // An Offset into the string table specifying the name of the font
 	uint64_t font_family_name; // An Offset into the string table specifying the name of the font family
 	uint64_t author_name; // An Offset into the string table specifying the name of the author of the font
@@ -42,6 +53,7 @@ struct aos_bitmap_font_glyph {
 
     uint16_t width; // Glyph Width
     uint16_t height; // Glyph Height
+	uint16_t pitch; // Glyph Pitch
 
     int16_t bearing_x; // Glyph X Bearing
     int16_t bearing_y; // Glyph Y Bearing
@@ -49,5 +61,7 @@ struct aos_bitmap_font_glyph {
     int16_t advance_x; // Glyph - X Advancement value after rendering
     int16_t advance_y; // Glyph - Y Advancement value after rendering
 
-	uint8_t valid;
+	enum aos_bitmap_font_format format; // Format used for packing
+
+	uint8_t valid; // Is Glyph Valid
 };

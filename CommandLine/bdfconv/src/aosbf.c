@@ -23,18 +23,23 @@ static char* str_table = NULL;
 static uint64_t str_table_off = 0;
 static uint64_t str_table_capacity = 0;
 
-#define AOSBF_ATLAS_INITIAL_W 256
-#define AOSBF_ATLAS_INITIAL_H 256
+#define AOSBF_ATLAS_INITIAL_SIZE 4096
 #define AOSBF_ATLAS_PADDING 1
 
-static uint8_t* atlas = NULL;
+static uint8_t* atlas = NULL; // Not exactly an atlas
+static uint64_t atlas_off = 0;
+static uint64_t atlas_cap = 0;
 
-static uint32_t atlas_w = 0;
-static uint32_t atlas_h = 0;
-
-static uint32_t atlas_x = 0;
-static uint32_t atlas_y = 0;
-static uint32_t atlas_row_h = 0;
+static enum aos_bitmap_font_format get_bitmap_aosbf_cformat(FT_Pixel_Mode pixel_mode) {
+	switch (pixel_mode) {
+		case FT_PIXEL_MODE_MONO: return AOSBF_FORMAT_MONO;
+		case FT_PIXEL_MODE_GRAY: return AOSBF_FORMAT_A8;
+		case FT_PIXEL_MODE_GRAY2: return AOSBF_FORMAT_GRAY2;
+		case FT_PIXEL_MODE_GRAY4: return AOSBF_FORMAT_GRAY4;
+		
+		default: return AOSBF_FORMAT_INVALID;
+	}
+}
 
 static uint64_t push_string(const char* str) {
     if (!str) return UINT64_MAX;
@@ -68,87 +73,27 @@ static uint64_t push_string(const char* str) {
     return ret;
 }
 
-static bool atlas_resize(uint32_t new_w, uint32_t new_h) {
-    if (new_w == 0 || new_h == 0) return false;
-    if (new_w < atlas_w || new_h < atlas_h) return false;
+static bool atlas_resize(uint64_t new_cap) {
+    if (new_cap == 0 || new_cap < atlas_cap) return false;
+	if (new_cap == atlas_cap) return true;
 
-    uint64_t pixel_count = (uint64_t)new_w * new_h;
-    if (pixel_count > SIZE_MAX / sizeof(uint32_t)) return false;
-    size_t new_size = (size_t)pixel_count * sizeof(uint32_t);
-
-    uint8_t* new_atlas = calloc(sizeof(uint8_t), new_size);
+    uint8_t* new_atlas = realloc(atlas, new_cap);
     if (!new_atlas) return false;
 
-	if (atlas) {
-        for (uint32_t y = 0; y < atlas_h; y++) {
-            memcpy(new_atlas + ((size_t)y * new_w * sizeof(uint32_t)), atlas + ((size_t)y * atlas_w * sizeof(uint32_t)), (size_t)atlas_w * sizeof(uint32_t));
-        }
-
-        free(atlas);
-    }
+	memset(new_atlas + atlas_cap, 0, new_cap - atlas_cap);
 
     atlas = new_atlas;
-    atlas_w = new_w;
-    atlas_h = new_h;
+    atlas_cap = new_cap;
 
     return true;
 }
 
 static bool atlas_init(void) {
     atlas = NULL;
+    atlas_off = 0;
+	atlas_cap = 0;
 
-    atlas_w = 0;
-    atlas_h = 0;
-
-    atlas_x = 0;
-    atlas_y = 0;
-    atlas_row_h = 0;
-
-    return atlas_resize(AOSBF_ATLAS_INITIAL_W, AOSBF_ATLAS_INITIAL_H);
-}
-
-static bool atlas_ensure_space(uint32_t width, uint32_t height, uint32_t* out_x, uint32_t* out_y) {
-    if (!out_x || !out_y) return false;
-    if (width == 0 || height == 0) return false;
-
-    uint64_t padded_w = (uint64_t)width + AOSBF_ATLAS_PADDING;
-    uint64_t padded_h = (uint64_t)height + AOSBF_ATLAS_PADDING;
-
-    if (padded_w > UINT32_MAX || padded_h > UINT32_MAX) return false;
-
-    if ((uint64_t)atlas_x + padded_w > atlas_w) {
-        atlas_x = 0;
-        if (atlas_row_h > UINT32_MAX - AOSBF_ATLAS_PADDING) return false;
-        
-		atlas_y += atlas_row_h + AOSBF_ATLAS_PADDING;
-        atlas_row_h = 0;
-    }
-
-    uint64_t required_h = (uint64_t)atlas_y + padded_h;
-
-    if (required_h > atlas_h) {
-        uint32_t new_h = atlas_h;
-        if (new_h == 0) new_h = AOSBF_ATLAS_INITIAL_H;
-
-        while ((uint64_t)new_h < required_h) {
-            if (new_h > UINT32_MAX / 2)
-                new_h = (uint32_t)required_h;
-            else
-                new_h += 256;
-        }
-
-        if (!atlas_resize(atlas_w, new_h)) return false;
-    }
-
-    if ((uint64_t)width > atlas_w) return false;
-
-    *out_x = atlas_x;
-    *out_y = atlas_y;
-
-    atlas_x += width + AOSBF_ATLAS_PADDING;
-    if (height > atlas_row_h) atlas_row_h = height;
-
-    return true;
+    return atlas_resize(AOSBF_ATLAS_INITIAL_SIZE);
 }
 
 static struct atlas_position push_bitmap(const FT_Bitmap* bitmap) {
@@ -161,38 +106,20 @@ static struct atlas_position push_bitmap(const FT_Bitmap* bitmap) {
     if (!bitmap) return invalid;
     if (bitmap->width == 0 || bitmap->rows == 0) return invalid;
 
-    uint32_t x = 0;
-    uint32_t y = 0;
+	uint64_t size = (uint64_t)bitmap->pitch * bitmap->rows;
+	uint64_t required = atlas_off + size;
 
-    if (!atlas_ensure_space(bitmap->width, bitmap->rows, &x, &y)) return invalid;
+	if (required > atlas_cap) {
+		if (!atlas_resize(required)) return invalid;
+	}
 
-    for (uint32_t src_y = 0; src_y < bitmap->rows; src_y++) {
-        for (uint32_t src_x = 0; src_x < bitmap->width; src_x++) {
-            uint8_t alpha = 0;
+    uint64_t offset = atlas_off;
+    memcpy(atlas + offset, bitmap->buffer, size);
+    atlas_off += size;
 
-            if (bitmap->pixel_mode == FT_PIXEL_MODE_GRAY) {
-                alpha = bitmap->buffer[src_y * bitmap->pitch + src_x];
-            } else if (bitmap->pixel_mode == FT_PIXEL_MODE_MONO) {
-                uint8_t byte = bitmap->buffer[src_y * bitmap->pitch + (src_x >> 3)];
-                uint8_t bit = 7 - (src_x & 7);
-                alpha = (byte & (1 << bit)) ? 255 : 0;
-            } else {
-                fprintf(stderr, "Error: Unsupported FreeType bitmap pixel mode: %u\n", bitmap->pixel_mode);
-                return invalid;
-            }
-
-            size_t dst = (((size_t)y + src_y) * atlas_w + ((size_t)x + src_x)) * 4;
-
-            atlas[dst + 0] = 255;
-            atlas[dst + 1] = 255;
-            atlas[dst + 2] = 255;
-            atlas[dst + 3] = alpha;
-        }
-    }
-
-    struct atlas_position position = {
-        .x = x,
-        .y = y,
+    struct atlas_position position = { // Take advantage of aosbf
+        .x = offset,
+        .y = 0,
 		.valid = true
     };
 
@@ -312,6 +239,12 @@ static bool build_glyphs(FT_Face face, struct aos_bitmap_font_glyph* glyphs, uin
 			continue;
 		}
 
+		enum aos_bitmap_font_format font_format = get_bitmap_aosbf_cformat(slot->bitmap.pixel_mode);
+		if (font_format == AOSBF_FORMAT_INVALID) {
+			fprintf(stderr, "Error: Unsupported/Invalid font format for glyph U+%04lX\n", charcode);
+            return false;
+		}
+
         struct atlas_position pos = push_bitmap(&slot->bitmap);
 
         if (!pos.valid) {
@@ -324,12 +257,15 @@ static bool build_glyphs(FT_Face face, struct aos_bitmap_font_glyph* glyphs, uin
 
         glyph->width = (uint16_t)slot->bitmap.width;
         glyph->height = (uint16_t)slot->bitmap.rows;
+		glyph->pitch = (uint16_t)slot->bitmap.pitch;
 
         glyph->bearing_x = (int16_t)slot->bitmap_left;
 		glyph->bearing_y = (int16_t)slot->bitmap_top;
 
         glyph->advance_x = (int16_t)(slot->advance.x >> 6);
         glyph->advance_y = (int16_t)(slot->advance.y >> 6);
+
+		glyph->format = font_format;
 
         glyph->valid = AOS_BITMAP_FONT_TRUE;
         glyph_no++;
@@ -351,14 +287,15 @@ static bool write_aosbf(const char* path, struct aos_bitmap_font_hdr* hdr, struc
     }
 
     uint64_t offset = sizeof(*hdr);
+	hdr->string_table = offset;
     offset += str_table_off;
 
     hdr->glyphs = sizeof(*hdr) + str_table_off;
     uint64_t glyph_size = (uint64_t)hdr->glyph_count * sizeof(struct aos_bitmap_font_glyph);
 
     uint64_t atlas_offset = hdr->glyphs + glyph_size;
-    hdr->total_w = atlas_w;
-    hdr->total_h = atlas_h;
+    hdr->total_w = atlas_off;
+    hdr->total_h = 1;
 	hdr->atlas = atlas_offset;
 
 	fseek(fp, 0, SEEK_SET);
@@ -388,7 +325,7 @@ static bool write_aosbf(const char* path, struct aos_bitmap_font_hdr* hdr, struc
 		}
     }
 
-    uint64_t atlas_size = (uint64_t)atlas_w * atlas_h * sizeof(uint32_t);
+    uint64_t atlas_size = (uint64_t)atlas_off;
 
     if (atlas_size > 0) {
         if (fwrite(atlas, atlas_size, 1, fp) < 1) {
@@ -407,7 +344,7 @@ static bool write_aosbf(const char* path, struct aos_bitmap_font_hdr* hdr, struc
     printf("\tHeader :  %zu bytes\n", sizeof(*hdr));
     printf("\tStrings:  %llu bytes\n", (unsigned long long)str_table_off);
     printf("\tGlyphs:   %llu bytes\n", (unsigned long long)glyph_size);
-    printf("\tAtlas:    %llu bytes (%ux%u RGBA8)\n", (unsigned long long)atlas_size, atlas_w, atlas_h);
+    printf("\tAtlas:    %llu bytes\n", (unsigned long long)atlas_size);
 
     printf("Total:    %llu bytes\n", (unsigned long long)(sizeof(*hdr) + str_table_off + glyph_size + atlas_size ));
 
@@ -462,13 +399,8 @@ bool build_aosbf(const char* output_path, FT_Face face) {
 
 		if (atlas) free(atlas);
 		atlas = NULL;
-
-		atlas_w = 0;
-		atlas_h = 0;
-
-		atlas_x = 0;
-		atlas_y = 0;
-		atlas_row_h = 0;
+		atlas_off = 0;
+		atlas_cap = 0;
 
 		return out;
 	}
