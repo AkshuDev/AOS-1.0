@@ -9,6 +9,13 @@
 #define AOS_BITMAP_FONT_TRUE 1
 #define AOS_BITMAP_FONT_FALSE 0
 
+/* NOTES:
+	1. AOSBF Atlas just means a shared 2D blob of data
+	2. X Coordinate in the Atlas is always a Byte Offset in the X direction
+	3. Y Coordinate in the Atlas is the row offset
+	4. Every Glyph Uses a tiny piece of the Atlas, where it has its own pitch, and format
+*/
+
 enum aos_bitmap_font_format {
 	AOSBF_FORMAT_INVALID = 0,
     AOSBF_FORMAT_MONO,
@@ -33,6 +40,9 @@ struct aos_bitmap_font_hdr {
 
 	int16_t line_gap; // The gap between lines
 	int16_t line_height; // The height of each line
+
+	int16_t ascent; // Ascent of the Font
+	int16_t descent; // Descent of the Font
 	
 	uint64_t comments; // An Offset into the string table specifying comments
 	uint16_t comment_count; // The number of comments
@@ -63,5 +73,6 @@ struct aos_bitmap_font_glyph {
 
 	enum aos_bitmap_font_format format; // Format used for packing
 
+	uint8_t is_fallback; // Is Glyph used as fallback
 	uint8_t valid; // Is Glyph Valid
 };

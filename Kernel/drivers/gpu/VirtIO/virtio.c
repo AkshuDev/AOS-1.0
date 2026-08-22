@@ -1759,57 +1759,71 @@ aos_bool pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uin
 	return AOS_TRUE;
 }
 
-aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t codepoint, struct pyrion_font* font, struct pyrion_glyph** out_glyph) {
-	if (!ctx || !font) return AOS_FALSE;
+aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t codepoint, struct pyrion_font* font, struct pyrion_glyph* glyph) {
+	if (!ctx || !font || !glyph) return AOS_FALSE;
 	if (!ctx->valid || !ctx->usable || !ctx->device_set) return AOS_FALSE;
-	if (!font->valid || !font->glyphs) return AOS_FALSE;
+	if (!font->valid) return AOS_FALSE;
+	if (!glyph->valid || glyph->codepoint != codepoint) return AOS_FALSE;
 
 	if (ctx->controller_idx >= controller_count || !controllers) return AOS_FALSE;
 	virtio_controller* kvc = &controllers[ctx->controller_idx];
 
-	struct pyrion_glyph* glyph = NULL;
-	for (uint64_t i = 0; i < font->glyph_count; i++) {
-		struct pyrion_glyph* g = &font->glyphs[i];
-		if (!g->valid) continue;
-
-		if (g->codepoint == codepoint) {
-			glyph = g;
-			break;
-		}
+	float scale = (float)font->font_size / (float)font->base_font_size;
+	if (scale <= 0.0f) {
+		serial_printf("[VirtIO:GPU] Calculated Font Scale <= 0 (Char U+%04lX)\n", codepoint);
+		return AOS_FALSE;
 	}
 
-	if (!glyph) {
-		if (!font->fallback_glyph.valid) return AOS_FALSE;
-		glyph = &font->fallback_glyph;
-	}
-	
-	uint32_t scale = font->font_size / font->base_font_size;
-	if (scale == 0) scale = 1;
+	int64_t bearing_x = (int64_t)kround(glyph->bearing_x * scale);
+	int64_t bearing_y = (int64_t)kround(glyph->bearing_y * scale);
 
-	if ((int64_t)((int64_t)x + (int64_t)glyph->bearing_x * scale) < 0) return AOS_FALSE;
-	uint32_t draw_x = x + glyph->bearing_x * scale;
-	uint32_t draw_y = y * scale;
-	uint32_t draw_width = glyph->width * scale;
-	uint32_t draw_height = glyph->height * scale;
+	int64_t draw_x_i = (int64_t)x + bearing_x;
+	int64_t draw_y_i = (int64_t)y - bearing_y;
+
+	if (draw_x_i < 0) {
+		serial_printf("[VirtIO:GPU] Char U+%04lX Has Invalid Bearing X! (%d) (Calculated Final Value: %d)\n", codepoint, glyph->bearing_x, draw_x_i);
+		return AOS_FALSE;
+	}
+	if (draw_y_i < 0) {
+		serial_printf("[VirtIO:GPU] Char U+%04lX Has Invalid Bearing Y! (%d) (Calculated Final Value: %d)\n", codepoint, glyph->bearing_y, draw_y_i);
+		return AOS_FALSE;
+	}
+
+	uint32_t draw_width = kmax((uint64_t)((uint32_t)kceil(glyph->width * scale)), 1);
+	uint32_t draw_height = kmax((uint64_t)((uint32_t)kceil(glyph->height * scale)), 1);
+
+	uint32_t draw_x = (uint32_t)draw_x_i;
+	uint32_t draw_y = (uint32_t)draw_y_i;
 	
 	if (
 		draw_x < ctx->viewport.x ||
 		draw_y < ctx->viewport.y ||
 		draw_x + draw_width > ctx->viewport.x + ctx->viewport.width ||
 		draw_y + draw_height > ctx->viewport.y + ctx->viewport.height
-	) return AOS_FALSE; // Out of Bounds
-
-	if (out_glyph) *out_glyph = glyph;
+	) {
+		serial_printf("[VirtIO:GPU] Cannot render outside viewport! (Char U+%04lX) (Draw-(%u, %u) Scale-(%u, %u) Viewport-(%u-%u, %u-%u)\n", codepoint, draw_x, draw_y, draw_width, draw_height, ctx->viewport.x, ctx->viewport.x + ctx->viewport.width, ctx->viewport.y, ctx->viewport.y + ctx->viewport.height);
+		return AOS_FALSE; // Out of Bounds
+	}
 
     if (!kvc->acceleration_present) {
-        if (!ctx->fb_info.addr) return AOS_FALSE;
-		if (!font->atlas) return AOS_FALSE;
+        if (!ctx->fb_info.addr) {
+			serial_printf("[VirtIO:GPU] No Frambuffer Address? (Char U+%04lX)\n", codepoint);
+			return AOS_FALSE;
+		}
+		if (!font->atlas) {
+			serial_printf("[VirtIO:GPU] No Font Atlas? (Char U+%04lX)\n", codepoint);
+			return AOS_FALSE;
+		}
 
-		for (uint64_t row = 0; row < glyph->height; row++) {
-			uint32_t* src = (uint32_t*)((uintptr_t)font->atlas + (((glyph->atlas_y + row) * font->w) + glyph->atlas_x) * sizeof(uint32_t));
-			
-			for (uint32_t col = 0; col < glyph->width; col++) {
-				uint32_t src_pixel = src[col];
+		for (uint64_t dy = 0; dy < draw_height; dy++) {
+			uint32_t src_y = (uint32_t)(dy / scale);
+			if (src_y >= glyph->height) src_y = glyph->height - 1;
+			uint32_t* src = (uint32_t*)((uintptr_t)font->atlas + (((glyph->atlas_y + src_y) * font->w) + glyph->atlas_x) * sizeof(uint32_t));
+
+			for (uint32_t dx = 0; dx < draw_width; dx++) {
+				uint32_t src_x = (uint32_t)(dx / scale);
+				if (src_x >= glyph->width) src_x = glyph->width - 1;
+				uint32_t src_pixel = src[src_x];
 
 				uint8_t sr = src_pixel & 0xFF;
 				uint8_t sg = (src_pixel >> 8) & 0xFF;
@@ -1818,30 +1832,25 @@ aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y,
 
 				if (sa == 0) continue;
 
-				for (uint32_t sy = 0; sy < scale; sy++) {
-					uint32_t* dst = (uint32_t*)((uintptr_t)ctx->fb_info.addr + (((draw_y + row * scale + sy) * ctx->fb_info.width) + draw_x + col * scale) * (ctx->fb_info.bpp / 8));
-					
-					for (uint32_t sx = 0; sx < scale; sx++) {
-						uint32_t dst_pixel = dst[sx];
-						
-						uint8_t dr = dst_pixel & 0xFF;
-						uint8_t dg = (dst_pixel >> 8) & 0xFF;
-						uint8_t db = (dst_pixel >> 16) & 0xFF;
-						uint8_t da = (dst_pixel >> 24) & 0xFF;
+				uint32_t* dst = (uint32_t*)((uintptr_t)ctx->fb_info.addr + (((draw_y + dy) * ctx->fb_info.width) + draw_x + dx) * (ctx->fb_info.bpp / 8));
+				uint32_t dst_pixel = dst[0];
 
-						if (sa == 0xFF) {
-							dst[sx] = rgba_to_u32(sr, sg, sb, 0xFF);
-							continue;
-						}
+				uint8_t dr = dst_pixel & 0xFF;
+				uint8_t dg = (dst_pixel >> 8) & 0xFF;
+				uint8_t db = (dst_pixel >> 16) & 0xFF;
+				uint8_t da = (dst_pixel >> 24) & 0xFF;
 
-						uint8_t or = (uint8_t)(((uint32_t)sr * sa + (uint32_t)dr * (0xFF - sa) + 0x7F) / 0xFF);
-						uint8_t og = (uint8_t)(((uint32_t)sg * sa + (uint32_t)dg * (0xFF - sa) + 0x7F) / 0xFF);
-						uint8_t ob = (uint8_t)(((uint32_t)sb * sa + (uint32_t)db * (0xFF - sa) + 0x7F) / 0xFF);
-						uint8_t oa = (uint8_t)(sa + ((uint32_t)da * (0xFF - sa) + 0x7F) / 0xFF);
-
-						dst[sx] = rgba_to_u32(or, og, ob, oa);
-					}
+				if (sa == 0xFF) {
+					dst[0] = rgba_to_u32(sr, sg, sb, 0xFF);
+					continue;
 				}
+
+				uint8_t or = (uint8_t)(((uint32_t)sr * sa + (uint32_t)dr * (0xFF - sa) + 0x7F) / 0xFF);
+				uint8_t og = (uint8_t)(((uint32_t)sg * sa + (uint32_t)dg * (0xFF - sa) + 0x7F) / 0xFF);
+				uint8_t ob = (uint8_t)(((uint32_t)sb * sa + (uint32_t)db * (0xFF - sa) + 0x7F) / 0xFF);
+				uint8_t oa = (uint8_t)(sa + ((uint32_t)da * (0xFF - sa) + 0x7F) / 0xFF);
+
+				dst[0] = rgba_to_u32(or, og, ob, oa);
 			}
 		}
         

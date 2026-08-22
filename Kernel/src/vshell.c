@@ -10,16 +10,21 @@
 #endif
 #define PBFS_NDRIVERS
 #include <PBFS/headers/pbfs-fs.h>
+#include <PBFS/headers/pbfs.h>
 #undef PBFS_NDRIVERS
 
+#include <inc/mm/avmf.h>
+
 #include <inc/core/kfuncs.h>
+#include <inc/core/aos.h>
 #include <inc/drivers/gpu/apis/pyrion.h>
-#include <inc/core/vshell.h>
 #include <inc/drivers/keyboard/keyboard.h>
 #include <inc/drivers/io/io.h>
 #include <inc/core/acpi.h>
+#include <inc/extra/aosbf.h>
+#include <inc/core/vshell.h>
 
-#define DEF_PROMPT "/ $ -> "
+#define DEF_PROMPT " $ -> "
 
 static struct pyrion_ctx* vshell_ctx = NULL;
 static const struct pyrion_rect vshell_viewport = (const struct pyrion_rect){.x=0,.y=0,.width=800,.height=600,.color=0x121212FF};
@@ -27,10 +32,20 @@ static aos_bool vshell_running = AOS_FALSE;
 
 static aos_bool need_reload_vshell = AOS_FALSE;
 
-static char* prompt = DEF_PROMPT;
+struct pbfs_mount* pbfs_mnt = NULL;
+static char cwd[PBFS_MAX_PATH_LEN] = {'/', 0};
 static int last_cmd = 0;
 
-aos_bool is_ascii(char c) {
+static aos_bool vshell_require_mounted(void) {
+	if (!pbfs_mnt || !pbfs_mnt->active) {
+		pyrion_builtin_print(vshell_ctx, "Error: No filesystem is mounted!\n");
+		return AOS_FALSE;
+	}
+
+	return AOS_TRUE;
+}
+
+static aos_bool is_ascii(char c) {
     return (c >= 0x20 && c <= 0x7E);
 }
 
@@ -155,6 +170,120 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
 					need_reload_vshell = AOS_TRUE;
 				}
 			}
+		} else if (strcmp(cmd_buf, "ls") == 0 || strncmp(cmd_buf, "ls ", 3) == 0) {
+			if (!vshell_require_mounted()) goto cmd_ls_end;
+
+			char* arg = NULL;
+			if (cmd_buf[2] == ' ') {
+				arg = cmd_buf + 3;
+			} else {
+				arg = ".";
+			}
+
+			char path[PBFS_MAX_PATH_LEN];
+			aos_create_path(path, cwd, arg);
+
+			PBFS_DMM_Entry items[256];
+			size_t item_count = 0;
+
+			int out = pbfs_list_items(pbfs_mnt, path, items, 256, &item_count);
+
+			if (out != PBFS_RES_SUCCESS) {
+				if (!pyrion_builtin_printf(vshell_ctx, "Error: %s\n", pbfs_get_err_str(out))) return AOS_FALSE;
+				goto cmd_ls_end;
+			}
+
+			if (!pyrion_builtin_printf(vshell_ctx, "Listing: %s\n", path)) return AOS_FALSE;
+
+			for (size_t i = 0; i < item_count; i++) {
+				char type = (items[i].type & METADATA_FLAG_DIR) ? 'd' : 'f';
+
+				if (!pyrion_builtin_printf(
+					vshell_ctx,
+					"%c %s (lba %llu)\n",
+					type,
+					items[i].name,
+					uint128_to_u64(items[i].lba)
+				)) return AOS_FALSE;
+			}
+
+			cmd_ls_end: {}
+		} else if (strcmp(cmd_buf, "mkdir") == 0 || strncmp(cmd_buf, "mkdir ", 6) == 0) {
+			if (cmd_len < 7) {
+				if (!pyrion_builtin_print(vshell_ctx, "Usage: mkdir <directory>\n")) return AOS_FALSE;
+				goto cmd_mkdir_end;
+			}
+			if (!vshell_require_mounted()) goto cmd_mkdir_end;
+
+			PBFS_DMM_Entry entry;
+			uint64_t lba = 0;
+
+			char path[PBFS_MAX_PATH_LEN];
+			aos_create_path(path, cwd, cmd_buf + 6);
+
+			int out = pbfs_find_entry(path, &entry, &lba, pbfs_mnt);
+			if (out == PBFS_RES_SUCCESS || out == -1) {
+				if (!pyrion_builtin_print(vshell_ctx, "Error: File or Directory already exists!\n")) return AOS_FALSE;
+				goto cmd_mkdir_end;
+			}
+
+			out = pbfs_add_dir(pbfs_mnt, path, 0, 0, (PBFS_Permission_Flags)(PERM_READ | PERM_WRITE));
+			if (out != PBFS_RES_SUCCESS) {
+				if (!pyrion_builtin_printf(vshell_ctx, "Error: %s\n", pbfs_get_err_str(out))) return AOS_FALSE;
+				goto cmd_mkdir_end;
+			}
+
+			cmd_mkdir_end: {}
+		} else if (strcmp(cmd_buf, "cd") == 0 || strncmp(cmd_buf, "cd ", 3) == 0) {
+			if (cmd_len < 4) {
+				if (!pyrion_builtin_print(vshell_ctx, "Usage: cd <directory>\n")) return AOS_FALSE;
+				goto cmd_cd_end;
+			}
+			if (!vshell_require_mounted()) goto cmd_cd_end;
+
+			PBFS_DMM_Entry entry;
+			uint64_t lba = 0;
+			
+			char path[PBFS_MAX_PATH_LEN];
+			aos_create_path(path, cwd, cmd_buf + 3);
+
+			int out = pbfs_find_entry(path, &entry, &lba, pbfs_mnt);
+			if (out != PBFS_RES_SUCCESS || !(entry.type & METADATA_FLAG_DIR)) {
+				if (!pyrion_builtin_print(vshell_ctx, "Error: No such directory!\n")) return AOS_FALSE;
+				goto cmd_cd_end;
+			}
+
+			strncpy(cwd, path, PBFS_MAX_PATH_LEN - 1);
+			cwd[PBFS_MAX_PATH_LEN - 1] = '\0';
+
+			cmd_cd_end: {}
+		} else if (strcmp(cmd_buf, "set-font") == 0 || strncmp(cmd_buf, "set-font ", 9) == 0) {
+			if (cmd_len < 10) {
+				if (!pyrion_builtin_print(vshell_ctx, "Usage: set-font <path to aosbf>\n")) return AOS_FALSE;
+				goto cmd_set_font_end;
+			}
+
+			char* font_path = cmd_buf + 9;
+			struct pyrion_font font = {0};
+
+			if (!aosbf_file_to_pyrion_font(font_path, &font)) {
+				if (!pyrion_builtin_print(vshell_ctx, "Error: Could not load font.\n")) return AOS_FALSE;
+				goto cmd_set_font_end;
+			}
+
+			if (!pyrion_set_builtins_font(vshell_ctx, &font)) {
+				if (!pyrion_builtin_print(vshell_ctx, "Error: Could not set font.\n")) return AOS_FALSE;
+
+				if (font.atlas) avmf_free((uint64_t)font.atlas);
+				if (font.glyphs && font.glyph_count) avmf_free((uint64_t)font.glyphs);
+
+				goto cmd_set_font_end;
+			}
+
+			if (!pyrion_builtin_print(vshell_ctx, "Font changed.\n")) return AOS_FALSE;
+			need_reload_vshell = AOS_TRUE;
+
+			cmd_set_font_end: {}
 		} else {
             if (!pyrion_builtin_print(vshell_ctx, "Unknown Command: ")) return AOS_FALSE;
             if (!pyrion_builtin_print(vshell_ctx, cmd_buf)) return AOS_FALSE;
@@ -169,7 +298,8 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
 
     // Reset
     *cmd_len = 0;
-	if (!pyrion_builtin_print(vshell_ctx, prompt)) return AOS_FALSE;
+	if (!pyrion_builtin_print(vshell_ctx, cwd)) return AOS_FALSE;
+	if (!pyrion_builtin_print(vshell_ctx, DEF_PROMPT)) return AOS_FALSE;
 	return AOS_TRUE;
 }
 
@@ -212,33 +342,55 @@ static aos_bool vshell_enum_n_set_best_dev(struct pyrion_ctx* ctx) {
 } 
 
 void start_vshell(void) {
-    serial_print("Starting VShell...\n");
+    serial_print("[VSHELL] Starting VShell...\n[VSHELL] Creating Pyrion Context...\n");
 	struct pyrion_create_ctx_info pcreate_info = {
 		.name = "VShell"
 	};
     vshell_ctx = pyrion_create_ctx(pcreate_info);
-    if (!vshell_ctx) return;
+	if (!vshell_ctx) return;
 
+	pbfs_mnt = aos_get_mounted_fs();
+	memset(cwd, 0, sizeof(cwd));
+	cwd[0] = '/';
+
+	serial_print("[VSHELL] Selecting GPU....\n");
 	if (!vshell_enum_n_set_best_dev(vshell_ctx)) {
 		pyrion_destroy_ctx(vshell_ctx);
 		return;
 	}
 
     vshell_ctx->cformat = PYRION_COLORF_RGBA;
-    if (!pyrion_viewport(vshell_ctx, vshell_viewport)) {
+    serial_print("[VSHELL] Setting Pyrion Viewport...\n");
+	if (!pyrion_viewport(vshell_ctx, vshell_viewport)) {
 		pyrion_destroy_ctx(vshell_ctx);
 		return;
 	}
-    if (!pyrion_conf(vshell_ctx, 0, 0, 0xFFFFFFFF, 0x171717FF)) {
+    
+	serial_print("[VSHELL] Initializing Pyrion Configuration...\n");
+	if (!pyrion_conf(vshell_ctx, 0, 0, 0xFFFFFFFF, 0x171717FF)) {
 		pyrion_destroy_ctx(vshell_ctx);
 		return;
 	}
-    serial_print("[VSHELL] Pyrion Enabled, and set, clearing....\n");
+	
+	serial_print("[VSHELL] Initializing Pyrion Default Font...\n");
+	if (!pyrion_set_default_builtins_font(vshell_ctx)) {
+		pyrion_destroy_ctx(vshell_ctx);
+		return;
+	}
+	
+	serial_print("[VSHELL] Setting Pyrion Font Size...\n");
+	if (!pyrion_set_builtins_font_size(vshell_ctx, 16.0f)) {
+		pyrion_destroy_ctx(vshell_ctx);
+		return;
+	}
+	
+	serial_print("[VSHELL] Pyrion Enabled, and set, clearing....\n");
     if (!pyrion_clear(vshell_ctx, 0x171717FF)) {
 		pyrion_destroy_ctx(vshell_ctx);
 		return;
 	}
-    serial_print("[VSHELL] Vshell initialized!\n");
+    
+	serial_print("[VSHELL] Vshell initialized!\n");
     if (!pyrion_builtin_print(vshell_ctx, "Welcome to AOS++ Visible Shell!\n")) {
 		pyrion_destroy_ctx(vshell_ctx);
 		return;
@@ -249,11 +401,13 @@ void start_vshell(void) {
     int cmd_len = 0;
 
 	memset(cmd_buf, 0, sizeof(cmd_buf));
-
-	prompt = DEF_PROMPT;
 	last_cmd = 0;
 
-    if (!pyrion_builtin_print(vshell_ctx, prompt)) {
+	if (!pyrion_builtin_print(vshell_ctx, cwd)) {
+		pyrion_destroy_ctx(vshell_ctx);
+		return;
+	}
+    if (!pyrion_builtin_print(vshell_ctx, DEF_PROMPT)) {
 		pyrion_destroy_ctx(vshell_ctx);
 		return;
 	}
@@ -266,7 +420,8 @@ void start_vshell(void) {
 			memset(cmd_buf, 0, sizeof(cmd_buf));
 			if (!pyrion_clear(vshell_ctx, vshell_ctx->fb_cursor.bg_color)) break;
             if (!pyrion_set_cursor(vshell_ctx, 0, 0)) break;
-			if (!pyrion_builtin_print(vshell_ctx, prompt)) break;
+			if (!pyrion_builtin_print(vshell_ctx, cwd)) break;
+			if (!pyrion_builtin_print(vshell_ctx, DEF_PROMPT)) break;
 
 			if (!pyrion_flush(vshell_ctx)) break;
 

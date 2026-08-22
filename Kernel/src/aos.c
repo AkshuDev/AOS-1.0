@@ -71,7 +71,6 @@ static int bd_write_blk(struct block_device* dev, uint64_t lba, const void* buf)
 static int bd_read(struct block_device* dev, uint64_t lba, uint64_t count, void* buf);
 static int bd_write(struct block_device* dev, uint64_t lba, uint64_t count, const void* buf);
 static int bd_flush(struct block_device* dev);
-static void make_path(char* out, const char* cwd, const char* in);
 
 extern uint8_t stack_top__; // From linker script
 static uintptr_t stack_top = (uintptr_t)&stack_top__;
@@ -340,7 +339,7 @@ void exec_cmd(char* cmd, struct VMemDesign* vmem_design) {
 
 		char* _path = cmd + 3;
 		char path[PBFS_MAX_PATH_LEN];
-		make_path(path, g_pbfs_cwd, _path);
+		aos_create_path(path, g_pbfs_cwd, _path);
 
 		PBFS_DMM_Entry entry;
 		uint64_t tmplba = 0;
@@ -371,7 +370,7 @@ void exec_cmd(char* cmd, struct VMemDesign* vmem_design) {
 
 		char* _path = cmd + 6;
 		char path[PBFS_MAX_PATH_LEN];
-		make_path(path, g_pbfs_cwd, _path);
+		aos_create_path(path, g_pbfs_cwd, _path);
 
 		PBFS_DMM_Entry entry;
 		uint64_t tmplba = 0;
@@ -408,7 +407,7 @@ void exec_cmd(char* cmd, struct VMemDesign* vmem_design) {
 			}
 		}
 		char path[PBFS_MAX_PATH_LEN];
-		make_path(path, g_pbfs_cwd, _path);
+		aos_create_path(path, g_pbfs_cwd, _path);
 
 		PBFS_DMM_Entry items[256];
 		size_t item_count;
@@ -448,7 +447,7 @@ void exec_cmd(char* cmd, struct VMemDesign* vmem_design) {
 			}
 		}
 		char path[PBFS_MAX_PATH_LEN];
-		make_path(path, g_pbfs_cwd, _path);
+		aos_create_path(path, g_pbfs_cwd, _path);
 
 		struct aos_file* f = fs_open(path);
 		if (!f) {
@@ -624,6 +623,10 @@ void aos_pre_halt_system(void) {
 	}
 }
 
+struct pbfs_mount* aos_get_mounted_fs(void) {
+	return &g_pbfs_mnt;
+}
+
 static int bd_read_blk(struct block_device* dev, uint64_t lba, void* buf) {
     if (current_drive_works) {
         current_drive.read_blk(current_drive.controller_idx, current_drive.cur_port, lba, 1, buf);
@@ -664,7 +667,7 @@ static int bd_flush(struct block_device* dev) {
     return 0;
 }
 
-static void make_path(char* out, const char* cwd, const char* in) {
+void aos_create_path(char* out, const char* cwd, const char* in) {
     char tmp[PBFS_MAX_PATH_LEN];
 
     if (!out) return;

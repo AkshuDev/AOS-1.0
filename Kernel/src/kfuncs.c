@@ -1014,3 +1014,31 @@ const char* kbeautify_memory_size(uint64_t size_in_bytes, double* out_size) {
 
     return units[unit];
 }
+
+// Maths and more
+
+float kceil(float x) {
+    float abs_x = __builtin_fabsf(x);
+    if (abs_x >= 8388608.0f) return x; // 2^23, already integer or inf/nan
+    
+    int i = (int)x;
+    float fi = (float)i;
+    // If x > 0 and has a fractional component, increment integer part
+    return fi + (x > fi);
+}
+
+float kround(float x) {
+    float abs_x = __builtin_fabsf(x);
+    if (abs_x >= 8388608.0f) return x;
+    
+    // Standard round half-away-from-zero or half-to-even
+    return (x < 0.0f) ? (float)(int)(x - 0.5f) : (float)(int)(x + 0.5f);
+}
+
+uint64_t kmax(uint64_t a, uint64_t b) {
+	return a > b ? a : b;
+}
+
+uint64_t kmin(uint64_t a, uint64_t b) {
+	return a < b ? a : b;
+}

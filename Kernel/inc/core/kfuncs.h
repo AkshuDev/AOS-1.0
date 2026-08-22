@@ -66,3 +66,8 @@ char* ku64_to_str(uint64_t v, char* buf, size_t max_size, int base, aos_bool cap
 char* kdouble_to_str(double v, char* buf, size_t max_size, int precision) __attribute__((used));
 
 const char* kbeautify_memory_size(uint64_t size_in_bytes, double* out_size) __attribute__((used));
+
+float kceil(float x) __attribute__((used));
+float kround(float x) __attribute__((used));
+uint64_t kmax(uint64_t a, uint64_t b) __attribute__((used));
+uint64_t kmin(uint64_t a, uint64_t b) __attribute__((used));

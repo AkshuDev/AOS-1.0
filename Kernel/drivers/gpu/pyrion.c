@@ -4,6 +4,7 @@
 #include <asm.h>
 #include <inc/core/pcie.h>
 #include <inc/core/kfuncs.h>
+#include <inc/extra/aosbf.h>
 
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
@@ -30,6 +31,8 @@ static aos_bool create_default_builtin_font(struct pyrion_font* out) {
 	out->line_gap = 0;
 	out->font_size = 16;
 	out->base_font_size = 16;
+	out->ascent = 12;
+	out->descent = 4;
 
     uint32_t* atlas = (uint32_t*)avmf_alloc(size, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW, &out->atlas_phys);
     if (!atlas) {
@@ -65,7 +68,7 @@ static aos_bool create_default_builtin_font(struct pyrion_font* out) {
         g->width = 8;
         g->height = 16;
         g->bearing_x = 0;
-        g->bearing_y = 16;
+        g->bearing_y = 12;
         g->advance_x = 8;
         g->advance_y = 0;
 
@@ -265,23 +268,20 @@ aos_bool pyrion_builtin_draw_rect(struct pyrion_ctx* ctx, struct pyrion_rect rec
 aos_bool pyrion_builtin_printc(struct pyrion_ctx* ctx, char c) {
     if (!ctx) return AOS_FALSE;
 
-    if (!ctx->font.valid) {
+    if (!ctx->font.valid || !ctx->font.glyphs) {
 		if (!pyrion_set_default_builtins_font(ctx)) return AOS_FALSE;
     }
 
-	uint32_t scale = ctx->font.font_size / ctx->font.base_font_size;
-	if (scale == 0) scale = 1;
+	float scale = (float)ctx->font.font_size / (float)ctx->font.base_font_size;
+    if (scale <= 0.0f) return AOS_FALSE;
 
-	uint32_t line_height = ctx->font.line_height * scale;
-	uint32_t line_gap = ctx->font.line_gap * scale;
+	uint32_t line_height = (uint32_t)kceil((float)ctx->font.line_height * scale);
 
 	switch (c) {
 		case '\n': {
-			uint32_t advance_value = line_height + line_gap;
-
-			if (ctx->fb_cursor.y + advance_value <= ctx->viewport.height) {
+			if (ctx->fb_cursor.y + line_height <= ctx->viewport.height) {
 				ctx->fb_cursor.x = 0;
-				ctx->fb_cursor.y += advance_value;
+				ctx->fb_cursor.y += line_height;
 				return AOS_TRUE;
 			}
 			return AOS_FALSE;
@@ -290,27 +290,39 @@ aos_bool pyrion_builtin_printc(struct pyrion_ctx* ctx, char c) {
             ctx->fb_cursor.x = 0;
             return AOS_TRUE;
 		}
+		case '\t': {
+			if (!pyrion_builtin_printc(ctx, ' ')) return AOS_FALSE;
+			if (!pyrion_builtin_printc(ctx, ' ')) return AOS_FALSE;
+			if (!pyrion_builtin_printc(ctx, ' ')) return AOS_FALSE;
+			if (!pyrion_builtin_printc(ctx, ' ')) return AOS_FALSE;
+			return AOS_TRUE;
+		}
 		default: break;
 	}
 
-	struct pyrion_glyph* g_rendered = NULL;
-    if (!gdevice->pyrion.draw_char(ctx, ctx->fb_cursor.x + ctx->viewport.x, ctx->fb_cursor.y + ctx->viewport.y, (uint32_t)c, &ctx->font, &g_rendered)) return AOS_FALSE;
+	struct pyrion_glyph* glyph = NULL;
+	for (uint64_t i = 0; i < ctx->font.glyph_count; i++) {
+		struct pyrion_glyph* g = &ctx->font.glyphs[i];
+		if (!g->valid) continue;
 
-	if (!g_rendered) return AOS_FALSE;
-	if (!g_rendered->valid) return AOS_FALSE;
-
-	uint32_t advance_x = g_rendered->advance_x * scale;
-
-	if (ctx->fb_cursor.x + advance_x > ctx->viewport.width) {
-		if (ctx->fb_cursor.y + line_height + line_gap > ctx->viewport.height) {
-			return AOS_FALSE;
-		} else {
-			ctx->fb_cursor.x = 0;
-			ctx->fb_cursor.y += line_height + line_gap;
+		if (g->codepoint == (uint32_t)c) {
+			glyph = g;
+			break;
 		}
-	} else {
-		ctx->fb_cursor.x += advance_x;
 	}
+	if (!glyph || !glyph->valid) return AOS_FALSE;
+
+	uint32_t advance_x = (uint32_t)kceil(glyph->advance_x * scale);
+	if (ctx->fb_cursor.x + advance_x > ctx->viewport.width) {
+		if (ctx->fb_cursor.y + line_height > ctx->viewport.height) {
+			return AOS_TRUE; // Cannot render
+		}
+		ctx->fb_cursor.x = 0;
+    	ctx->fb_cursor.y += line_height;
+	}
+
+    if (!gdevice->pyrion.draw_char(ctx, ctx->fb_cursor.x + ctx->viewport.x, ctx->fb_cursor.y + ctx->viewport.y + ctx->font.ascent, (uint32_t)c, &ctx->font, glyph)) return AOS_FALSE;
+	ctx->fb_cursor.x += advance_x;
 	return AOS_TRUE;
 }
 
@@ -528,10 +540,11 @@ aos_bool pyrion_set_builtins_font(struct pyrion_ctx* ctx, struct pyrion_font* fo
 		pyrion_destroy_font(ctx, &ctx->font);
 	}
 	ctx->font = *font;
+
 	return AOS_TRUE;
 }
 
-aos_bool pyrion_set_builtins_font_size(struct pyrion_ctx* ctx, uint32_t size) {
+aos_bool pyrion_set_builtins_font_size(struct pyrion_ctx* ctx, float size) {
 	if (!ctx || size < 1) return AOS_FALSE;
 	return pyrion_set_font_size(ctx, &ctx->font, size);
 }
@@ -545,9 +558,12 @@ aos_bool pyrion_set_default_builtins_font(struct pyrion_ctx* ctx) {
 	}
 	
 	struct pyrion_font f = {0};
-	if (!create_default_builtin_font(&f)) {
-		serial_print("[PYRION] Failed to create font!\n");
-		return AOS_FALSE;
+
+	if (!aosbf_file_to_pyrion_font("/aos/fonts/bitmap/spleen/spleen-32x64.aosbf", &f)) {
+		if (!create_default_builtin_font(&f)) {
+			serial_print("[PYRION] Failed to create font!\n");
+			return AOS_FALSE;
+		}
 	}
 
 	serial_print("[PYRION] Uploading Font...\n");
@@ -588,8 +604,8 @@ void pyrion_destroy_font(struct pyrion_ctx* ctx, struct pyrion_font* font) {
 	font->valid = AOS_FALSE;
 }
 
-aos_bool pyrion_set_font_size(struct pyrion_ctx* ctx, struct pyrion_font* font, uint32_t size) {
-	if (!ctx || !font || size < 1) return AOS_FALSE;
+aos_bool pyrion_set_font_size(struct pyrion_ctx* ctx, struct pyrion_font* font, float size) {
+	if (!ctx || !font || size <= 0.0f) return AOS_FALSE;
 	if (!font->valid) return AOS_FALSE;
 
 	font->font_size = size;

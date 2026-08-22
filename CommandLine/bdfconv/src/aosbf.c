@@ -30,6 +30,11 @@ static uint8_t* atlas = NULL; // Not exactly an atlas
 static uint64_t atlas_off = 0;
 static uint64_t atlas_cap = 0;
 
+static int32_t ft26_6_to_i32(FT_Pos v) {
+    if (v >= 0) return (int32_t)((v + 32) >> 6);
+    else return -(int32_t)((-v + 32) >> 6);
+}
+
 static enum aos_bitmap_font_format get_bitmap_aosbf_cformat(FT_Pixel_Mode pixel_mode) {
 	switch (pixel_mode) {
 		case FT_PIXEL_MODE_MONO: return AOSBF_FORMAT_MONO;
@@ -167,11 +172,33 @@ static bool build_font_header(FT_Face face, struct aos_bitmap_font_hdr* hdr) {
         if (pixel_size >= 0 && pixel_size <= UINT16_MAX) {
             hdr->font_size = (uint16_t)pixel_size;
         }
-    }
+    } else {
+		fprintf(stderr, "Error: Invalid/missing \"PIXEL_SIZE\"\n");
+    	return false;
+	}
 
-    if (face->height >= INT16_MIN && face->height <= INT16_MAX) {
-        hdr->line_height = (int16_t)face->height;
-    }
+	if (FT_Set_Pixel_Sizes(face, 0, (FT_UInt)pixel_size) != 0) {
+		fprintf(stderr, "Error: Failed to set FreeType pixel size\n");
+		return false;
+	}
+
+	if (!face->size) {
+		fprintf(stderr, "Error: FreeType size object unavailable\n");
+		return false;
+	}
+	FT_Size_Metrics* m = &face->size->metrics;
+
+	FT_Pos ascent = m->ascender;
+	FT_Pos descent = -m->descender;
+	FT_Pos height = m->height;
+
+	FT_Pos line_gap = height - ascent - descent;
+	if (line_gap < 0) line_gap = 0;
+	
+	hdr->ascent = (int16_t)ft26_6_to_i32(ascent);
+	hdr->descent = (int16_t)ft26_6_to_i32(descent);
+	hdr->line_height = (int16_t)ft26_6_to_i32(height);
+	hdr->line_gap = (int16_t)ft26_6_to_i32(line_gap);
 
     if (face->num_glyphs >= 0 && face->num_glyphs <= UINT32_MAX) {
         hdr->glyph_count = (uint32_t)face->num_glyphs;
@@ -189,6 +216,8 @@ static bool build_glyphs(FT_Face face, struct aos_bitmap_font_glyph* glyphs, uin
     charcode = FT_Get_First_Char(face, &glyph_index);
     uint32_t glyph_no = 0;
 
+	uint32_t fallback_glyph = 0;
+
     while (glyph_index != 0) {
         if (glyph_no >= face->num_glyphs) break;
 
@@ -197,6 +226,14 @@ static bool build_glyphs(FT_Face face, struct aos_bitmap_font_glyph* glyphs, uin
 		glyph->valid = AOS_BITMAP_FONT_FALSE;
 
         glyph->codepoint = (uint32_t)charcode;
+		if (charcode == '?' && fallback_glyph != 0xFFFD) {
+			glyph->is_fallback = AOS_BITMAP_FONT_TRUE; // Incase U+FFFD doesn't exist
+			fallback_glyph = '?';
+		}
+		if (charcode == 0xFFFD) {
+			glyph->is_fallback = AOS_BITMAP_FONT_TRUE;
+			fallback_glyph = 0xFFFD;
+		}
 
         FT_Error error = FT_Load_Glyph(face, glyph_index, FT_LOAD_DEFAULT);
 

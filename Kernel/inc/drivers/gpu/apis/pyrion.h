@@ -57,14 +57,16 @@ struct pyrion_font {
     uint32_t h; // Height of Font Atlas
 	
 	int16_t line_height; // Line Height of the Font
-    int16_t line_gap; // Line Gap of the Font
+    int16_t line_gap; // Line Gap of the Font (Already Accounted in Line Height, field for calculation)
+	int16_t ascent; // Ascent of the Font 
+	int16_t descent; // Descent of the Font (Already Accounted in Line Height, field for calculation)
 
 	uint64_t glyph_count; // Number of Glyphs present
     struct pyrion_glyph* glyphs; // Glyphs
 	struct pyrion_glyph fallback_glyph; // A Glyph that can be used if no matching glyph is found, to symbolize unknown
 
 	uint32_t base_font_size; // The True Logical Font size of the font
-	uint32_t font_size; // The Logical Font size of the font
+	float font_size; // The Logical Font size of the font
 
 	aos_bool valid; // Font is Valid
 };
@@ -149,7 +151,7 @@ struct pyrion_api {
     aos_bool (*upload_font)(struct pyrion_ctx* ctx, struct pyrion_font font, struct pyrion_font* out);
     void (*destroy_font)(struct pyrion_ctx* ctx, struct pyrion_font* font);
 
-    aos_bool (*draw_char)(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t codepoint, struct pyrion_font* font, struct pyrion_glyph** out_glyph);
+    aos_bool (*draw_char)(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t codepoint, struct pyrion_font* font, struct pyrion_glyph* glyph);
 	aos_bool (*blit)(struct pyrion_ctx *ctx, uint32_t dst_res, uint32_t src_res, uint32_t width, uint32_t height);
 };
 
@@ -173,12 +175,12 @@ aos_bool pyrion_builtin_print(struct pyrion_ctx* ctx, const char* str) __attribu
 aos_bool pyrion_builtin_printf(struct pyrion_ctx* ctx, const char* fmt, ...) __attribute__((used));
 aos_bool pyrion_builtin_draw_rect(struct pyrion_ctx* ctx, struct pyrion_rect rect) __attribute__((used));
 
-aos_bool pyrion_set_font_size(struct pyrion_ctx* ctx, struct pyrion_font* font, uint32_t size) __attribute__((used));
+aos_bool pyrion_set_font_size(struct pyrion_ctx* ctx, struct pyrion_font* font, float size) __attribute__((used));
 aos_bool pyrion_upload_font(struct pyrion_ctx* ctx, struct pyrion_font font, struct pyrion_font* out) __attribute__((used));
 void pyrion_destroy_font(struct pyrion_ctx* ctx, struct pyrion_font* font) __attribute__((used));
 aos_bool pyrion_set_builtins_font(struct pyrion_ctx* ctx, struct pyrion_font* font)  __attribute__((used));
 aos_bool pyrion_set_default_builtins_font(struct pyrion_ctx* ctx)  __attribute__((used));
-aos_bool pyrion_set_builtins_font_size(struct pyrion_ctx* ctx, uint32_t size) __attribute__((used));
+aos_bool pyrion_set_builtins_font_size(struct pyrion_ctx* ctx, float size) __attribute__((used));
 
 aos_bool pyrion_clear(struct pyrion_ctx* ctx, uint32_t color) __attribute__((used));
 aos_bool pyrion_pixel(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t color) __attribute__((used));
