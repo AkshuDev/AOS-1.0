@@ -10,6 +10,19 @@
 #define SMP_TLB_CMD_INVLPAGE (1 << 0)
 #define SMP_TLB_CMD_REFRESH_PAGES (1 << 1)
 
+#define SMP_TLB_RESP_INV_CMD (1 << 8)
+#define SMP_TLB_RESP_ACK_INVPAGE (1 << 9)
+#define SMP_TLB_RESP_ACK_REFRESH_PAGES (1 << 10)
+
+#define SMP_CMD_SHUTDOWN (1 << 0)
+#define SMP_CMD_RESERVE (1 << 1)
+#define SMP_CMD_UNRESERVE (1 << 2)
+
+#define SMP_RESP_INV_CMD (1 << 8)
+#define SMP_RESP_ACK_SHUTDOWN (1 << 9)
+#define SMP_RESP_ACK_RESERVE (1 << 10)
+#define SMP_RESP_ACK_UNRESERVE (1 << 11)
+
 enum thread_status {
     THREAD_STATUS_READY,
     THREAD_STATUS_RUNNING,
@@ -27,15 +40,17 @@ struct thread_state {
     void* rsp;
 	void* arg;
 
-    uint64_t tid;
-
     void* stack_bottom;
-    struct reg_trap_frame* context;
+	uint64_t stack_size;
 
+    struct reg_trap_frame* context;
     enum thread_status status;
 
     struct thread_state* next;
-} __attribute__((packed));
+	struct thread_state* prev;
+
+	spinlock_t thread_lock;
+};
 
 struct core_state {
     struct core_state* self;
@@ -45,26 +60,31 @@ struct core_state {
     gdtr_t gdt_desc;
 
 	uint32_t tlb_cmd;
+	uint32_t tlb_resp;
 	uint64_t tlb_addr;
-	aos_bool tlb_done;
 
     uint32_t lapic_id;
     uint32_t core_idx;
 
-    aos_bool shutdown_core;
-    aos_bool reserve_core;
+    uint64_t command;
+	uint64_t response;
 	
     enum core_status status;
 
     struct thread_state* cur_thread;
-    struct thread_state* idle_thread;
-    struct thread_state* ready_list;
-    uint64_t next_tid;
+	struct thread_state* idle_thread;
+
+	struct thread_state* ready_list;
+	struct thread_state* ready_list_end;
+
+	struct thread_state* finished_list;
+	struct thread_state* finished_list_end;
+
     spinlock_t queue_lock;
     spinlock_t command_lock;
 
     void* stack;
-} __attribute__((packed));
+};
 
 void smp_init(void) __attribute__((used));
 void smp_push_task(uint32_t core_idx, void (*entry)(void*), void* arg) __attribute__((used));

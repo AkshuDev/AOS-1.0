@@ -61,7 +61,7 @@ static struct page_table* alloc_page_table(uint64_t* phys_out) {
 		tbl = (volatile struct page_table*)(AOS_DIRECT_MAP_BASE + phys);
 	} else {
 		phys = first_pagemaps + first_pagemaps_ptr;
-		if (phys > first_pagemaps_end) {
+		if (phys + sizeof(struct page_table) > first_pagemaps_end) {
 			serial_printf("[PAGER] No more space for pagemaps within kernel space! Need full init of pager to continue (Total: %llx Used: %llx)\n", (uint64_t)first_pagemaps_end - (uint64_t)first_pagemaps, first_pagemaps_ptr);
 			return NULL;
 		}

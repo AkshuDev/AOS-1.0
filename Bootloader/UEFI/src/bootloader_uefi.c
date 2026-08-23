@@ -641,13 +641,13 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 	cpuid_get_vendor((char*)UniBootCore->cpu_info.vendor);
 
 	EFI_PHYSICAL_ADDRESS kernel_space_addr = 0;
-	if (EFI_ERROR(SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 16, (EFI_PHYSICAL_ADDRESS*)&kernel_space_addr))) {
+	if (EFI_ERROR(SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, UNIBOOT_MINIMUM_REQUIRED_KERNEL_SPACE_PAGES*16, (EFI_PHYSICAL_ADDRESS*)&kernel_space_addr))) {
 		vmem_print(&cursor, "Failed to allocate kernel space!\n");
 		return ENCODE_ERROR(EFI_OUT_OF_RESOURCES);
 	}
 	UniBootCore->kernel_space = (uint64_t)kernel_space_addr;
-	UniBootCore->kernel_space_end = UniBootCore->kernel_space + (16 * 0x1000);
-	UniBootCore->kernel_space_size = 16 * 0x1000;
+	UniBootCore->kernel_space_end = UniBootCore->kernel_space + (UNIBOOT_MINIMUM_REQUIRED_KERNEL_SPACE_PAGES*16 * 0x1000);
+	UniBootCore->kernel_space_size = UNIBOOT_MINIMUM_REQUIRED_KERNEL_SPACE_PAGES*16 * 0x1000;
 	memset((uint8_t*)UniBootCore->kernel_space, 0, UniBootCore->kernel_space_size);
 
     PBFS_Kernel_Entry os_entries[20];

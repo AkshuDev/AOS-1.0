@@ -79,6 +79,7 @@ extern void* smp_trampoline_end;
 static spinlock_t boot_lock = 0;
 static aos_bool ap_boot_flag = AOS_FALSE;
 static uint32_t bsp_core_idx = 0;
+static uint32_t bsp_apic_id = 0;
 
 static struct core_state* cores[SMP_MAX_CORES] = {0};
 
@@ -101,18 +102,18 @@ static void send_wakeup_ipi(uint8_t target_apic_id, uint8_t vector) {
     lapic_write(0x300, 0x00004000 | vector); // ICR Low: Fixed, Delivery Mode 000
 }
 
-static struct thread_state* create_thread(void (*entry)(void*), void* arg, uint64_t tid) {
+static struct thread_state* create_thread(void (*entry)(void*), void* arg) {
     uint64_t thread_virt = (uint64_t)avmf_alloc(sizeof(struct thread_state), MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
     if (thread_virt == NULL) return NULL;
     struct thread_state* thread = (struct thread_state*)thread_virt;
 	memset(thread, 0, sizeof(struct thread_state));
     
-    uint64_t stack_virt = (uint64_t)avmf_alloc(PAGE_SIZE*2, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
+    uint64_t stack_virt = (uint64_t)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
     if (stack_virt == NULL) return NULL;
     void* stack_raw = (void*)stack_virt;
-	memset(stack_raw, 0, PAGE_SIZE*2);
+	memset(stack_raw, 0, PAGE_SIZE);
 
-    uint64_t* stack = (uint64_t*)((uint8_t*)stack_raw + PAGE_SIZE*2);
+    uint64_t* stack = (uint64_t*)((uint8_t*)stack_raw + PAGE_SIZE);
 
     *(--stack) = (uintptr_t)entry; // RIP
 	*(--stack) = (uintptr_t)arg;   // RDI
@@ -124,10 +125,10 @@ static struct thread_state* create_thread(void (*entry)(void*), void* arg, uint6
     *(--stack) = 0; // R15
 
     thread->rsp = stack;
-    thread->tid = tid;
     thread->stack_bottom = stack_raw;
-    thread->status = THREAD_STATUS_READY;
+	thread->stack_size = PAGE_SIZE;
 	thread->arg = arg;
+    thread->status = THREAD_STATUS_READY;
 
     return thread;
 }
@@ -180,33 +181,88 @@ static void ap_kernel_entry(void) {
 
     lapic_timer_start(10);
 
+	enum core_status idle_status = CORE_STATUS_READY;
+
     ap_boot_flag = AOS_TRUE;
     while (1) {
         __asm__ volatile("" : : : "memory");
         __asm__ volatile("cli");
-        if (core->shutdown_core) {
-            break;
-        } else if (*(volatile struct thread_state**)&core->ready_list != NULL) {
-            __asm__ volatile("sti");
-            uint64_t rflags = spin_lock_irqsave(&core->queue_lock);
-            struct thread_state* next = core->ready_list;
-            core->ready_list = next->next;
-            spin_unlock_irqrestore(&core->queue_lock, rflags);
 
-            struct thread_state* prev = core->cur_thread;
-            core->cur_thread = next;
+		uint64_t cmd_rflags = spin_lock_irqsave(&core->command_lock);
+        if (core->command != 0) {
+			aos_bool shutdown = AOS_FALSE;
+
+            switch (core->command) {
+				case SMP_CMD_SHUTDOWN: {
+					shutdown = AOS_TRUE;
+					core->response = SMP_RESP_ACK_SHUTDOWN;
+					break;
+				}
+				case SMP_CMD_RESERVE: {
+					idle_status = CORE_STATUS_RESERVED;
+					core->response = SMP_RESP_ACK_RESERVE;
+					break;
+				}
+				case SMP_CMD_UNRESERVE: {
+					idle_status = CORE_STATUS_READY;
+					core->response = SMP_RESP_ACK_UNRESERVE;
+					break;
+				}
+				default: {
+					core->response = SMP_RESP_INV_CMD;
+					break;
+				}
+			}
+
+			if (shutdown) {
+				spin_unlock_irqrestore(&core->command_lock, cmd_rflags);	
+				break;
+			}
+        }
+		spin_unlock_irqrestore(&core->command_lock, cmd_rflags);
+		
+		if (*(volatile struct thread_state**)&core->ready_list != NULL) {
+            __asm__ volatile("sti");
+
+			uint64_t rflags = spin_lock_irqsave(&core->queue_lock);
+			struct thread_state* next = core->ready_list;
+			spin_unlock_irqrestore(&core->queue_lock, rflags);
+			
+			while (next && next->status != THREAD_STATUS_READY) {
+				if (next) {
+					uint64_t rflags_thread = spin_lock_irqsave(&next->thread_lock);
+					struct thread_state* nxt = next->next;
+					spin_unlock_irqrestore(&next->thread_lock, rflags_thread);
+
+					next = nxt;
+				}
+			}
+			if (!next) goto wait_for_task;
+
+			rflags = spin_lock_irqsave(&core->queue_lock);
+			core->ready_list = next->next;
+			if (core->ready_list_end == next) core->ready_list_end = next->prev;
+			spin_unlock_irqrestore(&core->queue_lock, rflags);
+
+			rflags = spin_lock_irqsave(&next->thread_lock);
             next->status = THREAD_STATUS_RUNNING;
+			spin_unlock_irqrestore(&next->thread_lock, rflags);
 
-            serial_printf("[SMP : CORE %d] Found Task (TID: %llu)\n", core->core_idx, next->tid);
-            thread_context_switch(prev, next);
+            serial_printf("[SMP : CORE %d] Found Task\n", core->core_idx);
+			rflags = spin_lock_irqsave(&core->queue_lock);
 
-			if (prev) avmf_free((uint64_t)prev);
-			if (next) avmf_free((uint64_t)next);
+			struct thread_state* cur = core->cur_thread;
+			core->cur_thread = next;
+
+			spin_unlock_irqrestore(&core->queue_lock, rflags);
+            thread_context_switch(cur, next);
         } else {
-            core->status = core->reserve_core ? CORE_STATUS_RESERVED : CORE_STATUS_READY;
-            __asm__ volatile("sti");
-            __asm__ volatile("hlt");
-            core->status = CORE_STATUS_RUNNING;
+			wait_for_task: {
+				core->status = idle_status;
+				__asm__ volatile("sti");
+				__asm__ volatile("hlt");
+				core->status = CORE_STATUS_RUNNING;
+			}
         }
     }
 
@@ -223,16 +279,21 @@ void smp_tlb_ipi_handler(void) {
 	struct core_state* core;
     __asm__ volatile("mov %%gs:0, %0" : "=r"(core));
 
+	core->tlb_resp = 0;
 	if (core->tlb_cmd & SMP_TLB_CMD_INVLPAGE) {
     	uint64_t addr = core->tlb_addr;
 		__asm__ volatile("invlpg (%0)" :: "r"(addr) : "memory");
+
+		core->tlb_resp |= SMP_TLB_RESP_ACK_INVPAGE;
 	} else if (core->tlb_cmd == SMP_TLB_CMD_REFRESH_PAGES) { // THIS COMMAND CANNOT BE USED WITH MULTIPLE COMMANDS
 		uint64_t addr = core->tlb_addr;
 		__asm__ volatile("mov %0, %%cr3" :: "r"(addr) : "memory");
+
+		core->tlb_resp |= SMP_TLB_RESP_ACK_REFRESH_PAGES;
 	}
+	core->tlb_cmd = 0;
 	__asm__ volatile("mfence" ::: "memory");
 
-    core->tlb_done = AOS_TRUE;
 	lapic_write(0xB0, 0);
 }
 
@@ -253,13 +314,24 @@ void smp_yield(void) {
     struct thread_state* idle = core->idle_thread;
     
     if (cur == idle) return;
-    cur->status = THREAD_STATUS_READY;
-    spin_lock(&core->queue_lock);
-    cur->next = core->ready_list;
-    core->ready_list = cur;
-    spin_unlock(&core->queue_lock);
 
-    core->cur_thread = idle;
+	// Set Thread as Dead
+	uint64_t rflags = spin_lock_irqsave(&cur->thread_lock);
+	cur->status = THREAD_STATUS_DEAD;
+	cur->next = NULL;
+	spin_unlock_irqrestore(&cur->thread_lock, rflags);
+
+	rflags = spin_lock_irqsave(&core->queue_lock);
+
+	if (core->finished_list_end) core->finished_list_end->next = cur;
+	cur->prev = core->finished_list_end;
+
+	core->finished_list_end = cur;
+	if (!core->finished_list) core->finished_list = cur;
+
+	core->cur_thread = idle;
+	spin_unlock_irqrestore(&core->queue_lock, rflags);
+
     thread_context_switch(cur, idle);
 }
 
@@ -272,12 +344,122 @@ void smp_push_task(uint32_t core_idx, void (*entry)(void*), void* arg) {
     }
 
     struct core_state* target = cores[core_idx];
-    struct thread_state* new_thread = create_thread(entry, arg, target->next_tid++);
+	struct thread_state* new_thread = NULL;
 
-    spin_lock(&target->queue_lock);
-    new_thread->next = target->ready_list;
-    target->ready_list = new_thread;
-    spin_unlock(&target->queue_lock);
+	uint64_t rflags = spin_lock_irqsave(&target->queue_lock);
+	if (target->finished_list) {
+		struct thread_state* prev_t = NULL;
+		struct thread_state* cur_t = target->finished_list;
+
+		if (cur_t) {
+			uint64_t rflags_thread = spin_lock_irqsave(&cur_t->thread_lock);
+			spin_unlock_irqrestore(&target->queue_lock, rflags);
+
+			aos_bool first_loop = AOS_TRUE;
+			while (cur_t) {
+				if (!first_loop) rflags_thread = spin_lock_irqsave(&cur_t->thread_lock);
+				else first_loop = AOS_FALSE;
+
+				if (cur_t->status == THREAD_STATUS_DEAD) {
+					if (cur_t->stack_size < 1024) {
+						// Such a thread cannot be ever used so we free it
+						struct thread_state* inv_thread = cur_t;
+
+						// Unlink Invalid Thread
+						if (prev_t) {
+							uint64_t rflags_prev_thread = spin_lock_irqsave(&prev_t->thread_lock);
+							prev_t->next = cur_t->next;
+							spin_unlock_irqrestore(&prev_t->thread_lock, rflags_prev_thread);
+						}
+						if (cur_t->next) {
+							uint64_t rflags_nxt_thread = spin_lock_irqsave(&cur_t->next->thread_lock);
+							cur_t->next->prev = prev_t;
+							spin_unlock_irqrestore(&cur_t->next->thread_lock, rflags_nxt_thread);
+						}
+						
+						rflags = spin_lock_irqsave(&target->queue_lock);
+						if (target->finished_list == cur_t) target->finished_list = cur_t->next;
+						if (target->finished_list_end == cur_t) target->finished_list_end = cur_t->prev;
+						spin_unlock_irqrestore(&target->queue_lock, rflags);
+
+						cur_t = cur_t->next;
+
+						if (inv_thread->stack_bottom) avmf_free((uint64_t)inv_thread->stack_bottom);
+						inv_thread->stack_bottom = NULL;
+						inv_thread->stack_size = 0;
+						inv_thread->rsp = NULL;
+
+						spin_unlock_irqrestore(&inv_thread->thread_lock, rflags_thread);
+						avmf_free((uint64_t)inv_thread);
+						continue;
+					}
+
+					new_thread = cur_t;
+
+					// Unlink New Thread
+					if (prev_t) {
+						uint64_t rflags_prev_thread = spin_lock_irqsave(&prev_t->thread_lock);
+						prev_t->next = cur_t->next;
+						spin_unlock_irqrestore(&prev_t->thread_lock, rflags_prev_thread);
+					}
+					if (cur_t->next) {
+						uint64_t rflags_nxt_thread = spin_lock_irqsave(&cur_t->next->thread_lock);
+						cur_t->next->prev = prev_t;
+						spin_unlock_irqrestore(&cur_t->next->thread_lock, rflags_nxt_thread);
+					}
+
+					spin_unlock_irqrestore(&cur_t->thread_lock, rflags_thread);
+					rflags = spin_lock_irqsave(&target->queue_lock);
+
+					if (target->finished_list == cur_t) target->finished_list = cur_t->next;
+					if (target->finished_list_end == cur_t) target->finished_list_end = cur_t->prev;
+
+					spin_unlock_irqrestore(&target->queue_lock, rflags);
+					rflags_thread = spin_lock_irqsave(&new_thread->thread_lock);
+
+					// Set thread
+					new_thread->rsp = new_thread->stack_bottom + new_thread->stack_size; // Reset RSP
+
+					uint64_t* stack = (uint64_t*)new_thread->rsp;
+					*(--stack) = (uintptr_t)entry; // RIP
+					*(--stack) = (uintptr_t)arg; // RDI
+					*(--stack) = 0; // RBP
+					*(--stack) = 0; // RBX
+					*(--stack) = 0; // R12
+					*(--stack) = 0; // R13
+					*(--stack) = 0; // R14
+					*(--stack) = 0; // R15
+
+					spin_unlock_irqrestore(&new_thread->thread_lock, rflags_thread);
+					break;
+				}
+
+				continue_search: {
+					prev_t = cur_t;
+
+					struct thread_state* nxt = cur_t->next;
+					spin_unlock_irqrestore(&cur_t->thread_lock, rflags_thread);
+					cur_t = nxt;
+				}
+			}
+		} else spin_unlock_irqrestore(&target->queue_lock, rflags);
+	}
+	if (!new_thread) new_thread = create_thread(entry, arg);
+
+	uint64_t rflags_thread = spin_lock_irqsave(&new_thread->thread_lock);
+	new_thread->arg = arg;
+    new_thread->status = THREAD_STATUS_READY;
+	spin_unlock_irqrestore(&new_thread->thread_lock, rflags_thread);
+
+	rflags = spin_lock_irqsave(&target->queue_lock);
+
+	if (target->ready_list_end) target->ready_list_end->next = new_thread;
+	new_thread->prev = target->ready_list_end;
+
+    target->ready_list_end = new_thread;
+	if (!target->ready_list) target->ready_list = new_thread;
+
+    spin_unlock_irqrestore(&target->queue_lock, rflags);
 
     serial_printf("[SMP] Queueing new task for core %d\n", core_idx);
 
@@ -319,7 +501,7 @@ aos_bool smp_is_bsp_core(void) {
 	struct core_state* core;
     __asm__ volatile("mov %%gs:0, %0" : "=r"(core));
 
-	return core->lapic_id == bsp_core_idx;
+	return core->lapic_id == bsp_apic_id;
 }
 
 void smp_reserve_core(uint32_t core_idx) {
@@ -330,15 +512,19 @@ void smp_reserve_core(uint32_t core_idx) {
 	}
 	
     struct core_state* target = cores[core_idx];
-    uint64_t flags = spin_lock_irqsave(&target->command_lock);
+    uint64_t rflags = spin_lock_irqsave(&target->command_lock);
+    target->command = SMP_CMD_RESERVE;
+	target->response = 0;
+	if (target->status != CORE_STATUS_RUNNING) send_wakeup_ipi(target->lapic_id, SMP_IPI_VECTOR);
+	spin_unlock_irqrestore(&target->command_lock, rflags);
 
-    target->reserve_core = AOS_TRUE;
-    if (target->status != CORE_STATUS_RUNNING) {
-        serial_printf("[SMP] Sending Awake command for core %d\n", core_idx);
-        send_wakeup_ipi(target->lapic_id, SMP_IPI_VECTOR);
-    }
-
-    spin_unlock_irqrestore(&target->command_lock, flags);
+	while (target->response == 0) {
+		if (target->response == SMP_RESP_ACK_RESERVE) break;
+		else if (target->response == SMP_RESP_INV_CMD) {
+			return; // Faliure to shutdown, highly highly highly unlikely
+		}
+		__asm__ volatile("pause");
+	}
 }
 
 void smp_unreserve_core(uint32_t core_idx) {
@@ -349,15 +535,20 @@ void smp_unreserve_core(uint32_t core_idx) {
 	}
 
     struct core_state* target = cores[core_idx];
-    uint64_t flags = spin_lock_irqsave(&target->command_lock);
+	
+    uint64_t rflags = spin_lock_irqsave(&target->command_lock);
+    target->command = SMP_CMD_UNRESERVE;
+	target->response = 0;
+	if (target->status != CORE_STATUS_RUNNING) send_wakeup_ipi(target->lapic_id, SMP_IPI_VECTOR);
+	spin_unlock_irqrestore(&target->command_lock, rflags);
 
-    target->reserve_core = AOS_FALSE;
-    if (target->status != CORE_STATUS_RUNNING) {
-        serial_printf("[SMP] Sending Awake command for core %d\n", core_idx);
-        send_wakeup_ipi(target->lapic_id, SMP_IPI_VECTOR);
-    }
-
-    spin_unlock_irqrestore(&target->command_lock, flags);
+	while (target->response == 0) {
+		if (target->response == SMP_RESP_ACK_UNRESERVE) break;
+		else if (target->response == SMP_RESP_INV_CMD) {
+			return; // Faliure to shutdown, highly highly highly unlikely
+		}
+		__asm__ volatile("pause");
+	}
 }
 
 void smp_init(void) {
@@ -368,7 +559,7 @@ void smp_init(void) {
     serial_printf("[SMP] Preparing to wake %lld core...\n", core_count - 1);
     lapic_init(acpi_get_lapic_base());
 
-    uint8_t bsp_apic_id = get_lapic_id();
+    bsp_apic_id = get_lapic_id();
 
     uintptr_t trampoline_len = (uintptr_t)&smp_trampoline_end - (uintptr_t)&smp_trampoline_start;
     uint64_t current_cr3;
@@ -383,13 +574,13 @@ void smp_init(void) {
         uint8_t id = apic_ids[i];
         if (id == bsp_apic_id) {bsp_core_idx = i; continue;}
 
-        spin_lock(&boot_lock);
+        uint64_t rflags_core = spin_lock_irqsave(&boot_lock);
         ap_boot_flag = AOS_FALSE;
 
         void* ap_stack = (void*)avmf_alloc(PAGE_SIZE*4, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
         if (!ap_stack) {
             serial_printf("[SMP] Error: Could not allocate stack for core %lld\n", id);
-            spin_unlock(&boot_lock);
+            spin_unlock_irqrestore(&boot_lock, rflags_core);
             continue;
         }
         memset(ap_stack, 0, PAGE_SIZE*4);
@@ -397,7 +588,7 @@ void smp_init(void) {
 		void* ap_state = (void*)avmf_alloc(sizeof(struct core_state), MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
         if (!ap_state) {
             serial_printf("[SMP] Error: Could not allocate state structure for core %lld\n", id);
-            spin_unlock(&boot_lock);
+            spin_unlock_irqrestore(&boot_lock, rflags_core);
             continue;
         }
         memset(ap_state, 0, sizeof(struct core_state));
@@ -406,7 +597,7 @@ void smp_init(void) {
         uint64_t idle_thread_virt = (uint64_t)avmf_alloc(sizeof(struct thread_state), MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
         if (idle_thread_virt == 0) {
             serial_printf("[SMP] Error: Could not allocate idle thread state structure for core %lld\n", id);
-            spin_unlock(&boot_lock);
+            spin_unlock_irqrestore(&boot_lock, rflags_core);
             continue;
         }
 		memset((void*)idle_thread_virt, 0, sizeof(struct thread_state));
@@ -415,15 +606,13 @@ void smp_init(void) {
         ap_core_state->lapic_id = id;
         ap_core_state->core_idx = i;
         ap_core_state->idle_thread = (struct thread_state*)idle_thread_virt;
-        ap_core_state->idle_thread->tid = 0;
         ap_core_state->idle_thread->status = THREAD_STATUS_RUNNING;
         ap_core_state->ready_list = NULL;
         ap_core_state->queue_lock = 0;
         ap_core_state->command_lock = 0;
         ap_core_state->stack = (void*)((uintptr_t)ap_stack + 16384);
         ap_core_state->status = CORE_STATUS_READY;
-        ap_core_state->next_tid = 0;
-        ap_core_state->shutdown_core = AOS_FALSE;
+        ap_core_state->command = 0;
         
         memcpy((void*)(AOS_DIRECT_MAP_BASE + 0x8000), &smp_trampoline_start, trampoline_len);
         *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x500) = current_cr3;
@@ -450,7 +639,7 @@ void smp_init(void) {
             serial_printf("[SMP] Core %lld checked in successfully.\n", id);
         }
 
-        spin_unlock(&boot_lock);
+        spin_unlock_irqrestore(&boot_lock, rflags_core);
     }
 
     void* bsp_state_virt = (void*)avmf_alloc(sizeof(struct core_state), MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
@@ -464,15 +653,13 @@ void smp_init(void) {
     bsp_state->ready_list = NULL;
     bsp_state->queue_lock = 0;
     bsp_state->status = CORE_STATUS_RUNNING;
-    bsp_state->next_tid = 0;
-	bsp_state->shutdown_core = AOS_FALSE;
+	bsp_state->command = 0;
 
     void* idle_thread_virt = (void*)avmf_alloc(sizeof(struct thread_state), MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
     if (idle_thread_virt) {
         struct thread_state* idle_thread = (struct thread_state*)idle_thread_virt;
 		memset(idle_thread, 0, sizeof(struct thread_state));
 
-        idle_thread->tid = 0;
         idle_thread->status = THREAD_STATUS_RUNNING;
         bsp_state->idle_thread = idle_thread;
         bsp_state->cur_thread = idle_thread;
@@ -505,14 +692,99 @@ void smp_shutdown_core(uint32_t core_idx) {
 
     struct core_state* target = cores[core_idx];
 
-    uint64_t flags = spin_lock_irqsave(&target->command_lock);
-    target->shutdown_core = AOS_TRUE;
-	send_wakeup_ipi(target->lapic_id, SMP_IPI_VECTOR);
-	spin_unlock_irqrestore(&target->command_lock, flags);
+    uint64_t rflags = spin_lock_irqsave(&target->command_lock);
+    target->command = SMP_CMD_SHUTDOWN;
+	target->response = 0;
+	if (target->status != CORE_STATUS_RUNNING) send_wakeup_ipi(target->lapic_id, SMP_IPI_VECTOR);
+	spin_unlock_irqrestore(&target->command_lock, rflags);
+
+	uint64_t timeout = kget_ms_passed();
+	while (target->response == 0 && kget_ms_passed() - timeout < 10000) {
+		if (target->response == SMP_RESP_ACK_SHUTDOWN) break;
+		else if (target->response == SMP_RESP_INV_CMD) {
+			return; // Faliure to shutdown, highly highly highly unlikely
+		}
+		__asm__ volatile("pause");
+	}
+	if (kget_ms_passed() - timeout > 1000) return; // Faliure to shutdown
+
+	rflags = spin_lock_irqsave(&target->queue_lock);
+
+	if (target->ready_list) {
+		uint64_t rflags_thread = 0;
+		struct thread_state* cur = target->ready_list;
+
+		if (cur) rflags_thread = spin_lock_irqsave(&cur->thread_lock);
+
+		target->ready_list = NULL;
+		target->ready_list_end = NULL;
+		spin_unlock_irqrestore(&target->queue_lock, rflags);
+
+		aos_bool first_loop = AOS_TRUE;
+		while (cur) {
+			if (first_loop) first_loop = AOS_FALSE;
+			else rflags_thread = spin_lock_irqsave(&cur->thread_lock);
+
+			if (cur->stack_bottom) avmf_free((uint64_t)cur->stack_bottom);
+			cur->stack_bottom = NULL;
+			cur->rsp = NULL;
+			cur->stack_size = 0;
+			cur->status = THREAD_STATUS_BLOCKED; // Dead threads can be reused, blocked threads cannot be reused, and are skipped entirely
+			cur->prev = NULL;
+
+			struct thread_state* nxt = cur->next;
+			cur->next = NULL;
+
+			spin_unlock_irqrestore(&cur->thread_lock, rflags_thread);
+			avmf_free((uint64_t)cur);
+
+			cur = nxt;
+		}
+
+		rflags = spin_lock_irqsave(&target->queue_lock);
+	} else target->ready_list_end = NULL;
+
+	if (target->finished_list) {
+		uint64_t rflags_thread = 0;
+		struct thread_state* cur = target->finished_list;
+
+		if (cur) rflags_thread = spin_lock_irqsave(&cur->thread_lock);
+
+		target->finished_list = NULL;
+		target->finished_list_end = NULL;
+		spin_unlock_irqrestore(&target->queue_lock, rflags);
+
+		aos_bool first_loop = AOS_TRUE;
+		while (cur) {
+			if (first_loop) first_loop = AOS_FALSE;
+			else rflags_thread = spin_lock_irqsave(&cur->thread_lock);
+
+			if (cur->stack_bottom) avmf_free((uint64_t)cur->stack_bottom);
+			cur->stack_bottom = NULL;
+			cur->rsp = NULL;
+			cur->stack_size = 0;
+			cur->status = THREAD_STATUS_BLOCKED; // Dead threads can be reused, blocked threads cannot be reused, and are skipped entirely
+			cur->prev = NULL;
+
+			struct thread_state* nxt = cur->next;
+			cur->next = NULL;
+
+			spin_unlock_irqrestore(&cur->thread_lock, rflags_thread);
+			avmf_free((uint64_t)cur);
+
+			cur = nxt;
+		}
+
+		rflags = spin_lock_irqsave(&target->queue_lock);
+	} else target->finished_list_end = NULL;
+
+	if (target->idle_thread) avmf_free((uint64_t)target->idle_thread);
+	target->idle_thread = NULL;
 
 	if (target->stack) avmf_free((uint64_t)target->stack);
-	if (target->idle_thread) avmf_free((uint64_t)target->idle_thread);
-	if (target->ready_list) avmf_free((uint64_t)target->ready_list);
+	target->stack = NULL;
+
+	spin_unlock_irqrestore(&target->queue_lock, rflags);
 
 	// Broadcast INIT IPI to reset the AP
 	lapic_write(LAPIC_REG_ICR_HIGH, target->lapic_id << 24);
@@ -537,12 +809,21 @@ void smp_reset_core(uint32_t core_idx) {
 
     struct core_state* target = cores[core_idx];
 
-    uint64_t flags = spin_lock_irqsave(&target->command_lock);
-    target->shutdown_core = AOS_TRUE;
-	send_wakeup_ipi(target->lapic_id, SMP_IPI_VECTOR);
-    spin_unlock_irqrestore(&target->command_lock, flags);
+    uint64_t rflags = spin_lock_irqsave(&target->command_lock);
+    target->command = SMP_CMD_SHUTDOWN;
+	target->response = 0;
+	if (target->status != CORE_STATUS_RUNNING) send_wakeup_ipi(target->lapic_id, SMP_IPI_VECTOR);
+	spin_unlock_irqrestore(&target->command_lock, rflags);
 
-	if (target->ready_list) avmf_free((uint64_t)target->ready_list);
+	uint64_t timeout = kget_ms_passed();
+	while (target->response == 0 && kget_ms_passed() - timeout < 10000) {
+		if (target->response == SMP_RESP_ACK_SHUTDOWN) break;
+		else if (target->response == SMP_RESP_INV_CMD) {
+			return; // Faliure to shutdown, highly highly highly unlikely
+		}
+		__asm__ volatile("pause");
+	}
+	if (kget_ms_passed() - timeout > 1000) return; // Faliure to shutdown
 
 	// Broadcast INIT IPI to reset the AP
 	lapic_write(LAPIC_REG_ICR_HIGH, target->lapic_id << 24);
@@ -553,19 +834,14 @@ void smp_reset_core(uint32_t core_idx) {
 	lapic_write(LAPIC_REG_ICR_LOW, 0x00004000); // INIT deassert
 	kdelay(10);
 
-	spin_lock(&boot_lock);
+	rflags = spin_lock_irqsave(&boot_lock);
 	ap_boot_flag = AOS_FALSE;
 
 	if (target->idle_thread) {
-		target->idle_thread->tid = 0;
 		target->idle_thread->status = THREAD_STATUS_RUNNING;
 	}
-	target->ready_list = NULL;
-	target->queue_lock = 0;
-	target->command_lock = 0;
 	target->status = CORE_STATUS_READY;
-	target->next_tid = 0;
-	target->shutdown_core = AOS_FALSE;
+	target->command = 0;
 
 	uintptr_t trampoline_len = (uintptr_t)&smp_trampoline_end - (uintptr_t)&smp_trampoline_start;
     uint64_t current_cr3;
@@ -582,7 +858,7 @@ void smp_reset_core(uint32_t core_idx) {
 	kdelay_us(200);
 	if (!ap_boot_flag) send_ipi(target->lapic_id, 0x08);
 
-	uint64_t timeout = kget_ms_passed();
+	timeout = kget_ms_passed();
 	while(!ap_boot_flag && kget_ms_passed() - timeout < 1000) { __asm__ volatile("pause");}
 
 	if (!ap_boot_flag) {
@@ -591,7 +867,7 @@ void smp_reset_core(uint32_t core_idx) {
 		serial_printf("[SMP] Core %lld checked in successfully.\n", core_idx);
 	}
 
-	spin_unlock(&boot_lock);
+	spin_unlock_irqrestore(&boot_lock, rflags);
 }
 
 void smp_tlb_core(uint32_t core_idx, uint64_t virt, aos_bool full_flush) {
@@ -606,20 +882,22 @@ void smp_tlb_core(uint32_t core_idx, uint64_t virt, aos_bool full_flush) {
 
     uint64_t flags = spin_lock_irqsave(&target->command_lock);
 
+	target->tlb_resp = 0;
 	target->tlb_cmd = full_flush ? SMP_TLB_CMD_REFRESH_PAGES : SMP_TLB_CMD_INVLPAGE;
     target->tlb_addr = virt;
-	target->tlb_done = AOS_FALSE;
 
 	send_wakeup_ipi(target->lapic_id, SMP_TLB_IPI_VECTOR);
 
 	uint64_t timeout = kget_ms_passed();
-	while(!target->tlb_done && kget_ms_passed() - timeout < 1000) { __asm__ volatile("pause");}
-
-	spin_unlock_irqrestore(&target->command_lock, flags);
-
+	while (target->tlb_resp == 0 && kget_ms_passed() - timeout < 1000) {
+		if (target->tlb_resp & (full_flush ? SMP_TLB_RESP_ACK_REFRESH_PAGES : SMP_TLB_RESP_ACK_INVPAGE)) break;
+		__asm__ volatile("pause");
+	}
 	if (kget_ms_passed() - timeout > 1000) {
 		serial_printf("[SMP] Error: Core %lld failed to check in on TLB Flush/Invlpage!\n", core_idx);
 	}
+
+	spin_unlock_irqrestore(&target->command_lock, flags);
 }
 
 void smp_reset(void) {

@@ -22,8 +22,6 @@ char* strcpy(char* dest, char* src) __attribute__((used));
 char* strncpy(char* dest, char* src, size_t n) __attribute__((used));
 uint32_t str_to_uint(const char* str) __attribute__((used));
 
-void spin_lock(spinlock_t* lock) __attribute__((used));
-void spin_unlock(spinlock_t* lock) __attribute__((used));
 uint64_t spin_lock_irqsave(spinlock_t* lock) __attribute__((used));
 void spin_unlock_irqrestore(spinlock_t* lock, uint64_t flags) __attribute__((used));
 

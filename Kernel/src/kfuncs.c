@@ -222,20 +222,6 @@ uint32_t str_to_uint(const char* str) {
     return result;
 }
 
-void spin_lock(spinlock_t* lock) {
-	if (!lock) return;
-
-    while (__sync_lock_test_and_set(lock, 1)) {
-        while (*lock);
-    }
-}
-
-void spin_unlock(spinlock_t* lock) {
-	if (!lock) return;
-
-    __sync_lock_release(lock);
-}
-
 uint64_t spin_lock_irqsave(spinlock_t* lock) {
 	if (!lock) return 0;
 
