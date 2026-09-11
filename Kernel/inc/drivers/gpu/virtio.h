@@ -1670,19 +1670,6 @@ enum pipe_video_chroma_format {
    PIPE_VIDEO_CHROMA_FORMAT_NONE
 };
 
-enum pipe_texture_target {
-   PIPE_BUFFER = 0,
-   PIPE_TEXTURE_1D = 1,
-   PIPE_TEXTURE_2D = 2,
-   PIPE_TEXTURE_3D = 3,
-   PIPE_TEXTURE_CUBE = 4,
-   PIPE_TEXTURE_RECT = 5,
-   PIPE_TEXTURE_1D_ARRAY = 6,
-   PIPE_TEXTURE_2D_ARRAY = 7,
-   PIPE_TEXTURE_CUBE_ARRAY = 8,
-   PIPE_MAX_TEXTURE_TYPES
-};
-
 
 /**
  * Transfer object usage flags

@@ -1,3 +1,15 @@
+# Colors
+CLR_BLACK   = \033[0;30m
+CLR_RED     = \033[0;31m
+CLR_GREEN   = \033[0;32m
+CLR_YELLOW  = \033[0;33m
+CLR_BLUE    = \033[0;34m
+CLR_MAGENTA = \033[0;35m
+CLR_CYAN    = \033[0;36m
+CLR_WHITE   = \033[0;37m
+CLR_GRAY    = \033[1;30m
+CLR_RESET   = \033[0m
+
 PBFS_CLI := PBFS/PBFS/build-cli/pbfs-cli
 DD := dd
 
@@ -30,27 +42,28 @@ TOTAL_DISK_BLOCKS := 32768
 
 FSROOT_DIR := FSRoot
 
+RUN_ARGS ?=
+
 .PHONY: all clean init run build build_uefi build_mbr
 
 all: $(BUILD_DIR) $(BIN_DIR) $(DISK)
 
 $(BUILD_DIR):
-	@echo "Making $(BUILD_DIR)"
 	@mkdir -p $(BUILD_DIR)
 
 $(BIN_DIR):
-	@echo "Making $(BIN_DIR)"
 	@mkdir -p $(BIN_DIR)
 
 $(DISK): $(MBR_BOOTLOADER_STAGE1) $(MBR_BOOTLOADER_STAGE2) $(MBR_BOOTLOADER_STAGE3) $(AOS_KERNEL)
-	@echo "Creating+Formatting AOS Disk and adding Kernel..."
-	$(PBFS_CLI) $(DISK) \
+	@printf "$(CLR_YELLOW)Creating Final MBR Disk:$(CLR_RESET)\n"
+	@printf "$(CLR_YELLOW) -- Creating+Formatting AOS Disk and adding Kernel...$(CLR_RESET)\n"
+	@$(PBFS_CLI) $(DISK) \
 		-bs 512 -tb $(TOTAL_DISK_BLOCKS) -dn AOS_DISK -rkt -rbp 1024 2048 \
 		-c -f \
 		--mbr -btl $(MBR_BOOTLOADER_STAGE1) \
 		-k $(AOS_KERNEL) AOS++
 
-	@echo "Adding FS ROOT to AOS Disk..."
+	@printf "$(CLR_YELLOW) -- Adding FS ROOT to AOS Disk...$(CLR_RESET)\n"
 	@find "$(FSROOT_DIR)" -mindepth 1 -type d -print0 | while IFS= read -r -d '' item; do \
 		path="/$${item#$(FSROOT_DIR)/}"; \
 		echo "Adding Folder: $$item to $$path"; \
@@ -61,34 +74,33 @@ $(DISK): $(MBR_BOOTLOADER_STAGE1) $(MBR_BOOTLOADER_STAGE2) $(MBR_BOOTLOADER_STAG
 		echo "Adding File: $$item as $$path"; \
 		$(PBFS_CLI) $(DISK) -bs 512 -tb $(TOTAL_DISK_BLOCKS) -dn AOS_DISK --type file --permissions rs --name "$$path" -a "$$item"; \
 	done
-	@echo "Added FS ROOT to AOS Disk!"
 
-	@echo "Filling in the Bootloader partition..."
-	$(DD) if=$(MBR_BOOTLOADER_STAGE2) of=$(DISK) bs=512 seek=1024 conv=notrunc
-	$(DD) if=$(MBR_BOOTLOADER_STAGE3) of=$(DISK) bs=512 seek=2048 conv=notrunc
-	@echo "DONE!"
+	@printf "$(CLR_YELLOW) -- Filling in the Bootloader partition...$(CLR_RESET)\n"
+	@$(DD) if=$(MBR_BOOTLOADER_STAGE2) of=$(DISK) bs=512 seek=1024 conv=notrunc
+	@$(DD) if=$(MBR_BOOTLOADER_STAGE3) of=$(DISK) bs=512 seek=2048 conv=notrunc
+	
+	@printf "$(CLR_GREEN)Disk Created Successfully.$(CLR_RESET)\n"
 
 $(MBR_BOOTLOADER_STAGE1) $(MBR_BOOTLOADER_STAGE2) $(MBR_BOOTLOADER_STAGE3):
-	@echo "Creating MBR AOS Bootloader..."
 	$(MAKE) -C $(BOOTLOADER) mbr
 
 $(UEFI_BOOTLOADER_EFI):
-	@echo "Creating UEFI AOS Bootloader..."
 	$(MAKE) -C $(BOOTLOADER) uefi
 
 $(AOS_KERNEL):
-	@echo "Creating AOS Kernel..."
 	$(MAKE) -C $(KERNEL)
 
 uefi: $(BUILD_DIR) $(BIN_DIR) $(UEFI_BOOTLOADER_EFI) $(AOS_KERNEL)
-	@echo "Creating+Formatting AOS Disk and adding Kernel (UEFI Bootloader)..."
-	$(PBFS_CLI) $(DISK) \
+	@printf "$(CLR_YELLOW)Creating Final UEFI Disk:$(CLR_RESET)\n"
+	@printf "$(CLR_YELLOW) -- Creating+Formatting AOS Disk and adding Kernel...$(CLR_RESET)\n"
+	
+	@$(PBFS_CLI) $(DISK) \
 		-bs 512 -tb $(TOTAL_DISK_BLOCKS) -dn AOS_DISK -rkt -rbp 1024 2048 \
 		-c -f \
 		--gpt -btl $(UEFI_BOOTLOADER_EFI) \
 		--permissions rw \
 		-k $(AOS_KERNEL) AOS++
-	@echo "Adding FS ROOT to AOS Disk..."
+	@printf "$(CLR_YELLOW) -- Adding FS ROOT to AOS Disk...$(CLR_RESET)\n"
 	@find "$(FSROOT_DIR)" -mindepth 1 -type d -print0 | while IFS= read -r -d '' item; do \
 		path="/$${item#$(FSROOT_DIR)/}"; \
 		echo "Adding Folder: $$item to $$path"; \
@@ -99,32 +111,32 @@ uefi: $(BUILD_DIR) $(BIN_DIR) $(UEFI_BOOTLOADER_EFI) $(AOS_KERNEL)
 		echo "Adding File: $$item as $$path"; \
 		$(PBFS_CLI) $(DISK) -bs 512 -tb $(TOTAL_DISK_BLOCKS) -dn AOS_DISK --type file --permissions rs --name "$$path" -a "$$item"; \
 	done
-	@echo "Added FS ROOT to AOS Disk!"
-	@echo "DONE!"
+
+	@printf "$(CLR_GREEN)Disk Created Successfully.$(CLR_RESET)\n"
 
 clean:
-	@echo "Cleaning..."
+	@printf "$(CLR_YELLOW)Cleaning...$(CLR_RESET)\n"
 	@rm -rf $(BUILD_DIR) $(BIN_DIR)
+	@printf "$(CLR_GREEN)Cleaned.$(CLR_RESET)\n"
 
 init:
-	@echo "Initializing..."
+	@printf "$(CLR_YELLOW)Initializing...$(CLR_RESET)\n"
 	@chmod +x ./init.sh
 	@chmod +x ./run.sh
 	@chmod +x ./build.sh
 	@./init.sh
+	@printf "$(CLR_GREEN)Initialized.$(CLR_RESET)\n"
 
 run:
-	@echo "Running"
-	@./run.sh
+	@printf "$(CLR_YELLOW)Running...$(CLR_RESET)\n"
+	@./run.sh $(RUN_ARGS)
+	@printf "$(CLR_GREEN)Run Completed.$(CLR_RESET)\n"
 
 build:
-	@echo "Building MBR..."
 	@./build.sh -mbr
 
 build_uefi:
-	@echo "Building UEFI..."
 	@./build.sh -uefi
 
 build_mbr:
-	@echo "Building MBR..."
 	@./build.sh -mbr

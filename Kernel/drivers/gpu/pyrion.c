@@ -2,6 +2,7 @@
 
 #include <aos_inttypes.h>
 #include <asm.h>
+#include <inc/core/module.h>
 #include <inc/core/pcie.h>
 #include <inc/core/kfuncs.h>
 #include <inc/extra/aosbf.h>
