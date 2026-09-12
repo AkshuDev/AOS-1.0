@@ -15,11 +15,11 @@ void* memcpy(void* dest, const void* src, size_t n) __attribute__((used));
 int memcmp(const void* s1, const void* s2, size_t n) __attribute__((used));
 void* memmove(void* dest, const void* src, size_t n) __attribute__((used));
 
-int strcmp(char* s1, char* s2) __attribute__((used));
-int strncmp(char* s1, char* s2, size_t n) __attribute__((used));
-size_t strlen(char* s) __attribute__((used));
-char* strcpy(char* dest, char* src) __attribute__((used));
-char* strncpy(char* dest, char* src, size_t n) __attribute__((used));
+int strcmp(const char* s1, const char* s2) __attribute__((used));
+int strncmp(const char* s1, const char* s2, size_t n) __attribute__((used));
+size_t strlen(const char* s) __attribute__((used));
+char* strcpy(char* dest, const char* src) __attribute__((used));
+char* strncpy(char* dest, const char* src, size_t n) __attribute__((used));
 uint32_t str_to_uint(const char* str) __attribute__((used));
 
 uint64_t spin_lock_irqsave(spinlock_t* lock) __attribute__((used));

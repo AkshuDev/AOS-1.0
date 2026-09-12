@@ -189,11 +189,11 @@ struct sata_identify {
     uint16_t cur_sectors; /* 56: Current sectors */
     uint16_t lba_capacity[2]; /* 57-58: LBA capacity */
     uint16_t multi_sect_set; /* 59: Multi-sector setting */
-    uint16_t lba_cap_48[2]; /* 60-61: LBA capacity 48 */
+    uint16_t lba_cap_28[2]; /* 60-61: LBA capacity 28 */
     uint16_t dma_1word; /* 62: Single word DMA */
     uint16_t dma_2word; /* 63: Multiword DMA */
     uint16_t adv_pio; /* 64: Advanced PIO */
-    uint16_t mw_dma_cycle; /* 65: MW DMA cycle time */
+    uint16_t mw_dma_cycle; /* 65: MW DMA cycle */
     uint16_t min_pio_no_flow; /* 66: Min PIO no flow */
     uint16_t min_pio_flow; /* 67: Min PIO w/ flow */
     uint16_t res3[2]; /* 68-69: Reserved */
@@ -220,13 +220,14 @@ struct sata_identify {
     uint16_t stream_min_req; /* 95: Stream min request */
     uint16_t stream_max_req; /* 96: Stream max request */
     uint16_t stream_latency[2]; /* 97-98: Stream latency */
-    uint16_t lba_capacity_64[2]; /* 99-100: LBA capacity 64-bit */
-    uint16_t res6[26]; /* 101-126: Reserved */
-    uint16_t vendor_status; /* 127: Vendor status */
-    uint16_t security_status; /* 128: Security status */
-    uint16_t res7[31]; /* 129-159: Reserved */
-    uint16_t res8[4]; /* 160-163: Reserved */
-    uint16_t reserved_164_255[92]; /* 164-255: Reserved */
+    uint16_t lba_capacity_64[4]; /* 99-102: LBA capacity / streaming performance */
+    uint16_t lba_cap_48[4]; /* 100-103: LBA capacity 48 */
+    uint16_t res6[26]; /* 104-129: Reserved */
+    uint16_t vendor_status; /* 130: Vendor status */
+    uint16_t security_status; /* 131: Security status */
+    uint16_t res7[31]; /* 132-162: Reserved */
+    uint16_t res8[4]; /* 163-166: Reserved */
+    uint16_t reserved_167_255[89]; /* 167-255: Reserved */
 } __attribute__((packed));
 
 struct sata_port_state {

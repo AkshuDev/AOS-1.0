@@ -12,7 +12,7 @@ CLR_RESET   = \033[0m
 
 CC := gcc
 
-EXTRA ?= -march=x86-64 -mtune=generic -funroll-loops -w
+EXTRA ?= -march=x86-64 -mtune=generic -funroll-loops
 OPT_LEVEL ?= 3
 CFLAGS := -ffreestanding -m64 -fno-stack-protector -fno-pic \
 		-Wall -nostdlib -fno-pie \
@@ -84,7 +84,7 @@ $(KERNEL_ELF): $(KERNEL_O) $(DRIVERS_O) $(MEMORY_FILES_O) $(ASM_x86_64_FILES_O)
 	@printf "$(CLR_YELLOW) -- Compiling PBFS$(CLR_RESET)\n"
 	@make -C ../PBFS/PBFS/src-fs clean
 	@make -C ../PBFS/PBFS/src-fs
-	@printf "$(CLR_GREEN) -- Compiled PBFS.$(CLR_RESET)\n"
+	@printf "$(CLR_GREEN) -- Compiled PBFS$(CLR_RESET)\n"
 
 	@printf "$(CLR_YELLOW) -- Linking Core Kernel$(CLR_RESET)\n"
 	@$(LD) $(LDFLAGS) $(KERNEL_O) $(MEMORY_FILES_O) $(ASM_x86_64_FILES_O) $(DRIVERS_O) $(LDPBFS) -o $(KERNEL_ELF)
@@ -94,6 +94,6 @@ $(LDPBFS): ../PBFS/PBFS/src-fs/Makefile
 	@make -C ../PBFS/PBFS/src-fs
 
 clean:
-	@printf "$(CLR_YELLOW) -- Cleaning Kernel Files$(CLR_RESET)\n"
+	@printf "$(CLR_RED) -- Cleaning Kernel Files$(CLR_RESET)\n"
 	@rm -rf $(BUILD_DIR) $(BIN_DIR)
-	@printf "$(CLR_GREEN) -- Cleaned.$(CLR_RESET)\n"
+	@printf "$(CLR_GREEN) -- Cleaned$(CLR_RESET)\n"

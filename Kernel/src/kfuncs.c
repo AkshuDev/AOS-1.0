@@ -123,7 +123,7 @@ void* memmove(void* dest, const void* src, size_t n) {
 	return dest;
 }
 
-int strcmp(char* s1, char* s2) {
+int strcmp(const char* s1, const char* s2) {
 	if (!s1 || !s2) return -1;
 	if (s1 == s2) return 0;
 
@@ -134,7 +134,7 @@ int strcmp(char* s1, char* s2) {
     return *(const unsigned char*)s1 - *(const unsigned char*)s2;
 }
 
-int strncmp(char* s1, char* s2, size_t n) {
+int strncmp(const char* s1, const char* s2, size_t n) {
 	if (!s1 || !s2) return -1;
 	if (n == 0) return 0;
 
@@ -151,7 +151,7 @@ int strncmp(char* s1, char* s2, size_t n) {
     return *(const unsigned char*)s1 - *(const unsigned char*)s2;
 }
 
-size_t strlen(char* s) {
+size_t strlen(const char* s) {
 	if (!s) return 0;
 
     size_t len;
@@ -172,7 +172,7 @@ size_t strlen(char* s) {
     return len;
 }
 
-char* strcpy(char* dest, char* src) {
+char* strcpy(char* dest, const char* src) {
 	if (!dest || !src) return NULL;
 	if (dest == src) return dest;
 
@@ -181,7 +181,7 @@ char* strcpy(char* dest, char* src) {
     return ret;
 }
 
-char* strncpy(char* dest, char* src, size_t n) {
+char* strncpy(char* dest, const char* src, size_t n) {
 	if (!dest || !src) return NULL;
 	if (n == 0) return dest;
 

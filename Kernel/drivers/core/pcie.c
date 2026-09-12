@@ -12,21 +12,15 @@
 #include <inc/mm/pager.h>
 
 static struct acpi_mcfg* mcfg_table = NULL;
-static int mcfg_num_segs = 0;
+static size_t mcfg_num_segs = 0;
 
 aos_bool pcie_init() {
     mcfg_table = acpi_get_mcfg();
-    if (mcfg_table == NULL) {
+    if (!mcfg_table) {
         serial_print("[PCIe] Did not get MCFG Table! Using PCI\n");
     } else {
 		mcfg_num_segs = (mcfg_table->header.length - sizeof(struct acpi_mcfg)) / sizeof(struct acpi_mcfg_entry);
 		serial_printf("[PCIe] MCFG Segment Count : %u\n", mcfg_num_segs);
-		for (int i = 0; i < mcfg_num_segs; i++) {
-			struct acpi_mcfg_entry* e = &mcfg_table->entries[i];
-
-			uint32_t bus_count = e->end_bus - e->start_bus + 1;
-			uint64_t size = (uint64_t)bus_count << 20;
-		}
 	}
    
     serial_print("[PCIe] Registering Modules...\n");

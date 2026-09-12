@@ -60,16 +60,6 @@ void set_idt_entry(int num, uint64_t offset, uint16_t selector, uint8_t type_att
     idt[num].ist = 0;
 }
 
-static void set_idt_entry_ist(int num, uint64_t offset, uint16_t selector, uint8_t type_attr, uint8_t ist_index) {
-    idt[num].offset_low = offset & 0xFFFF;
-    idt[num].offset_mid = (offset >> 16) & 0xFFFF;
-    idt[num].offset_high = (offset >> 32) & 0xFFFFFFFF;
-    idt[num].selector = selector;
-    idt[num].zero = 0;
-    idt[num].type_attr = type_attr;
-    idt[num].ist = ist_index;
-}
-
 void idt_load_local(void) {
     if (!idt || !idt_ptr) return;
     __asm__ volatile("lidt %0" : : "m"(*idt_ptr));

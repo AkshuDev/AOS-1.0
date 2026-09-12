@@ -137,7 +137,7 @@ void gdt_init(void) {
 		:
 		"m"(kgdtr), "i"(KERNEL_DS), "i"(KERNEL_CS)
 		:
-		"memory", "rax", "rsp"
+		"memory", "rax"
 	);
 }
 
@@ -236,7 +236,7 @@ aos_bool gdt_init_ex(gdt_t* gdt, gdtr_t* gdtr, tss_t* tss) {
 		:
 		"m"(*gdtr), "i"(KERNEL_DS), "i"(KERNEL_CS)
 		:
-		"memory", "rax", "rsp"
+		"memory", "rax"
 	);
 
 	return AOS_TRUE;

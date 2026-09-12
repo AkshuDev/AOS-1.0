@@ -252,7 +252,7 @@ void aos_fs_init(struct pbfs_mount* mnt) {
 struct aos_file* fs_open(const char* path) {
 	if (!gmnt || !path) return NULL;
 
-	uint64_t path_len = strlen(path);
+	size_t path_len = strlen(path);
 	if (path_len >= PBFS_MAX_PATH_LEN) return NULL; // NULL Terminator requires +1 byte
 
 	PBFS_DMM_Entry e = {0};
@@ -299,7 +299,7 @@ struct aos_file* fs_open(const char* path) {
 	file->handle->path[path_len] = '\0';
 
 	if (file_exists) {
-		int out = pbfs_read_file_dmm(gmnt, path, &e, &file->handle->file_data, &file->handle->file_data_size);
+		int out = pbfs_read_file_dmm(gmnt, (char*)path, &e, &file->handle->file_data, &file->handle->file_data_size);
 		if (out == PBFS_RES_SUCCESS) {
 			file->handle->file_data_refresh_req = AOS_FALSE;
 		} else {

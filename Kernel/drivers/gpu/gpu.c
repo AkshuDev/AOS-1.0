@@ -30,38 +30,6 @@ void get_framebuffer_info_vmware(PCIe_FB* fb, pcie_device_t* device, gpu_device_
     //Device ID: 0x0405
     //BAR0: Framebuffer
     //BAR1: I/O Registers
-    uint32_t bar1 = pcie_read_bar(device->bus, device->slot, device->func, 1);
-    fb->mmio_base = bar1;
-
-    const uint32_t INDEX_PORT = 0;
-    const uint32_t VALUE_PORT = 1;
-    const uint32_t REG_ID = 0;
-    const uint32_t REG_ENABLE = 1;
-    const uint32_t REG_WIDTH = 2;
-    const uint32_t REG_HEIGHT = 3;
-    const uint32_t REG_BITS_PER_PIXEL = 7;
-    const uint32_t REG_FB_START = 16;
-    const uint32_t REG_FB_SIZE = 18;
-    const uint32_t SVGA_ID_2 = 0x90002;
-
-    uint32_t width = svga_read(bar1, REG_WIDTH, INDEX_PORT, VALUE_PORT);
-    uint32_t height = svga_read(bar1, REG_HEIGHT, INDEX_PORT, VALUE_PORT);
-    uint32_t bpp = svga_read(bar1, REG_BITS_PER_PIXEL, INDEX_PORT, VALUE_PORT);
-    uint32_t fbsize = svga_read(bar1, REG_FB_SIZE, INDEX_PORT, VALUE_PORT);
-
-    fb->w = width;
-    fb->h = height;
-    fb->bpp = bpp;
-    fb->size = fbsize;
-    fb->pitch = width * (bpp / 8);
-
-    gpu->name = "VMware SVGA II";
-    gpu->pcie_device = device;
-    gpu->framebuffer = fb;
-    gpu->init = NULL;
-    gpu->swap_buffers = NULL;
-    gpu->set_mode = NULL;
-    gpu->flush = NULL;
 }
 
 void get_framebuffer_info_virtio(PCIe_FB* fb, pcie_device_t* device, gpu_device_t* gpu) {

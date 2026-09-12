@@ -72,10 +72,10 @@ static struct page_table* alloc_page_table(uint64_t* phys_out) {
 	}
     if (!tbl) { serial_print("[PAGER] Failed to allocate page table\n"); return NULL; }
  
-	memset(tbl, 0, sizeof(volatile struct page_table));
+	memset((void*)tbl, 0, sizeof(volatile struct page_table));
 	*phys_out = phys;
 
-    return tbl;
+    return (struct page_table*)tbl;
 }
 
 static void load_cr3(uint64_t pml4_phys) {
@@ -138,7 +138,7 @@ void pager_init(void) {
             max_phys_addr = end_addr;
 
 		double pretty_size = 0;
-		char* pretty_unit = kbeautify_memory_size(e->size, &pretty_size);
+		const char* pretty_unit = kbeautify_memory_size(e->size, &pretty_size);
 
 		serial_printf("SMMAP: %p - %p (%.2lf %s) (Type %s [%d])\n", e->phys_start, end_addr, pretty_size, pretty_unit, uniboot_smmap_get_type_str(e->type), e->type);
         if (e->type == UNIBOOT_SMMAP_TYPE_FREE) {
@@ -161,8 +161,6 @@ void pager_init(void) {
     __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
     cpu_phys_bits = eax & 0xFF;
     cpu_virt_bits = (eax >> 8) & 0xFF;
-	uint64_t max_addr = (1ULL << cpu_phys_bits) - 1;
-
     uint64_t bits_req = bits_needed(max_phys_addr);
 
     if (bits_req > cpu_phys_bits) {
@@ -172,7 +170,7 @@ void pager_init(void) {
             max_phys_addr = (1ULL << cpu_phys_bits) - 1;
 		
 		double pretty_size = 0;
-		char* pretty_unit = kbeautify_memory_size(max_phys_addr, &pretty_size);
+		const char* pretty_unit = kbeautify_memory_size(max_phys_addr, &pretty_size);
         serial_printf("[PAGER] CPU Doesn't Support required %lu bits, hence maximum memory used will be %lu bits or %.2lf %s\n", bits_req, cpu_phys_bits, pretty_size, pretty_unit);
     }
 
@@ -180,7 +178,7 @@ void pager_init(void) {
     serial_print("[PAGER] Initialized AVMF\n");
 
     uint64_t kernel_pml4_phys = 0;
-    while (kernel_pml4.table == NULL) {
+    while (!kernel_pml4.table) {
         kernel_pml4.table = alloc_page_table(&kernel_pml4_phys);
 		kernel_pml4.lock = 0;
 		kernel_pml4.table_phys = kernel_pml4_phys;
@@ -261,7 +259,7 @@ struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags)
 		if (old & PAGE_PRESENT) {
 			spin_unlock_irqrestore(&pml4->lock, pml4_rflags);
 			if (old & PAGE_HUGE) {
-				if ((old & ~0x1FFFFFULL) == (phys & ~0x1FFFFFULL)) return pml4->table;
+				if ((old & ~0x1FFFFFULL) == (phys & ~0x1FFFFFULL)) return (struct page_table*)pml4->table;
 				return NULL;
 			}
 			return NULL;
@@ -275,7 +273,7 @@ struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags)
 
 			uint64_t old_phys = pd->entries[idx_pd] & ~0x1FFFFFULL;
 			if (old_phys == (phys & ~0x1FFFFFULL)) {
-				return pml4->table;
+				return (struct page_table*)pml4->table;
 			}
 			return NULL;
 		}
@@ -294,7 +292,7 @@ struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags)
 			spin_unlock_irqrestore(&pml4->lock, pml4_rflags);
 
 			if (old_phys == (phys & ~0xFFFULL)) {
-				return pml4->table;
+				return (struct page_table*)pml4->table;
 			}
     		return NULL;
 		}
@@ -302,7 +300,7 @@ struct page_table* pager_map(virt_addr_t virt, phys_addr_t phys, uint64_t flags)
 		spin_unlock_irqrestore(&pml4->lock, pml4_rflags);
     }
 
-    return pml4->table;
+    return (struct page_table*)pml4->table;
 }
 
 static void destroy_table(struct page_table* table, int level, uint64_t lock_rflags, aos_bool locked, uint64_t table_phys) {
@@ -325,7 +323,7 @@ static void destroy_table(struct page_table* table, int level, uint64_t lock_rfl
 }
 
 void pager_destroy_table(int level) {
-    struct page_table* table = mapped_pml4->table;
+    struct page_table* table = (struct page_table*)mapped_pml4->table;
     return destroy_table(table, level, 0, AOS_FALSE, mapped_pml4->table_phys);
 }
 

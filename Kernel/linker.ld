@@ -1,5 +1,11 @@
 ENTRY(kernel_main)
 
+PHDRS
+{
+    text PT_LOAD FLAGS(5); /* R + X */
+    data PT_LOAD FLAGS(6); /* R + W */
+}
+
 SECTIONS
 {
     /* Force the very start of the kernel at VIRTUAL ADDR 0x100000 */
@@ -9,19 +15,19 @@ SECTIONS
     /* Kernel entry section */
     .start : {
         KEEP(*(.start)) /* kernel_main goes here */
-    }
+    } :text
 
     /* All other code, including PBFS helpers */
     . = ALIGN(0x1000);
     .text : {
         *(.text*) /* everything else goes after .start */
-    }
+    } :text
 
     . = ALIGN(0x1000);
-    .rodata : { *(.rodata*) }
+    .rodata : { *(.rodata*) } :text
 
     . = ALIGN(0x1000);
-    .data   : { *(.data*) }
+    .data : { *(.data*) } :data
 
     . = ALIGN(0x1000);
     .bss : {
@@ -35,7 +41,7 @@ SECTIONS
         stack_top__ = .;
 
         __bss_end = .;
-    }
+    } :data
 
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }
 }

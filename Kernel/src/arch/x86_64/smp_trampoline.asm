@@ -81,8 +81,8 @@ long_mode_entry:
 	xor r15, r15
 
     ; Load the stack and jump into the Kernel
-    mov rsp, [0x510] ; Stack provided at 0x510
-    mov rax, [0x518] ; Kernel entry provided at 0x518
+    mov rsp, [abs 0x510] ; Stack provided at 0x510
+    mov rax, [abs 0x518] ; Kernel entry provided at 0x518
     jmp rax
 
 ALIGN 16

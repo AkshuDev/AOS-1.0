@@ -113,8 +113,8 @@ static void avmf_free_phys_page(uint64_t phys) {
     return;
 }
 
-static uint32_t avmf_convert_flags_to_pager_flags(uint32_t flags) {
-	uint32_t out = PAGE_XD;
+static uint64_t avmf_convert_flags_to_pager_flags(uint32_t flags) {
+	uint64_t out = PAGE_XD;
 	if (flags & AVMF_FLAG_WRITEABLE || flags & AVMF_FLAG_READABLE) out |= PAGE_RW;
 	if (flags & AVMF_FLAG_EXECUTABLE) out &= ~PAGE_XD;
 	
@@ -145,33 +145,6 @@ static avmf_region_header_t* avmf_find_region(uint64_t min_virt, uint64_t max_vi
 		} else if (r->limit == max_virt) {
 			score += 100;
 		} else if (r->limit > min_size + min_virt) {
-			score += 10;
-		}
-
-		if (score > best_score) best = r;
-	}
-
-	return best;
-}
-
-static avmf_region_header_t* avmf_find_region_phys(uint64_t min_phys, uint64_t max_phys, uint64_t min_size) {
-	avmf_region_header_t* best = NULL;
-	uint64_t best_score = 0;
-	
-	for (uint64_t i = 0; i < physical_region_count; i++) {
-		avmf_region_header_t* r = &physical_regions[i];
-		if (r->signature != AVMF_SIGNATURE) continue;
-		if (r->version != AVMF_VERSION) continue;
-		if (r->limit < 1 || r->limit <= r->base) continue;
-
-		if (r->base > min_phys) continue;
-
-		uint64_t score = 0;
-		if (r->limit > max_phys) {
-			score += 1000;
-		} else if (r->limit == max_phys) {
-			score += 100;
-		} else if (r->limit > min_size + max_phys) {
 			score += 10;
 		}
 
@@ -731,8 +704,6 @@ static void avmf_region_free(avmf_region_header_t* r, uint64_t base, uint64_t si
 	
 	size = align4k(size);
     if (base > UINT64_MAX - size) return;
-
-    uint64_t end = base + size;
     if (r->alloc_count == 0 || !r->alloc_list) return;
 
     avmf_header_t* c = r->alloc_list;
@@ -951,7 +922,7 @@ uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, uint32_t flags, uint64_
     avmf_header_t* hdr = avmf_alloc_hdr_internal(true_size, type, &r);
     if (!hdr || !r) return 0;
 
-	uint32_t f = avmf_convert_flags_to_pager_flags(flags);
+	uint64_t f = avmf_convert_flags_to_pager_flags(flags);
 	if (hdr->phys_addr > 0) {
     	if (hdr->type != AVMF_HDR_TYPE_CACHE) {
 			pager_map_range((uint64_t)hdr->virt_addr, hdr->phys_addr, hdr->size, f);

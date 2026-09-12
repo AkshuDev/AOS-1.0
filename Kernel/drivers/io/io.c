@@ -55,31 +55,6 @@ static uint64_t klog_pos;
 static aos_bool klog_present;
 static aos_bool klog_msg_started;
 
-// Returns n / d
-static uint64_t udiv64(uint64_t n, uint64_t d) {
-    uint64_t q = 0;
-    int i;
-    for (i = 63; i >= 0; i--) {
-        q <<= 1;
-        if ((n >> i) >= d) {
-            n -= d << i;
-            q |= 1;
-        }
-    }
-    return q;
-}
-
-// Returns n % d
-static uint64_t umod64(uint64_t n, uint64_t d) {
-    int i;
-    for (i = 63; i >= 0; i--) {
-        if ((n >> i) >= d) {
-            n -= d << i;
-        }
-    }
-    return n;
-}
-
 static aos_bool klog_realloc(void) {
 	if ((uint64_t)klog == (uint64_t)preklog) return AOS_FALSE;
 
@@ -153,10 +128,11 @@ void serial_init(aos_bool pre_init) {
 
 	asm_outb(SERIAL_SCRATCH_PORT, 0xAE);
 
-    if (asm_inb(SERIAL_SCRATCH_PORT) == 0xAE)
+    if (asm_inb(SERIAL_SCRATCH_PORT) == 0xAE) {
         serial_present = AOS_TRUE;
-    else
+	} else {
         serial_present = AOS_FALSE;
+	}
 
 	klog = preklog;
 	klog_msg_started = AOS_FALSE;
@@ -179,7 +155,7 @@ void serial_init_klog(const char* path, struct pbfs_mount* mnt) {
 	size_t size = 0;
 	klog_present = AOS_FALSE;
 	if (pbfs_find_entry(path, &out, &out_lba, mnt) == PBFS_RES_SUCCESS && out.type & METADATA_FLAG_SYS) {
-		pbfs_read_file(mnt, path, &data, &size);
+		pbfs_read_file(mnt, (char*)path, &data, &size);
 		klog_present = AOS_TRUE;
 	}
 
@@ -198,8 +174,8 @@ void serial_flush_klog(const char* path, struct pbfs_mount* mnt) {
 		return;
 	}
 	
-	if (klog_present) pbfs_update_file(mnt, path, klog, klog_end);
-	else pbfs_add(mnt, path, 0, 0, METADATA_FLAG_FILE, PERM_READ | PERM_WRITE | PERM_SYS, klog, klog_end);
+	if (klog_present) pbfs_update_file(mnt, (char*)path, (uint8_t*)klog, klog_end);
+	else pbfs_add(mnt, (char*)path, 0, 0, METADATA_FLAG_FILE, PERM_READ | PERM_WRITE | PERM_SYS, (uint8_t*)klog, klog_end);
 }
 
 void serial_deinit_klog(const char* path, struct pbfs_mount* mnt) {
@@ -213,8 +189,8 @@ void serial_deinit_klog(const char* path, struct pbfs_mount* mnt) {
 		return;
 	}
 	
-	if (klog_present) pbfs_update_file(mnt, path, klog, klog_end);
-	else pbfs_add(mnt, path, 0, 0, METADATA_FLAG_SYS, PERM_READ | PERM_WRITE, klog, klog_end);
+	if (klog_present) pbfs_update_file(mnt, (char*)path, (uint8_t*)klog, klog_end);
+	else pbfs_add(mnt, (char*)path, 0, 0, METADATA_FLAG_SYS, PERM_READ | PERM_WRITE, (uint8_t*)klog, klog_end);
 	if ((uint64_t)klog != (uint64_t)preklog) avmf_free((uint64_t)klog);
 	klog = NULL;
 	klog_end = 0;
@@ -423,7 +399,7 @@ void serial_printf(const char* fmt, ...) {
                 case 'f': {
 					double f;
 					if (is_long >= 1) f = va_arg(args, double);
-					else f = (double)va_arg(args, float);
+					else f = (double)va_arg(args, double); // float promoted to double
 
                     serial_print_ex_float(f, width, precision, zero_pad);
                     break;
@@ -902,7 +878,7 @@ void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
 				case 'f': {
 					double f;
 					if (is_long >= 1) f = va_arg(args, double);
-					else f = (double)va_arg(args, float);
+					else f = (double)va_arg(args, double);
 
                     vmem_print_ex_float(design, f, width, precision, zero_pad);
                     break;
@@ -1081,8 +1057,8 @@ int ata_identify_device(uint8_t drive, ata_identity_t* out_info) {
     for (int i = 39; i >= 0 && out_info->model[i] == ' '; i--) out_info->model[i] = '\0';
     for (int i = 19; i >= 0 && out_info->serial[i] == ' '; i--) out_info->serial[i] = '\0';
 
-    uint32_t lba28_sectors = *((uint32_t*)&buffer[60]);
-    uint64_t lba48_sectors = *((uint64_t*)&buffer[100]);
+	uint32_t lba28_sectors = ((uint32_t)buffer[60]) | ((uint32_t)buffer[61] << 16);
+	uint64_t lba48_sectors = ((uint64_t)buffer[100]) | ((uint64_t)buffer[101] << 16) | ((uint64_t)buffer[102] << 32) | ((uint64_t)buffer[103] << 48);
     uint16_t lba48_supported = buffer[83];
 
     if ((lba48_supported & (1 << 10)) && lba48_sectors > 0) {
@@ -1209,15 +1185,6 @@ int ata_write_sectors(struct ATA_DP* dp, const void* buffer, uint8_t drive) {
 
     return 0; // Success
 }
-
-// PS2
-// Scan Codes
-static const char scan_to_ascii[128] = {
-    0,  27, '1','2','3','4','5','6','7','8','9','0','-','=', '\b',
-    '\t','q','w','e','r','t','y','u','i','o','p','[',']','\n',0,
-    'a','s','d','f','g','h','j','k','l',';','\'','`',0,'\\',
-    'z','x','c','v','b','n','m',',','.','/',0,'*',0,' ',0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-};
 
 int is_ps2_present(void) {
     uint64_t rflags = spin_lock_irqsave(&ps2_lock);

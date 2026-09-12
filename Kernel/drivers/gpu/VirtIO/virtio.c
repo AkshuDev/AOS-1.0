@@ -47,31 +47,6 @@ static virtio_controller* controllers;
 static uint64_t controller_count;
 static uint64_t controller_cap;
 
-static void mmio_write64(uint64_t addr, uint64_t val) {
-    *(volatile uint64_t*)addr = val;
-}
-static uint64_t mmio_read64(uint64_t addr) {
-    return *(volatile uint64_t*)addr;
-}
-static void mmio_write32(uint64_t addr, uint32_t val) {
-    *(volatile uint32_t*)addr = val;
-}
-static uint32_t mmio_read32(uint64_t addr) {
-    return *(volatile uint32_t*)addr;
-}
-static void mmio_write16(uint64_t addr, uint16_t val) {
-    *(volatile uint16_t*)addr = val;
-}
-static uint16_t mmio_read16(uint64_t addr) {
-    return *(volatile uint16_t*)addr;
-}
-static void mmio_write8(uint64_t addr, uint8_t val) {
-    *(volatile uint8_t*)addr = val;
-}
-static uint8_t mmio_read8(uint64_t addr) {
-    return *(volatile uint8_t*)addr;
-}
-
 static void wait_till_requests_are_complete(virtio_controller* kvc) {
 
 }
@@ -391,7 +366,7 @@ static void virtqueue_wait_complete_async(void* kvc_raw) {
 	while (kvc->virtq.desc[tail].flags & VIRTQ_DESC_F_NEXT) tail = kvc->virtq.desc[tail].next;
 
 	while (kvc->virtq.last_used_idx != kvc->virtq.used->idx) {
-		struct virtq_used_elem *elem = &kvc->virtq.used->ring[kvc->virtq.last_used_idx % kvc->virtq.queue_size];
+		struct virtq_used_elem* elem = (struct virtq_used_elem*)&kvc->virtq.used->ring[kvc->virtq.last_used_idx % kvc->virtq.queue_size];
 
 		uint16_t head = elem->id;
 		uint16_t tail = head;
@@ -435,7 +410,7 @@ static aos_bool virtqueue_wait_complete_sync(virtio_controller* kvc) {
 	while (kvc->virtq.desc[tail].flags & VIRTQ_DESC_F_NEXT) tail = kvc->virtq.desc[tail].next;
 
 	while (kvc->virtq.last_used_idx != kvc->virtq.used->idx) {
-		struct virtq_used_elem *elem = &kvc->virtq.used->ring[kvc->virtq.last_used_idx % kvc->virtq.queue_size];
+		struct virtq_used_elem* elem = (struct virtq_used_elem*)&kvc->virtq.used->ring[kvc->virtq.last_used_idx % kvc->virtq.queue_size];
 
 		uint16_t head = elem->id;
 		uint16_t tail = head;
@@ -472,7 +447,7 @@ static aos_bool virtio_send_ex(virtio_controller* kvc, struct virtq_desc* descs,
 	uint16_t c = head;
     for (size_t i = 0; i < desc_count; i++) {
 		uint16_t idx = c;
-		memcpy(&kvc->virtq.desc[idx], &descs[i], sizeof(struct virtq_desc));
+		memcpy((void*)&kvc->virtq.desc[idx], &descs[i], sizeof(struct virtq_desc));
 		if (i + 1 < desc_count) { // Continue chain
 			if (kvc->virtq.free_head == 0xFFFF) {
 				spin_unlock_irqrestore(&kvc->virtq_lock, flags);
@@ -505,7 +480,9 @@ static aos_bool virtio_notify_device(virtio_controller* kvc) {
 
 	// Notify Doorbell
     uintptr_t db = kvc->notify_base + (kvc->common_cfg->queue_notify_off * kvc->notify_multiplier);
-    mmio_write32(db, 0);
+    *(volatile uint32_t*)db = 0;
+
+	return AOS_TRUE;
 }
 
 static aos_bool virtio_submit_async(virtio_controller* kvc, uint8_t cmd_slot, size_t cmd_size, size_t resp_size) {
@@ -758,7 +735,6 @@ static void virtio_destroy(virtio_controller* kvc) {
 aos_bool virtio_flush(struct gpu_device* gpu_, uint32_t x, uint32_t y, uint32_t w, uint32_t h, int resource_id) {
     if (gpu_->controller_idx >= controller_count || !controllers) return AOS_FALSE;
 	virtio_controller* kvc = &controllers[gpu_->controller_idx];
-	struct gpu_device* gpu = kvc->gpu; // ensure we use the linked gpu
 	
     uint64_t cur_buf_slot = wait_for_free_buf(kvc);
 
@@ -804,10 +780,7 @@ aos_bool virtio_init(struct AOS_Module* m) {
 	gpu->controller_idx = controller_count;
 	controller_count++;
 
-    pcie_device_t* dev = &m->Modules.driver_module.pcie_device;
-    PCIe_FB* fb = gpu->framebuffer;
-
-    serial_print("[VIRTIO DRIVER] Initializing...\n");
+    serial_print("[VirtIO:GPU] Initializing...\n");
 	if (!virtio_map(kvc)) {
 		virtio_destroy(kvc);
 		return AOS_FALSE;
@@ -888,10 +861,8 @@ aos_bool virtio_init(struct AOS_Module* m) {
 
 aos_bool virtio_init_resources(struct gpu_device* gpu_, int id) {
 	if (gpu_->controller_idx >= controller_count || !controllers) return AOS_FALSE;
-	virtio_controller* kvc = &controllers[gpu_->controller_idx];
-	struct gpu_device* gpu = kvc->gpu; // ensure we use the linked gpu
 
-    serial_print("[VIRTIO DRIVER] Initializing Resources...\n");
+    serial_print("[VirtIO:GPU] Initializing Resources...\n");
     serial_print("[VirtIO:GPU] Initialization of resources completed!\n");
 	return AOS_TRUE;
 }
@@ -1030,9 +1001,10 @@ aos_bool virtio_refresh(struct gpu_device* gpu_, uint64_t flags) {
 	}
 
 	serial_print("[VirtIO:GPU] Refresh Completed!\n");
+	return AOS_TRUE;
 }
 
-static aos_bool virtio_create_context(virtio_controller* kvc, uint32_t ctx_id, char* debug_name, size_t debug_name_len) {
+static aos_bool virtio_create_context(virtio_controller* kvc, uint32_t ctx_id, const char* debug_name, size_t debug_name_len) {
     uint64_t cur_buf_slot = wait_for_free_buf(kvc);
     struct virtio_gpu_ctx_create* cmd = (struct virtio_gpu_ctx_create*)&kvc->cmd_buf[cur_buf_slot];
     memset(cmd, 0, sizeof(*cmd));
@@ -1179,7 +1151,7 @@ struct pyrion_ctx* pyrion_create_ctx_virtio(struct pyrion_create_ctx_info ctx_in
     memset(ctx->cmd_stream.stream, 0, ctx->cmd_stream.stream_cap);
 
 	ctx_info.name[63] = '\0';
-    virtio_create_context(kvc, ctx->ctx_id, (char*)ctx_info.name, strlen((char*)ctx_info.name));
+    virtio_create_context(kvc, ctx->ctx_id, ctx_info.name, strlen(ctx_info.name));
     
     ctx->viewport.x = 0; ctx->viewport.y=0; ctx->viewport.width=0; ctx->viewport.height=0; ctx->viewport.color = 0;
     ctx->valid = AOS_TRUE;
@@ -1398,7 +1370,7 @@ aos_bool pyrion_use_device_virtio(struct pyrion_ctx* ctx, struct pyrion_physical
     rast_args[VIRGL_OBJ_RS_S0] = VIRGL_OBJ_RS_S0_FILL_FRONT(2) | VIRGL_OBJ_RS_S0_FILL_BACK(2) | VIRGL_OBJ_RS_S0_FRONT_CCW(1) | VIRGL_OBJ_RS_S0_FLATSHADE(1);
 	rast_args[VIRGL_OBJ_RS_POINT_SIZE] = 1;
 	rast_args[VIRGL_OBJ_RS_LINE_WIDTH] = 1;
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CREATE_OBJECT, VIRTIO_VIRGL_OBJECT_RASTERIZER, rast_args, VIRGL_OBJ_RS_SIZE);
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CREATE_OBJECT, VIRTIO_VIRGL_OBJECT_RASTERIZER, (uint32_t*)rast_args, VIRGL_OBJ_RS_SIZE);
     pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_BIND_OBJECT, VIRTIO_VIRGL_OBJECT_RASTERIZER, &rast_handle, 1);
 
 	// Set Blend State
@@ -1408,7 +1380,7 @@ aos_bool pyrion_use_device_virtio(struct pyrion_ctx* ctx, struct pyrion_physical
     blend_args[VIRGL_OBJ_BLEND_HANDLE] = blend_handle;
     blend_args[VIRGL_OBJ_BLEND_S1] = VIRGL_OBJ_BLEND_S1_LOGICOP_FUNC(PIPE_LOGICOP_NOOP);
 	blend_args[VIRGL_OBJ_BLEND_S2(0)] = VIRGL_OBJ_BLEND_S2_RT_RGB_SRC_FACTOR(PIPE_BLENDFACTOR_ONE) | VIRGL_OBJ_BLEND_S2_RT_RGB_FUNC(PIPE_BLEND_ADD) | VIRGL_OBJ_BLEND_S2_RT_ALPHA_SRC_FACTOR(PIPE_BLENDFACTOR_ONE) | VIRGL_OBJ_BLEND_S2_RT_ALPHA_FUNC(PIPE_BLEND_ADD);
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CREATE_OBJECT, VIRTIO_VIRGL_OBJECT_BLEND, blend_args, VIRGL_OBJ_BLEND_SIZE);
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CREATE_OBJECT, VIRTIO_VIRGL_OBJECT_BLEND, (uint32_t*)blend_args, VIRGL_OBJ_BLEND_SIZE);
     pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_BIND_OBJECT, VIRTIO_VIRGL_OBJECT_BLEND, &blend_handle, 1);
 
 	// Flush VIRGL
@@ -1423,21 +1395,19 @@ void pyrion_unuse_device_virtio(struct pyrion_ctx* ctx) {
 	if (!ctx) return;
 	if (!ctx->device_set || !ctx->valid) return;
 	if (ctx->controller_idx >= controller_count || !controllers) return;
-	virtio_controller* kvc = &controllers[ctx->controller_idx];
 
 	ctx->device_set = AOS_FALSE;
 	ctx->usable = AOS_FALSE;
 
-	uint64_t slot;
 	if (ctx->res_id_rast > RES_ID_RAST_BASE && ctx->res_id_rast <= RES_ID_RAST_BASE + MAX_PYRION_CONTEXTS) {
 		uint32_t args[1] = {ctx->res_id_rast};
-		pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_DESTROY_OBJECT, VIRTIO_VIRGL_OBJECT_RASTERIZER, args, 1);
+		pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_DESTROY_OBJECT, VIRTIO_VIRGL_OBJECT_RASTERIZER, (uint32_t*)args, 1);
 	}
 	ctx->res_id_rast = 0;
 
 	if (ctx->res_id_blend > RES_ID_BLEND_BASE && ctx->res_id_blend <= RES_ID_BLEND_BASE + MAX_PYRION_CONTEXTS) {
 		uint32_t args[1] = {ctx->res_id_blend};
-		pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_DESTROY_OBJECT, VIRTIO_VIRGL_OBJECT_BLEND, args, 1);
+		pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_DESTROY_OBJECT, VIRTIO_VIRGL_OBJECT_BLEND, (uint32_t*)args, 1);
 	}
 	ctx->res_id_blend = 0;
 
@@ -1558,7 +1528,7 @@ aos_bool pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect viewp
 		}
 
 		uint32_t surf_args[1] = {ctx->res_id_scanout};
-		pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_DESTROY_OBJECT, VIRTIO_VIRGL_OBJECT_SURFACE, surf_args, 1);
+		pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_DESTROY_OBJECT, VIRTIO_VIRGL_OBJECT_SURFACE, (uint32_t*)surf_args, 1);
 	} else {
 		if (!pyrion_create_viewport_res(ctx, kvc, viewport)) return AOS_FALSE;
 	}
@@ -1594,12 +1564,12 @@ aos_bool pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect viewp
 	surf_args[VIRGL_OBJ_SURFACE_HANDLE] = ctx->res_id_scanout;
 	surf_args[VIRGL_OBJ_SURFACE_RES_HANDLE] = ctx->res_id_3d;
 	surf_args[VIRGL_OBJ_SURFACE_FORMAT] = PIPE_FORMAT_R8G8B8A8_UNORM;
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CREATE_OBJECT, VIRTIO_VIRGL_OBJECT_SURFACE, surf_args, VIRGL_OBJ_SURFACE_SIZE);
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CREATE_OBJECT, VIRTIO_VIRGL_OBJECT_SURFACE, (uint32_t*)surf_args, VIRGL_OBJ_SURFACE_SIZE);
     
 	uint32_t fb_args[VIRGL_SET_FRAMEBUFFER_STATE_SIZE(1)] = {0};
 	fb_args[VIRGL_SET_FRAMEBUFFER_STATE_NR_CBUFS] = 1;
 	fb_args[VIRGL_SET_FRAMEBUFFER_STATE_CBUF_HANDLE(0)] = ctx->res_id_scanout;
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_FRAMEBUFFER_STATE, VIRTIO_VIRGL_OBJECT_NULL, fb_args, VIRGL_SET_FRAMEBUFFER_STATE_SIZE(1));
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_FRAMEBUFFER_STATE, VIRTIO_VIRGL_OBJECT_NULL, (uint32_t*)fb_args, VIRGL_SET_FRAMEBUFFER_STATE_SIZE(1));
 
     float width = (float)viewport.width;
     float height = (float)viewport.height;
@@ -1616,7 +1586,7 @@ aos_bool pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect viewp
     uint32_t init_scissor[VIRGL_SET_SCISSOR_STATE_SIZE(1)] = {0};
 	init_scissor[VIRGL_SET_SCISSOR_MINX_MINY(0)] = (0 << 16) | 0;
 	init_scissor[VIRGL_SET_SCISSOR_MAXX_MAXY(0)] = ((viewport.height & 0xFFFF) << 16) | (viewport.width & 0xFFFF);
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, init_scissor, VIRGL_SET_SCISSOR_STATE_SIZE(1));
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, (uint32_t*)init_scissor, VIRGL_SET_SCISSOR_STATE_SIZE(1));
 
 	ctx->usable = AOS_TRUE;
 	ctx->viewport_set = AOS_TRUE;
@@ -1713,12 +1683,12 @@ aos_bool pyrion_clear_virtio(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8
     float color[4] = {r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f};
     uint32_t args[VIRGL_OBJ_CLEAR_SIZE] = {0};
     args[VIRGL_OBJ_CLEAR_BUFFERS] = PIPE_CLEAR_COLOR;
-	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_0] = color[0];
-	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_1] = color[1];
-	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_2] = color[2];
-	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_3] = color[3];
+	memcpy(&args[VIRGL_OBJ_CLEAR_COLOR_0], &color[0], sizeof(float));
+    memcpy(&args[VIRGL_OBJ_CLEAR_COLOR_1], &color[1], sizeof(float));
+    memcpy(&args[VIRGL_OBJ_CLEAR_COLOR_2], &color[2], sizeof(float));
+    memcpy(&args[VIRGL_OBJ_CLEAR_COLOR_3], &color[3], sizeof(float));
 
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CLEAR, VIRTIO_VIRGL_OBJECT_NULL, args, VIRGL_OBJ_CLEAR_SIZE);
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CLEAR, VIRTIO_VIRGL_OBJECT_NULL, (uint32_t*)args, VIRGL_OBJ_CLEAR_SIZE);
 	return AOS_TRUE;
 }
 
@@ -1740,7 +1710,7 @@ aos_bool pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uin
     scissor_args[VIRGL_SET_SCISSOR_MINX_MINY(0)] = ((y & 0xFFFF) << 16) | (x & 0xFFFF);
     scissor_args[VIRGL_SET_SCISSOR_MAXX_MAXY(0)] = (((y + 1) & 0xFFFF) << 16) | ((x + 1) & 0xFFFF);
 
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, VIRGL_SET_SCISSOR_STATE_SIZE(1));
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, (uint32_t*)scissor_args, VIRGL_SET_SCISSOR_STATE_SIZE(1));
     
     float color[4] = {r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f};
     uint32_t args[VIRGL_OBJ_CLEAR_SIZE] = {0};
@@ -1750,12 +1720,12 @@ aos_bool pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uin
 	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_2] = color[2];
 	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_3] = color[3];
 
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CLEAR, VIRTIO_VIRGL_OBJECT_NULL, args, VIRGL_OBJ_CLEAR_SIZE);
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CLEAR, VIRTIO_VIRGL_OBJECT_NULL, (uint32_t*)args, VIRGL_OBJ_CLEAR_SIZE);
 
     scissor_args[VIRGL_SET_SCISSOR_MINX_MINY(0)] = ((ctx->viewport.y & 0xFFFF) << 16) | (ctx->viewport.x & 0xFFFF);
     scissor_args[VIRGL_SET_SCISSOR_MAXX_MAXY(0)] = (((ctx->viewport.y + ctx->viewport.height) & 0xFFFF) << 16) | ((ctx->viewport.x + ctx->viewport.width) & 0xFFFF);
 
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, VIRGL_SET_SCISSOR_STATE_SIZE(1));
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, (uint32_t*)scissor_args, VIRGL_SET_SCISSOR_STATE_SIZE(1));
 	return AOS_TRUE;
 }
 
@@ -1874,7 +1844,7 @@ aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y,
     args[VIRGL_CMD_RCR_SRC_H] = glyph->height; // Height of char
     args[VIRGL_CMD_RCR_SRC_D] = 1; // Depth
 
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_RESOURCE_COPY_REGION, VIRTIO_VIRGL_OBJECT_NULL, args, VIRGL_CMD_RESOURCE_COPY_REGION_SIZE);
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_RESOURCE_COPY_REGION, VIRTIO_VIRGL_OBJECT_NULL, (uint32_t*)args, VIRGL_CMD_RESOURCE_COPY_REGION_SIZE);
 	return AOS_TRUE;
 }
 
@@ -2026,7 +1996,7 @@ aos_bool pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint
     scissor_args[VIRGL_SET_SCISSOR_MINX_MINY(0)] = ((y & 0xFFFF) << 16) | (x & 0xFFFF);
     scissor_args[VIRGL_SET_SCISSOR_MAXX_MAXY(0)] = (((y + h) & 0xFFFF) << 16) | ((x + w) & 0xFFFF);
 
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, VIRGL_SET_SCISSOR_STATE_SIZE(1));
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, (uint32_t*)scissor_args, VIRGL_SET_SCISSOR_STATE_SIZE(1));
     
     float color[4] = {r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f};
     uint32_t args[VIRGL_OBJ_CLEAR_SIZE] = {0};
@@ -2036,12 +2006,12 @@ aos_bool pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint
 	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_2] = color[2];
 	((float*)args)[VIRGL_OBJ_CLEAR_COLOR_3] = color[3];
 
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CLEAR, VIRTIO_VIRGL_OBJECT_NULL, args, VIRGL_OBJ_CLEAR_SIZE);
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_CLEAR, VIRTIO_VIRGL_OBJECT_NULL, (uint32_t*)args, VIRGL_OBJ_CLEAR_SIZE);
 
     scissor_args[VIRGL_SET_SCISSOR_MINX_MINY(0)] = ((ctx->viewport.y & 0xFFFF) << 16) | (ctx->viewport.x & 0xFFFF);
     scissor_args[VIRGL_SET_SCISSOR_MAXX_MAXY(0)] = (((ctx->viewport.y + ctx->viewport.height) & 0xFFFF) << 16) | ((ctx->viewport.x + ctx->viewport.width) & 0xFFFF);
 
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, scissor_args, VIRGL_SET_SCISSOR_STATE_SIZE(1));
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_SET_SCISSOR_STATE, VIRTIO_VIRGL_OBJECT_NULL, (uint32_t*)scissor_args, VIRGL_SET_SCISSOR_STATE_SIZE(1));
 	return AOS_TRUE;
 }
 
@@ -2082,6 +2052,6 @@ aos_bool pyrion_blit_virtio(struct pyrion_ctx *ctx, uint32_t dst_res, uint32_t s
     args[VIRGL_CMD_BLIT_SRC_H] = height;
     args[VIRGL_CMD_BLIT_SRC_D] = 1;
 
-    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_BLIT, VIRTIO_VIRGL_OBJECT_NULL, args, VIRGL_CMD_BLIT_SIZE);
+    pyrion_push_virgl(ctx, VIRTIO_VIRGL_CCMD_BLIT, VIRTIO_VIRGL_OBJECT_NULL, (uint32_t*)args, VIRGL_CMD_BLIT_SIZE);
 	return AOS_TRUE;
 }

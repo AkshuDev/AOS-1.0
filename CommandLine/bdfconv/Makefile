@@ -12,7 +12,7 @@ CC := gcc
 LD := gcc
 
 OPT_LEVEL ?= 3
-EXTRA ?= -march=x86-64 -mtune=generic -funroll-loops -w
+EXTRA ?= -march=x86-64 -mtune=generic -funroll-loops
 
 CFLAGS := -O$(OPT_LEVEL) $(EXTRA) -Wall -Wextra $(INC_FLAGS)
 LDFLAGS :=

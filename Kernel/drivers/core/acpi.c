@@ -233,17 +233,17 @@ static void acpi_parse_mcfg(struct acpi_mcfg* mcfg) {
 static void acpi_parse_fadt(struct acpi_fadt* fadt) {
     acpi_timer_init(fadt);
 
-	uint64_t dsdt_phys = 0x0;
-	if (fadt->header.revision >= 2) { // 64-bit version
-		dsdt_phys = fadt_table->x_dsdt;
-	} else {
-		dsdt_phys = fadt_table->dsdt;
-	}
-	if (!dsdt_phys) return;
+	// uint64_t dsdt_phys = 0x0;
+	// if (fadt->header.revision >= 2) { // 64-bit version
+	// 	dsdt_phys = fadt_table->x_dsdt;
+	// } else {
+	// 	dsdt_phys = fadt_table->dsdt;
+	// }
+	// if (!dsdt_phys) return;
 
-	struct acpi_sdt_header* dsdt = (struct acpi_sdt_header*)(AOS_DIRECT_MAP_BASE + dsdt_phys);
-	uint8_t* aml = ((uint8_t*)dsdt) + sizeof(struct acpi_sdt_header);
-	size_t aml_length = dsdt->length - sizeof(struct acpi_sdt_header);
+	// struct acpi_sdt_header* dsdt = (struct acpi_sdt_header*)(AOS_DIRECT_MAP_BASE + dsdt_phys);
+	// uint8_t* aml = ((uint8_t*)dsdt) + sizeof(struct acpi_sdt_header);
+	// size_t aml_length = dsdt->length - sizeof(struct acpi_sdt_header);
 }
 
 static void acpi_parse_rsdt(struct acpi_rsdp_descriptor* rsdp) {
@@ -335,7 +335,6 @@ static void acpi_pre_shutdown_reboot(void) {
 }
 
 static void acpi_8042_reboot(void) {
-    uint8_t good = 0x02;
     for (int i = 0; i < 100000; i++) {
         if (!(asm_inb(0x64) & 0x02)) break;
     }
@@ -351,9 +350,9 @@ static void acpi_io_reboot(void) {
 }
 
 static void acpi_pci_reboot(void) {
-    asm_outb(0x02, 0xCF9);
+    asm_outb(0xCF9, 0x02);
     kdelay(1);
-    asm_outb(0x06, 0xCF9);
+    asm_outb(0xCF9, 0x06);
 }
 
 static void acpi_triple_fault_reboot(void) {

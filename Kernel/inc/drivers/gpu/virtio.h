@@ -186,7 +186,7 @@ struct virtio_gpu_resource_detach_backing {
     struct virtio_gpu_ctrl_hdr hdr;
     uint32_t resource_id;
     uint32_t padding;
-} __attribute__((used));
+} __attribute__((packed));
 
 struct virtio_gpu_set_scanout {
     struct virtio_gpu_ctrl_hdr hdr;

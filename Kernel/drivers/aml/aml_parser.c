@@ -114,7 +114,7 @@ static aml_node_t* node_pool;
 static uint64_t node_pool_cap;
 static uint64_t node_pool_count;
 
-static uint8_t aml_peek(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) uint8_t aml_peek(aml_stream_t* s, aos_bool* valid) {
 	if (!s) {
 		if (valid) *valid = AOS_FALSE;
 		return 0;
@@ -127,7 +127,7 @@ static uint8_t aml_peek(aml_stream_t* s, aos_bool* valid) {
     return *s->ptr;
 }
 
-static uint8_t aml_next(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) uint8_t aml_next(aml_stream_t* s, aos_bool* valid) {
 	if (!s) {
 		if (valid) *valid = AOS_FALSE;
 		return 0;
@@ -141,7 +141,7 @@ static uint8_t aml_next(aml_stream_t* s, aos_bool* valid) {
     return *s->ptr++;
 }
 
-static aos_bool aml_eof(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) aos_bool aml_eof(aml_stream_t* s, aos_bool* valid) {
 	if (!s) {
 		if (valid) *valid = AOS_FALSE;
 		return AOS_TRUE; // Use as EOF to prevent program continueing
@@ -150,7 +150,7 @@ static aos_bool aml_eof(aml_stream_t* s, aos_bool* valid) {
     return s->ptr >= s->end;
 }
 
-static void aml_push(aml_frame_t* frame, aml_object_t* obj, aos_bool* valid) {
+static __attribute__((unused)) void aml_push(aml_frame_t* frame, aml_object_t* obj, aos_bool* valid) {
 	if (!frame || !obj) goto error;
 	if (frame->stack_top >= 256) goto error;
 
@@ -164,7 +164,7 @@ static void aml_push(aml_frame_t* frame, aml_object_t* obj, aos_bool* valid) {
 	}
 }
 
-static struct aml_object* aml_pop(aml_frame_t* frame, aos_bool* valid) {
+static __attribute__((unused)) struct aml_object* aml_pop(aml_frame_t* frame, aos_bool* valid) {
 	if (!frame) goto error;
 	if (valid) *valid = AOS_TRUE;
 
@@ -177,7 +177,7 @@ static struct aml_object* aml_pop(aml_frame_t* frame, aos_bool* valid) {
 	}
 }
 
-static aml_object_t* get_new_object(void) {
+static __attribute__((unused)) aml_object_t* get_new_object(void) {
 	if (!object_pool) {
 		object_pool = (aml_object_t*)avmf_alloc(sizeof(aml_object_t)*OBJECTS_PER_PAGE, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
 		if (!object_pool) return NULL;
@@ -198,7 +198,7 @@ static aml_object_t* get_new_object(void) {
 	return &object_pool[object_pool_count++];
 }
 
-static aml_node_t* get_new_node(void) {
+static __attribute__((unused)) aml_node_t* get_new_node(void) {
 	if (!node_pool) {
 		node_pool = (aml_node_t*)avmf_alloc(sizeof(aml_node_t)*NODES_PER_PAGE, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
 		if (!node_pool) return NULL;
@@ -219,16 +219,16 @@ static aml_node_t* get_new_node(void) {
 	return &node_pool[node_pool_count++];
 }
 
-static aos_bool aml_is_lead_name_char(uint8_t c) {
+static __attribute__((unused)) aos_bool aml_is_lead_name_char(uint8_t c) {
 	return (c >= 'A' && c <= 'Z') || c == '_';
 }
 
-static aos_bool aml_is_name_char(uint8_t c) {
+static __attribute__((unused)) aos_bool aml_is_name_char(uint8_t c) {
 	return aml_is_lead_name_char(c) || (c >= '0' && c <= '9');
 }
 
 
-static uint32_t aml_parse_pkglen(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) uint32_t aml_parse_pkglen(aml_stream_t* s, aos_bool* valid) {
 	if (!s) goto error;
 
 	aos_bool v = AOS_TRUE;
@@ -260,7 +260,7 @@ static uint32_t aml_parse_pkglen(aml_stream_t* s, aos_bool* valid) {
 	}
 }
 
-static uint8_t aml_parse_byte(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) uint8_t aml_parse_byte(aml_stream_t* s, aos_bool* valid) {
 	if (!s) goto error;
 
 	return aml_next(s, valid);
@@ -270,7 +270,7 @@ static uint8_t aml_parse_byte(aml_stream_t* s, aos_bool* valid) {
 	}
 }
 
-static uint16_t aml_parse_word(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) uint16_t aml_parse_word(aml_stream_t* s, aos_bool* valid) {
 	if (!s) goto error;
 
 	aos_bool v = AOS_TRUE;
@@ -290,7 +290,7 @@ static uint16_t aml_parse_word(aml_stream_t* s, aos_bool* valid) {
 	}
 }
 
-static uint32_t aml_parse_dword(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) uint32_t aml_parse_dword(aml_stream_t* s, aos_bool* valid) {
 	if (!s) goto error;
 
 	aos_bool v = AOS_TRUE;
@@ -316,7 +316,7 @@ static uint32_t aml_parse_dword(aml_stream_t* s, aos_bool* valid) {
 	}
 }
 
-static uint64_t aml_parse_qword(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) uint64_t aml_parse_qword(aml_stream_t* s, aos_bool* valid) {
 	if (!s) goto error;
 
 	aos_bool v = AOS_TRUE;
@@ -354,7 +354,7 @@ static uint64_t aml_parse_qword(aml_stream_t* s, aos_bool* valid) {
 	}
 }
 
-static aml_node_t* aml_parse_zero_const(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) aml_node_t* aml_parse_zero_const(aml_stream_t* s, aos_bool* valid) {
 	if (!s) goto error;
 
 	aos_bool prefix_valid = AOS_TRUE;
@@ -376,7 +376,7 @@ static aml_node_t* aml_parse_zero_const(aml_stream_t* s, aos_bool* valid) {
 	}
 }
 
-static aml_node_t* aml_parse_one_const(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) aml_node_t* aml_parse_one_const(aml_stream_t* s, aos_bool* valid) {
 	if (!s) goto error;
 
 	aos_bool prefix_valid = AOS_TRUE;
@@ -398,7 +398,7 @@ static aml_node_t* aml_parse_one_const(aml_stream_t* s, aos_bool* valid) {
 	}
 }
 
-static aml_node_t* aml_parse_ones_const(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) aml_node_t* aml_parse_ones_const(aml_stream_t* s, aos_bool* valid) {
 	if (!s) goto error;
 
 	aos_bool prefix_valid = AOS_TRUE;
@@ -420,7 +420,7 @@ static aml_node_t* aml_parse_ones_const(aml_stream_t* s, aos_bool* valid) {
 	}
 }
 
-static aml_node_t* aml_parse_byte_const(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) aml_node_t* aml_parse_byte_const(aml_stream_t* s, aos_bool* valid) {
 	if (!s) goto error;
 
 	aos_bool prefix_valid = AOS_TRUE;
@@ -446,7 +446,7 @@ static aml_node_t* aml_parse_byte_const(aml_stream_t* s, aos_bool* valid) {
 	}
 }
 
-static aml_node_t* aml_parse_word_const(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) aml_node_t* aml_parse_word_const(aml_stream_t* s, aos_bool* valid) {
 	if (!s) goto error;
 
 	aos_bool prefix_valid = AOS_TRUE;
@@ -472,7 +472,7 @@ static aml_node_t* aml_parse_word_const(aml_stream_t* s, aos_bool* valid) {
 	}
 }
 
-static aml_node_t* aml_parse_dword_const(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) aml_node_t* aml_parse_dword_const(aml_stream_t* s, aos_bool* valid) {
 	if (!s) goto error;
 
 	aos_bool prefix_valid = AOS_TRUE;
@@ -498,7 +498,7 @@ static aml_node_t* aml_parse_dword_const(aml_stream_t* s, aos_bool* valid) {
 	}
 }
 
-static aml_node_t* aml_parse_qword_const(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) aml_node_t* aml_parse_qword_const(aml_stream_t* s, aos_bool* valid) {
 	if (!s) goto error;
 
 	aos_bool prefix_valid = AOS_TRUE;
@@ -524,7 +524,7 @@ static aml_node_t* aml_parse_qword_const(aml_stream_t* s, aos_bool* valid) {
 	}
 }
 
-static aml_node_t* aml_parse_string_const(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) aml_node_t* aml_parse_string_const(aml_stream_t* s, aos_bool* valid) {
 	if (!s) goto error;
 
 	aos_bool prefix_valid = AOS_TRUE;
@@ -564,7 +564,7 @@ static aml_node_t* aml_parse_string_const(aml_stream_t* s, aos_bool* valid) {
 	}
 }
 
-static aml_node_t* aml_parse_nameseg(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) aml_node_t* aml_parse_nameseg(aml_stream_t* s, aos_bool* valid) {
 	if (!s) goto error;
 	
 	aos_bool v = AOS_TRUE;
@@ -599,7 +599,7 @@ static aml_node_t* aml_parse_nameseg(aml_stream_t* s, aos_bool* valid) {
 	}
 }
 
-static aml_node_t* aml_parse_dual_namepath(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) aml_node_t* aml_parse_dual_namepath(aml_stream_t* s, aos_bool* valid) {
 	if (!s) goto error;
 
 	aos_bool prefix_valid = AOS_TRUE;
@@ -653,7 +653,7 @@ static aml_node_t* aml_parse_dual_namepath(aml_stream_t* s, aos_bool* valid) {
 	}
 }
 
-static aml_node_t* aml_parse_multi_namepath(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) aml_node_t* aml_parse_multi_namepath(aml_stream_t* s, aos_bool* valid) {
 	if (!s) goto error;
 
 	aos_bool prefix_valid = AOS_TRUE;
@@ -670,7 +670,7 @@ static aml_node_t* aml_parse_multi_namepath(aml_stream_t* s, aos_bool* valid) {
 	while (s->ptr < s->end) {
 		aos_bool v = AOS_TRUE;
         uint8_t c = aml_next(s, &v);
-        if (!v) goto error;
+        if (!v) { goto error; }
 
 		if (bytes_per_seg_consumed == 0) { // First byte of nameseg
 			if (!aml_is_lead_name_char(c)) goto error;
@@ -701,7 +701,7 @@ static aml_node_t* aml_parse_multi_namepath(aml_stream_t* s, aos_bool* valid) {
 	}
 }
 
-static aml_node_t* aml_parse_null_namepath(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) aml_node_t* aml_parse_null_namepath(aml_stream_t* s, aos_bool* valid) {
 	if (!s) goto error;
 
 	aos_bool prefix_valid = AOS_TRUE;
@@ -721,7 +721,7 @@ static aml_node_t* aml_parse_null_namepath(aml_stream_t* s, aos_bool* valid) {
 	}
 }
 
-static aml_node_t* aml_parse_namepath(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) aml_node_t* aml_parse_namepath(aml_stream_t* s, aos_bool* valid) {
 	if (!s) goto error;
 
 	aos_bool v = AOS_TRUE;
@@ -742,8 +742,8 @@ static aml_node_t* aml_parse_namepath(aml_stream_t* s, aos_bool* valid) {
 	}
 }
 
-static aml_node_t* aml_parse(aml_stream_t* s, aml_node_t* parent, aos_bool* valid);
-static aml_node_t* aml_parse_root(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) aml_node_t* aml_parse(aml_stream_t* s, aml_node_t* parent, aos_bool* valid);
+static __attribute__((unused)) aml_node_t* aml_parse_root(aml_stream_t* s, aos_bool* valid) {
 	if (!s) goto error;
 
 	aos_bool prefix_valid = AOS_TRUE;
@@ -768,7 +768,7 @@ static aml_node_t* aml_parse_root(aml_stream_t* s, aos_bool* valid) {
 	}
 }
 
-static aml_node_t* aml_parse_data_object(aml_stream_t* s, aos_bool* valid) {
+static __attribute__((unused)) aml_node_t* aml_parse_data_object(aml_stream_t* s, aos_bool* valid) {
 	if (!s) goto error;
 
 	aos_bool v = AOS_TRUE;
@@ -798,7 +798,7 @@ static aml_node_t* aml_parse_data_object(aml_stream_t* s, aos_bool* valid) {
 	}
 }
 
-static aml_node_t* aml_parse_term(aml_stream_t* s, aml_node_t* parent, aos_bool* valid) {
+static __attribute__((unused)) aml_node_t* aml_parse_term(aml_stream_t* s, aml_node_t* parent, aos_bool* valid) {
     if (!s || !parent) goto error;
 
     aos_bool v = AOS_TRUE;
@@ -833,7 +833,7 @@ static aml_node_t* aml_parse_term(aml_stream_t* s, aml_node_t* parent, aos_bool*
 	}
 }
 
-static aml_node_t* aml_parse(aml_stream_t* s, aml_node_t* parent, aos_bool* valid) {
+static __attribute__((unused)) aml_node_t* aml_parse(aml_stream_t* s, aml_node_t* parent, aos_bool* valid) {
 	if (!s) goto error;
 
 	aml_node_t* n = get_new_node();
@@ -871,131 +871,3 @@ static aml_node_t* aml_parse(aml_stream_t* s, aml_node_t* parent, aos_bool* vali
 	}
 }
 
-static aml_object_t* aml_eval_arg(aml_frame_t* frame, uint8_t opcode, aos_bool* valid) {
-	if (!frame) goto error;
-
-    uint8_t idx = opcode - AML_ARG_0_OP;
-    if (idx >= 7) goto error;
-
-	if (valid) *valid = AOS_TRUE;
-    return frame->args[idx];
-
-	error: {
-		if (valid) *valid = AOS_FALSE;
-		return NULL;
-	}
-}
-
-static aml_object_t* aml_eval_local(aml_frame_t* frame, uint8_t opcode, aos_bool* valid) {
-	if (!frame) goto error;
-
-    uint8_t idx = opcode - AML_LOCAL_0_OP;
-    if (idx >= 8) goto error;
-
-	if (valid) *valid = AOS_TRUE;
-    return frame->locals[idx];
-
-	error: {
-		if (valid) *valid = AOS_FALSE;
-		return NULL;
-	}
-}
-
-static aml_object_t* aml_make_integer(uint64_t value) {
-    aml_object_t* obj = get_new_object();
-    if (!obj) return NULL;
-
-    obj->type = AML_OBJ_INTEGER;
-    obj->integer = value;
-    return obj;
-}
-
-static uint64_t aml_get_integer(aml_object_t* obj) {
-    if (!obj)
-        return 0;
-
-    switch (obj->type) {
-        case AML_OBJ_INTEGER:
-            return obj->integer;
-
-        default:
-            return 0;
-    }
-}
-
-static aml_object_t* aml_eval_byte(aml_frame_t* frame) {
-    uint8_t value = *frame->pc++;
-    return aml_make_integer(value);
-}
-
-static aml_object_t* aml_eval_word(aml_frame_t* frame) {
-    uint16_t value = *(uint16_t*)frame->pc;
-    frame->pc += 2;
-
-    return aml_make_integer(value);
-}
-
-static aml_object_t* aml_eval_dword(aml_frame_t* frame) {
-    uint32_t value = *(uint32_t*)frame->pc;
-    frame->pc += 4;
-
-    return aml_make_integer(value);
-}
-
-static aml_object_t* aml_eval_qword(aml_frame_t* frame) {
-    uint64_t value = *(uint64_t*)frame->pc;
-    frame->pc += 8;
-
-    return aml_make_integer(value);
-}
-
-static aml_object_t* aml_eval_simple_name(aml_frame_t* frame) {
-    uint8_t opcode = *frame->pc;
-
-    if (opcode >= AML_ARG_0_OP && opcode <= AML_ARG_6_OP) {
-        frame->pc++;
-        return aml_eval_arg(frame, opcode, NULL);
-    }
-    if (opcode >= AML_LOCAL_0_OP && opcode <= AML_LOCAL_7_OP){
-        frame->pc++;
-        return aml_eval_local(frame, opcode, NULL);
-    }
-
-	return NULL; // will fix
-}
-
-static aml_object_t* aml_eval_supername(aml_frame_t* frame) {
-    return aml_eval_simple_name(frame);
-}
-
-static aml_object_t* aml_eval_termarg(aml_frame_t* frame) {
-    uint8_t opcode = *frame->pc++;
-
-    switch(opcode) {
-        case AML_ZERO_OP:
-            return aml_make_integer(0);
-
-        case AML_ONE_OP:
-            return aml_make_integer(1);
-
-        case AML_ONES_OP:
-            return aml_make_integer(UINT64_MAX);
-
-        case AML_BYTE_PREFIX:
-            return aml_eval_byte(frame);
-
-        case AML_WORD_PREFIX:
-            return aml_eval_word(frame);
-
-        case AML_DWORD_PREFIX:
-            return aml_eval_dword(frame);
-
-        case AML_QWORD_PREFIX:
-            return aml_eval_qword(frame);
-
-        default: {
-            frame->pc--;
-            return aml_eval_supername(frame);
-        }
-    }
-}

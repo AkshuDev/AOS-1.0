@@ -113,7 +113,7 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
     if (*cmd_len == 0) return AOS_TRUE;
     cmd_buf[*cmd_len] = '\0';
 
-    if (last_cmd == 1 || strcmp(cmd_buf, "exit") == 0) {
+    if (last_cmd == 1 || strcmp((const char*)cmd_buf, "exit") == 0) {
         if (last_cmd == 1) {
             if ((cmd_buf[0] == 'y' || cmd_buf[0] == 'Y') && *cmd_len == 1) {
                 vshell_running = AOS_FALSE;
@@ -129,7 +129,7 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
             *cmd_len = 0;
             return AOS_TRUE;
         }
-    } else if (last_cmd == 2 || strcmp(cmd_buf, "reboot") == 0) {
+    } else if (last_cmd == 2 || strcmp((const char*)cmd_buf, "reboot") == 0) {
         if (last_cmd == 2) {
             if ((cmd_buf[0] == 'y' || cmd_buf[0] == 'Y') && *cmd_len == 1) {
                 acpi_reboot();
@@ -146,19 +146,19 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
             return AOS_TRUE;
         }
     } else if (last_cmd == 0) {
-        if (strcmp(cmd_buf, "sysinfo") == 0) {
+        if (strcmp((const char*)cmd_buf, "sysinfo") == 0) {
             if (!vshell_cmd_sysinfo()) return AOS_FALSE;
-        } else if (strncmp(cmd_buf, "echo ", 5) == 0 || strcmp(cmd_buf, "echo") == 0) {
+        } else if (strncmp((const char*)cmd_buf, "echo ", 5) == 0 || strcmp((const char*)cmd_buf, "echo") == 0) {
             if (*cmd_len > 5) {
                 if (!pyrion_builtin_print(vshell_ctx, (char*)(&(cmd_buf[5])))) return AOS_FALSE;
                 if (!pyrion_builtin_printc(vshell_ctx, '\n')) return AOS_FALSE;
             } else {
 				if (!pyrion_builtin_printc(vshell_ctx, '\n')) return AOS_FALSE;
 			}
-        } else if (strcmp(cmd_buf, "clear") == 0) {
+        } else if (strcmp((const char*)cmd_buf, "clear") == 0) {
             if (!pyrion_clear(vshell_ctx, vshell_ctx->fb_cursor.bg_color)) return AOS_FALSE;
             if (!pyrion_set_cursor(vshell_ctx, 0, 0)) return AOS_FALSE;
-        } else if (strncmp(cmd_buf, "set-fsz", 7) == 0 || strcmp(cmd_buf, "set-fsz") == 0) {
+        } else if (strncmp((const char*)cmd_buf, "set-fsz", 7) == 0 || strcmp((const char*)cmd_buf, "set-fsz") == 0) {
 			if (*cmd_len < 8) { // "set-fsz "
                 if (!pyrion_builtin_print(vshell_ctx, "Usage: set-fsz <font size>\n")) return AOS_FALSE;
             } else {
@@ -170,7 +170,7 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
 					need_reload_vshell = AOS_TRUE;
 				}
 			}
-		} else if (strcmp(cmd_buf, "ls") == 0 || strncmp(cmd_buf, "ls ", 3) == 0) {
+		} else if (strcmp((const char*)cmd_buf, "ls") == 0 || strncmp((const char*)cmd_buf, "ls ", 3) == 0) {
 			if (!vshell_require_mounted()) goto cmd_ls_end;
 
 			char* arg = NULL;
@@ -208,8 +208,8 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
 			}
 
 			cmd_ls_end: {}
-		} else if (strcmp(cmd_buf, "mkdir") == 0 || strncmp(cmd_buf, "mkdir ", 6) == 0) {
-			if (cmd_len < 7) {
+		} else if (strcmp((const char*)cmd_buf, "mkdir") == 0 || strncmp((const char*)cmd_buf, "mkdir ", 6) == 0) {
+			if (*cmd_len < 7) {
 				if (!pyrion_builtin_print(vshell_ctx, "Usage: mkdir <directory>\n")) return AOS_FALSE;
 				goto cmd_mkdir_end;
 			}
@@ -234,8 +234,8 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
 			}
 
 			cmd_mkdir_end: {}
-		} else if (strcmp(cmd_buf, "cd") == 0 || strncmp(cmd_buf, "cd ", 3) == 0) {
-			if (cmd_len < 4) {
+		} else if (strcmp((const char*)cmd_buf, "cd") == 0 || strncmp((const char*)cmd_buf, "cd ", 3) == 0) {
+			if (*cmd_len < 4) {
 				if (!pyrion_builtin_print(vshell_ctx, "Usage: cd <directory>\n")) return AOS_FALSE;
 				goto cmd_cd_end;
 			}
@@ -257,8 +257,8 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
 			cwd[PBFS_MAX_PATH_LEN - 1] = '\0';
 
 			cmd_cd_end: {}
-		} else if (strcmp(cmd_buf, "set-font") == 0 || strncmp(cmd_buf, "set-font ", 9) == 0) {
-			if (cmd_len < 10) {
+		} else if (strcmp((const char*)cmd_buf, "set-font") == 0 || strncmp((const char*)cmd_buf, "set-font ", 9) == 0) {
+			if (*cmd_len < 10) {
 				if (!pyrion_builtin_print(vshell_ctx, "Usage: set-font <path to aosbf>\n")) return AOS_FALSE;
 				goto cmd_set_font_end;
 			}

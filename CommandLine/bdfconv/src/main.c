@@ -45,7 +45,7 @@ static bool parse_args(int argc, char** argv, arg_state* out) {
     };
 
     int option;
-    if (out == NULL) return false;
+    if (!out) return false;
 
     out->input  = NULL;
     out->output = NULL;

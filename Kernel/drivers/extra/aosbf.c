@@ -37,7 +37,7 @@ static aos_bool aosbf_convert_glyph_to_rgba8(aosbf_atlas_data* atlas, uint64_t* 
     const uint64_t INITIAL_HEIGHT = 512;
     const uint64_t PADDING = 1;
 
-    if (atlas->atlas == NULL) {
+    if (!atlas->atlas) {
         atlas->atlas_width = INITIAL_WIDTH;
         atlas->atlas_height = INITIAL_HEIGHT;
 

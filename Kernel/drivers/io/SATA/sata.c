@@ -509,7 +509,7 @@ aos_bool sata_init(struct AOS_Module* m) {
 
     for (uint64_t i = 0; i < ports; i++) {
         if (pi & (1 << i)) {
-            struct sata_hba_port* port = &ksc->hba_mem->ports[i];
+            struct sata_hba_port* port = (struct sata_hba_port*)&ksc->hba_mem->ports[i];
 
             uint32_t ssts = port->ssts;
             uint8_t det = ssts & 0x0F;
@@ -594,8 +594,9 @@ aos_bool sata_read_blk(uint64_t cidx, uint64_t port_id, uint64_t lba, uint32_t c
 
     struct sata_port_state* state = &ksc->port_states[port_id];
 
-    if (!state->active)
+    if (!state->active) {
         return AOS_FALSE;
+	}
 
 	uint64_t rflags = spin_lock_irqsave(&ksc->drive_lock);
 
@@ -626,8 +627,9 @@ aos_bool sata_write_blk(uint64_t cidx, uint64_t port_id, uint64_t lba, uint32_t 
 
     struct sata_port_state* state = &ksc->port_states[port_id];
 
-    if (!state->active)
+    if (!state->active) {
         return AOS_FALSE;
+	}
 
 	uint64_t rflags = spin_lock_irqsave(&ksc->drive_lock);
 
@@ -737,7 +739,7 @@ aos_bool sata_get_block_device(uint64_t cidx, uint64_t port_id, struct block_dev
     out->block_count = block_count;
     out->block_size = 512;
     char* model = (char*)avmf_alloc(41, MALLOC_TYPE_DRIVER, AVMF_FLAG_RW, NULL);
-    if (model == NULL) {
+    if (!model) {
         out->name = NULL;
         return AOS_TRUE;
     }

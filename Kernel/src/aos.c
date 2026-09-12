@@ -62,9 +62,9 @@ static struct pbfs_mount g_pbfs_mnt = {0};
 // Define a static stack array
 void kernel_main_true(void) __attribute__((used, noinline, noreturn));
 void aos_shell_pm(void);
-void exec_cmd(char* cmd, struct VMemDesign* vmem_design);
+void exec_cmd(const char* cmd, struct VMemDesign* vmem_design);
 static void cmd_print_help(struct VMemDesign* vmem_design);
-void cmd_start(char* program, struct VMemDesign* vmem_design);
+void cmd_start(const char* program, struct VMemDesign* vmem_design);
 void aospp_start(void);
 static int bd_read_blk(struct block_device* dev, uint64_t lba, void* buf);
 static int bd_write_blk(struct block_device* dev, uint64_t lba, const void* buf);
@@ -243,11 +243,11 @@ void aos_shell_pm(void) {
         vmem_printf(&vmem_design, "AOS: %s $> ", g_pbfs_cwd);
         ps2_read_line(input, SHELL_MAX_INPUT, &vmem_design);
 
-        exec_cmd(input, &vmem_design);
+        exec_cmd((const char*)input, &vmem_design);
     }
 }
 
-void exec_cmd(char* cmd, struct VMemDesign* vmem_design) {
+void exec_cmd(const char* cmd, struct VMemDesign* vmem_design) {
     if (strcmp(cmd, "help") == 0) {
         vmem_print(vmem_design, help_shell);
     } else if (strcmp(cmd, "echo") == 0 || strncmp(cmd, "echo ", 5) == 0) {
@@ -255,7 +255,7 @@ void exec_cmd(char* cmd, struct VMemDesign* vmem_design) {
 			vmem_printc(vmem_design, '\n');
 			goto cmd_echo_end;
 		}
-        vmem_print(vmem_design, cmd + 5);
+        vmem_print(vmem_design, (char*)cmd + 5);
         vmem_print(vmem_design, "\n");
 
 		cmd_echo_end: {}
@@ -270,7 +270,7 @@ void exec_cmd(char* cmd, struct VMemDesign* vmem_design) {
 			vmem_print(vmem_design, "Usage: color <VGA Color Attribute>\n");
 			goto cmd_color_end;
 		}
-		char* s = cmd + 6;
+		char* s = (char*)cmd + 6;
 		int base = 10;
 
 		if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) base = 16;
@@ -288,7 +288,7 @@ void exec_cmd(char* cmd, struct VMemDesign* vmem_design) {
 			vmem_print(vmem_design, "Usage: start <AOS-SS Program>\n");
 			goto cmd_start_end;
 		}
-        cmd_start(cmd + 6, vmem_design);
+        cmd_start((const char*)((char*)(char*)cmd + 6), vmem_design);
 
 		cmd_start_end: {}
     } else if (strcmp(cmd, "pbfsctl-fmt") == 0) {
@@ -337,7 +337,7 @@ void exec_cmd(char* cmd, struct VMemDesign* vmem_design) {
 			goto cmd_cd_end;
 		}
 
-		char* _path = cmd + 3;
+		char* _path = (char*)cmd + 3;
 		char path[PBFS_MAX_PATH_LEN];
 		aos_create_path(path, g_pbfs_cwd, _path);
 
@@ -368,7 +368,7 @@ void exec_cmd(char* cmd, struct VMemDesign* vmem_design) {
 			goto cmd_mkdir_end;
 		}
 
-		char* _path = cmd + 6;
+		char* _path = (char*)cmd + 6;
 		char path[PBFS_MAX_PATH_LEN];
 		aos_create_path(path, g_pbfs_cwd, _path);
 
@@ -401,7 +401,7 @@ void exec_cmd(char* cmd, struct VMemDesign* vmem_design) {
 		char* _path = NULL;
 		if (strlen(cmd) > 3) {
 			if (cmd[3] != ' ') {
-				_path = cmd + 3;
+				_path = (char*)cmd + 3;
 			} else {
 				_path = ".";
 			}
@@ -441,7 +441,7 @@ void exec_cmd(char* cmd, struct VMemDesign* vmem_design) {
 		char* _path = NULL;
 		if (strlen(cmd) > 3) {
 			if (cmd[3] != ' ') {
-				_path = cmd + 3;
+				_path = (char*)cmd + 3;
 			} else {
 				_path = ".";
 			}
@@ -562,7 +562,7 @@ void cmd_print_help(struct VMemDesign* vmem_design) {
     vmem_print(vmem_design, help);
 }
 
-void cmd_start(char* program, struct VMemDesign* vmem_design) {
+void cmd_start(const char* program, struct VMemDesign* vmem_design) {
     if (strcmp(program, "-help") == 0) {
         cmd_print_help(vmem_design);
     } else if (strcmp(program, "aospp") == 0 || strcmp(program, "aos++") == 0) {
@@ -637,7 +637,7 @@ static int bd_read_blk(struct block_device* dev, uint64_t lba, void* buf) {
 
 static int bd_write_blk(struct block_device* dev, uint64_t lba, const void* buf) {
     if (current_drive_works) {
-        current_drive.write_blk(current_drive.controller_idx, current_drive.cur_port, lba, 1, buf);
+        current_drive.write_blk(current_drive.controller_idx, current_drive.cur_port, lba, 1, (void*)buf);
         return 1;
     }
     return 0;
@@ -653,7 +653,7 @@ static int bd_read(struct block_device* dev, uint64_t lba, uint64_t count, void*
 
 static int bd_write(struct block_device* dev, uint64_t lba, uint64_t count, const void* buf) {
     if (current_drive_works) {
-        current_drive.write_blk(current_drive.controller_idx, current_drive.cur_port, lba, count, buf);
+        current_drive.write_blk(current_drive.controller_idx, current_drive.cur_port, lba, count, (void*)buf);
         return 1;
     }
     return 0;
@@ -673,7 +673,7 @@ void aos_create_path(char* out, const char* cwd, const char* in) {
     if (!out) return;
     if (!in || in[0] == '\0') {
         if (cwd && cwd[0]) {
-            path_normalize(cwd, out, PBFS_MAX_PATH_LEN);
+            path_normalize((char*)cwd, out, PBFS_MAX_PATH_LEN);
         } else {
             strncpy(out, "/", PBFS_MAX_PATH_LEN);
             out[PBFS_MAX_PATH_LEN - 1] = '\0';
@@ -681,14 +681,14 @@ void aos_create_path(char* out, const char* cwd, const char* in) {
         return;
     }
     if (in[0] == '/') {
-        strncpy(tmp, in, sizeof(tmp));
+        strncpy(tmp, (char*)in, sizeof(tmp));
         tmp[sizeof(tmp) - 1] = '\0';
     } else {
         if (!cwd || cwd[0] == '\0') {
             cwd = "/";
         }
 
-        path_join(tmp, cwd, in, sizeof(tmp));
+        path_join(tmp, (void*)cwd, (void*)in, sizeof(tmp));
     }
 
     tmp[sizeof(tmp) - 1] = '\0';

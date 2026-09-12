@@ -297,7 +297,9 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	}
 
 	serial_print("[xHCI] Allocating DCBAA...\n");
-	kxc->dcbaa = avmf_alloc(ALIGN_UP((kxc->max_slots + 1) * sizeof(uint64_t), 64), MALLOC_TYPE_DRIVER, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &kxc->op_regs->dcbaap);
+	uint64_t dcbaap = 0;
+	kxc->dcbaa = avmf_alloc(ALIGN_UP((kxc->max_slots + 1) * sizeof(uint64_t), 64), MALLOC_TYPE_DRIVER, AVMF_FLAG_RW | AVMF_FLAG_NO_CACHE, &dcbaap);
+	kxc->op_regs->dcbaap = dcbaap;
 	if (!kxc->dcbaa) {
 		serial_print("[xHCI] Failed to allocate DCBAA\n");
 		destroy_n_unmap_xhci(kxc);
@@ -384,7 +386,6 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	}
 	
 	kxc->port = UINT64_MAX;
-	uint8_t slot_id = (event->control >> 24) & 0xFF;
 	for (uint32_t i = 0; i < kxc->max_ports; i++) {
 		uint32_t portsc = kxc->op_regs->ports[i].portsc;
 		if (portsc & 1) {

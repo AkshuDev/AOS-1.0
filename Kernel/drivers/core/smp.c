@@ -103,14 +103,12 @@ static void send_wakeup_ipi(uint8_t target_apic_id, uint8_t vector) {
 }
 
 static struct thread_state* create_thread(void (*entry)(void*), void* arg) {
-    uint64_t thread_virt = (uint64_t)avmf_alloc(sizeof(struct thread_state), MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
-    if (thread_virt == NULL) return NULL;
-    struct thread_state* thread = (struct thread_state*)thread_virt;
+    struct thread_state* thread = (struct thread_state*)avmf_alloc(sizeof(struct thread_state), MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
+	if (!thread) return NULL;
 	memset(thread, 0, sizeof(struct thread_state));
     
-    uint64_t stack_virt = (uint64_t)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
-    if (stack_virt == NULL) return NULL;
-    void* stack_raw = (void*)stack_virt;
+    void* stack_raw = (void*)avmf_alloc(PAGE_SIZE, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
+	if (!stack_raw) return NULL;
 	memset(stack_raw, 0, PAGE_SIZE);
 
     uint64_t* stack = (uint64_t*)((uint8_t*)stack_raw + PAGE_SIZE);
@@ -154,7 +152,7 @@ static void ap_kernel_entry(void) {
     __asm__ volatile("mov %0, %%cr4" :: "r"(cr));
 
     uint32_t lapic_id = get_lapic_id();
-    uint64_t kernel_stack = *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x510);
+    // uint64_t kernel_stack = *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x510);
     struct core_state* core = *(struct core_state**)(AOS_DIRECT_MAP_BASE + 0x520);
 
 	if (!gdt_init_ex(&core->gdt, &core->gdt_desc, &core->tss)) {
@@ -336,7 +334,7 @@ void smp_yield(void) {
 }
 
 void smp_push_task(uint32_t core_idx, void (*entry)(void*), void* arg) {
-    if (core_idx >= SMP_MAX_CORES || cores[core_idx] == NULL) return;
+    if (core_idx >= SMP_MAX_CORES || !cores[core_idx]) return;
 	
 	if (core_idx == bsp_core_idx && !smp_is_bsp_core()) {
         serial_printf("[SMP] Warning: AP core tried to push a task to the BSP core! Blocked.\n");
@@ -434,13 +432,11 @@ void smp_push_task(uint32_t core_idx, void (*entry)(void*), void* arg) {
 					break;
 				}
 
-				continue_search: {
-					prev_t = cur_t;
+				prev_t = cur_t;
 
-					struct thread_state* nxt = cur_t->next;
-					spin_unlock_irqrestore(&cur_t->thread_lock, rflags_thread);
-					cur_t = nxt;
-				}
+				struct thread_state* nxt = cur_t->next;
+				spin_unlock_irqrestore(&cur_t->thread_lock, rflags_thread);
+				cur_t = nxt;
 			}
 		} else spin_unlock_irqrestore(&target->queue_lock, rflags);
 	}
@@ -480,7 +476,7 @@ void smp_push_task_bsp(void (*entry)(void*), void* arg) {
 
 aos_bool smp_get_first_free_core(uint32_t* out) {
     for (uint32_t i = 0; i < SMP_MAX_CORES; i++){
-        if (cores[i] == NULL) continue;
+        if (!cores[i]) continue;
 		if (i == bsp_core_idx) continue;
 
         if (cores[i]->status == CORE_STATUS_READY) {
@@ -492,7 +488,7 @@ aos_bool smp_get_first_free_core(uint32_t* out) {
 }
 
 aos_bool smp_get_core_status(uint32_t core_idx, enum core_status *out) {
-    if (core_idx >= SMP_MAX_CORES || cores[core_idx] == NULL) return AOS_FALSE;
+    if (core_idx >= SMP_MAX_CORES || !cores[core_idx]) return AOS_FALSE;
     *out = cores[core_idx]->status;
     return AOS_TRUE;
 }
@@ -505,7 +501,7 @@ aos_bool smp_is_bsp_core(void) {
 }
 
 void smp_reserve_core(uint32_t core_idx) {
-    if (core_idx >= SMP_MAX_CORES || cores[core_idx] == NULL) return;
+    if (core_idx >= SMP_MAX_CORES || !cores[core_idx]) return;
 	if (core_idx == bsp_core_idx) {
 		serial_print("[SMP] Warning: Reservation called on BSP Core! Blocked.\n");
 		return;
@@ -528,7 +524,7 @@ void smp_reserve_core(uint32_t core_idx) {
 }
 
 void smp_unreserve_core(uint32_t core_idx) {
-    if (core_idx >= SMP_MAX_CORES || cores[core_idx] == NULL) return;
+    if (core_idx >= SMP_MAX_CORES || !cores[core_idx]) return;
 	if (core_idx == bsp_core_idx) {
 		serial_print("[SMP] Warning: Unreservation called on BSP Core! Blocked.\n");
 		return;
@@ -683,7 +679,7 @@ uint32_t smp_get_current_core(void) {
 }
 
 void smp_shutdown_core(uint32_t core_idx) {
-	if (core_idx >= SMP_MAX_CORES || cores[core_idx] == NULL) return;
+	if (core_idx >= SMP_MAX_CORES || !cores[core_idx]) return;
 
 	if (core_idx == bsp_core_idx) {
 		serial_print("[SMP] Warning: Shutdown called on BSP Core! Blocked.\n");
@@ -800,7 +796,7 @@ void smp_shutdown_core(uint32_t core_idx) {
 }
 
 void smp_reset_core(uint32_t core_idx) {
-	if (core_idx >= SMP_MAX_CORES || cores[core_idx] == NULL) return;
+	if (core_idx >= SMP_MAX_CORES || !cores[core_idx]) return;
 
 	if (core_idx == bsp_core_idx) {
 		serial_print("[SMP] Warning: Reset called on BSP Core! Blocked.\n");
@@ -871,7 +867,7 @@ void smp_reset_core(uint32_t core_idx) {
 }
 
 void smp_tlb_core(uint32_t core_idx, uint64_t virt, aos_bool full_flush) {
-	if (core_idx >= SMP_MAX_CORES || cores[core_idx] == NULL) return;
+	if (core_idx >= SMP_MAX_CORES || !cores[core_idx]) return;
 
 	if (core_idx == bsp_core_idx) {
 		serial_print("[SMP] Warning: TLB Flush/Invlpage called on BSP Core! Blocked.\n");
@@ -902,7 +898,7 @@ void smp_tlb_core(uint32_t core_idx, uint64_t virt, aos_bool full_flush) {
 
 void smp_reset(void) {
 	for (int i = 0; i < SMP_MAX_CORES; i++) {
-        if (cores[i] == NULL) continue;
+        if (!cores[i]) continue;
 		if (i == bsp_core_idx) continue;
         smp_reset_core(i);
     }
@@ -910,7 +906,7 @@ void smp_reset(void) {
 
 void smp_shutdown(void) {
     for (int i = 0; i < SMP_MAX_CORES; i++) {
-        if (cores[i] == NULL) continue;
+        if (!cores[i]) continue;
 		if (i == bsp_core_idx) continue;
         smp_shutdown_core(i);
     }
@@ -918,7 +914,7 @@ void smp_shutdown(void) {
 
 void smp_tlb(uint64_t virt, aos_bool full_flush) {
 	for (int i = 0; i < SMP_MAX_CORES; i++) {
-        if (cores[i] == NULL) continue;
+        if (!cores[i]) continue;
 		if (i == bsp_core_idx) continue;
         smp_tlb_core(i, virt, full_flush);
     }

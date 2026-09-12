@@ -330,7 +330,7 @@ aos_bool pyrion_builtin_printc(struct pyrion_ctx* ctx, char c) {
 aos_bool pyrion_builtin_print(struct pyrion_ctx* ctx, const char* str) {
     if (!ctx) return AOS_FALSE;
 
-    char* c = str;
+    char* c = (char*)str;
     while (*c) {
         if (!pyrion_builtin_printc(ctx, *c)) return AOS_FALSE;
         c++;
@@ -490,7 +490,7 @@ aos_bool pyrion_builtin_printf(struct pyrion_ctx* ctx, const char* fmt, ...) {
                 case 'f': { // Pointer
                     double f;
 					if (is_long >= 1) f = va_arg(args, double);
-					else f = (double)va_arg(args, float);
+					else f = (double)va_arg(args, double);
 
                     if (!pyrion_builtin_print_ex_float(ctx, f, width, precision, zero_pad)) goto error_end;
                     break;

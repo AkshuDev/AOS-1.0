@@ -547,7 +547,7 @@ static aos_bool nvme_io_poll_cmd_sync(nvme_controller* knc, uint16_t cid, struct
     }
 }
 
-static aos_bool nvme_io_cmd_sync(nvme_controller* knc, struct nvme_command* cmd, struct nvme_completion* out_cqe) {
+static __attribute__((unused)) aos_bool nvme_io_cmd_sync(nvme_controller* knc, struct nvme_command* cmd, struct nvme_completion* out_cqe) {
     if (!knc || !cmd || !out_cqe) return AOS_FALSE;
 
     uint16_t cid;

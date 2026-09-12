@@ -79,7 +79,7 @@ $(DISK): $(MBR_BOOTLOADER_STAGE1) $(MBR_BOOTLOADER_STAGE2) $(MBR_BOOTLOADER_STAG
 	@$(DD) if=$(MBR_BOOTLOADER_STAGE2) of=$(DISK) bs=512 seek=1024 conv=notrunc
 	@$(DD) if=$(MBR_BOOTLOADER_STAGE3) of=$(DISK) bs=512 seek=2048 conv=notrunc
 	
-	@printf "$(CLR_GREEN)Disk Created Successfully.$(CLR_RESET)\n"
+	@printf "$(CLR_GREEN)Disk Created Successfully$(CLR_RESET)\n"
 
 $(MBR_BOOTLOADER_STAGE1) $(MBR_BOOTLOADER_STAGE2) $(MBR_BOOTLOADER_STAGE3):
 	$(MAKE) -C $(BOOTLOADER) mbr
@@ -112,12 +112,12 @@ uefi: $(BUILD_DIR) $(BIN_DIR) $(UEFI_BOOTLOADER_EFI) $(AOS_KERNEL)
 		$(PBFS_CLI) $(DISK) -bs 512 -tb $(TOTAL_DISK_BLOCKS) -dn AOS_DISK --type file --permissions rs --name "$$path" -a "$$item"; \
 	done
 
-	@printf "$(CLR_GREEN)Disk Created Successfully.$(CLR_RESET)\n"
+	@printf "$(CLR_GREEN)Disk Created Successfully$(CLR_RESET)\n"
 
 clean:
-	@printf "$(CLR_YELLOW)Cleaning...$(CLR_RESET)\n"
+	@printf "$(CLR_RED)Cleaning...$(CLR_RESET)\n"
 	@rm -rf $(BUILD_DIR) $(BIN_DIR)
-	@printf "$(CLR_GREEN)Cleaned.$(CLR_RESET)\n"
+	@printf "$(CLR_GREEN)Cleaned$(CLR_RESET)\n"
 
 init:
 	@printf "$(CLR_YELLOW)Initializing...$(CLR_RESET)\n"
@@ -125,12 +125,12 @@ init:
 	@chmod +x ./run.sh
 	@chmod +x ./build.sh
 	@./init.sh
-	@printf "$(CLR_GREEN)Initialized.$(CLR_RESET)\n"
+	@printf "$(CLR_GREEN)Initialized$(CLR_RESET)\n"
 
 run:
 	@printf "$(CLR_YELLOW)Running...$(CLR_RESET)\n"
 	@./run.sh $(RUN_ARGS)
-	@printf "$(CLR_GREEN)Run Completed.$(CLR_RESET)\n"
+	@printf "$(CLR_GREEN)Run Completed$(CLR_RESET)\n"
 
 build:
 	@./build.sh -mbr

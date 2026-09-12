@@ -44,8 +44,8 @@ aos_bool legacy_ata_get_block_device(uint64_t cidx, uint64_t port_id, struct blo
 	size_t len = strlen(iden.model);
 	if (len > 0) {
 		out->name = (char*)avmf_alloc(len + 1, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
-		if (out->name == NULL) return 0;
-		memcpy(out->name, (const void*)iden.model, len);
+		if (!out->name) return 0;
+		memcpy((void*)out->name, (const void*)iden.model, len);
 		((char*)out->name)[len] = '\0';	
 	} else {
 		out->name = "Unamed Drive";
@@ -107,11 +107,10 @@ aos_bool get_available_drives(struct drive_device* out) {
     struct AOS_Module* reg_driver = module_get_first_applicable_registered_driver(PCI_CLASS_MASS_STORAGE, 0, 0, 0, 0, 0, 0, 0, 0);
     if (!reg_driver) {
 		if (ata_exists()) {
-			if (!set_legacy_ata(&reg_driver->Modules.driver_module.DriverConnections.drive_connector)) {
+			if (!set_legacy_ata(out)) {
 				serial_print("[Drive Controller] No registered drives!\n");
 				return AOS_FALSE;
 			}
-			memcpy(out, &reg_driver->Modules.driver_module.DriverConnections.drive_connector, sizeof(drive_device_t));
 			serial_printf("[Drive Controller] Using 'Legacy-ATA' driver for '%s' disk\n", reg_driver->Modules.driver_module.DriverConnections.drive_connector.name);
 			return AOS_TRUE;
 		} else {

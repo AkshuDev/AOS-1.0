@@ -1,3 +1,15 @@
+# Colors
+CLR_BLACK   = \033[0;30m
+CLR_RED     = \033[0;31m
+CLR_GREEN   = \033[0;32m
+CLR_YELLOW  = \033[0;33m
+CLR_BLUE    = \033[0;34m
+CLR_MAGENTA = \033[0;35m
+CLR_CYAN    = \033[0;36m
+CLR_WHITE   = \033[0;37m
+CLR_GRAY    = \033[1;30m
+CLR_RESET   = \033[0m
+
 CC := gcc
 OBJCOPY := objcopy
 LD := ld
@@ -93,73 +105,93 @@ MBR_stage3_bin := $(MBR_BIN_DIR)/stage3.bin
 all: $(MBR_BUILD_DIR) $(MBR_BIN_DIR) $(MBR_stage1_bin) $(MBR_stage2_bin) $(MBR_stage3_bin)
 
 $(MBR_BUILD_DIR):
-	@echo "Creating $(MBR_BUILD_DIR) ..."
 	@mkdir -p $(MBR_BUILD_DIR)
 
 $(MBR_BIN_DIR):
-	@echo "Creating $(MBR_BIN_DIR) ..."
 	@mkdir -p $(MBR_BIN_DIR)
 
 $(UEFI_BUILD_DIR):
-	@echo "Creating $(UEFI_BUILD_DIR) ..."
 	@mkdir -p $(UEFI_BUILD_DIR)
 
 $(UEFI_BIN_DIR):
-	@echo "Creating $(UEFI_BIN_DIR) ..."
 	@mkdir -p $(UEFI_BIN_DIR)
 
 $(MBR_stage1_bin): $(MBR_stage1)
-	@echo "Assembling MBR Stage 1 AOS Bootloader..."
-	$(ASM) $(ASMFLAGS_MBR_BIN) $(MBR_stage1) -o $(MBR_stage1_bin)
+	@printf "$(CLR_YELLOW)---- Assembling MBR Stage 1 AOS Bootloader file: \"$<\"$(CLR_RESET)\n"
+	@$(ASM) $(ASMFLAGS_MBR_BIN) $(MBR_stage1) -o $(MBR_stage1_bin)
+	@printf "$(CLR_GREEN)---- Assembled MBR Stage 1 AOS Bootloader file to \"$@\"$(CLR_RESET)\n"
 
 $(MBR_stage3_bin): $(MBR_stage3_elf)
-	@echo "Copying Stage 3 AOS Bootloader into binary..."
-	$(OBJCOPY) -O binary $(MBR_stage3_elf) $(MBR_stage3_bin)
+	@printf "$(CLR_YELLOW)---- Copying MBR Stage 3 AOS Bootloader to binary...$(CLR_RESET)\n"
+	@$(OBJCOPY) -O binary $(MBR_stage3_elf) $(MBR_stage3_bin)
+	@printf "$(CLR_GREEN)---- Copied MBR Stage 3 AOS Bootloader file to \"$@\"$(CLR_RESET)\n"
 
 $(MBR_BUILD_DIR)/%.o: $(KERNEL)/%.c
+	@printf "$(CLR_YELLOW)---- Compiling Kernel Helper file: \"$<\"$(CLR_RESET)\n"
+
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+	@printf "$(CLR_GREEN)---- Compiled Kernel Helper file to \"$@\"$(CLR_RESET)\n"
 
 $(MBR_BUILD_DIR)/%.o: $(MBR_SRC_DIR)/%.c
+	@printf "$(CLR_YELLOW)---- Compiling MBR AOS Bootloader Source File: \"$<\"$(CLR_RESET)\n"
+
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+	@printf "$(CLR_GREEN)---- Compiled MBR AOS Bootloader file to \"$@\"$(CLR_RESET)\n"
 
 $(MBR_stage3_elf): $(MBR_stage3_o) $(MBR_DRIVERS_O) $(MBR_BTL_DRIVERS_O)
-	@echo "Compiling PBFS"
+	@printf "$(CLR_YELLOW)-- Compiling PBFS...$(CLR_RESET)\n"
 	@make -C ../PBFS/PBFS/src-fs clean
 	@make -C ../PBFS/PBFS/src-fs
-	@echo "Linking MBR Stage 3 AOS Bootloader into elf..."
-	$(LD) $(LDFLAGS_MBR) $(MBR_stage3_o) $(MBR_DRIVERS_O) $(MBR_BTL_DRIVERS_O) -o $(MBR_stage3_elf) $(LDENDFLAGS)
+	@printf "$(CLR_GREEN)-- Compiled PBFS$(CLR_RESET)\n"
+
+	@printf "$(CLR_YELLOW)-- Linking MBR Stage 3 AOS Bootloader into ELF...$(CLR_RESET)\n"
+	@$(LD) $(LDFLAGS_MBR) $(MBR_stage3_o) $(MBR_DRIVERS_O) $(MBR_BTL_DRIVERS_O) -o $(MBR_stage3_elf) $(LDENDFLAGS)
+	@printf "$(CLR_GREEN)-- Linked MBR Stage 3 AOS Bootloader file to \"$@\"$(CLR_RESET)\n"
 
 $(MBR_stage2_bin): $(MBR_stage2)
-	@echo "Assembling MBR Stage 2 AOS Bootloader into binary..."
+	@printf "$(CLR_YELLOW)---- Assembling MBR Stage 2 AOS Bootloader file: \"$<\"$(CLR_RESET)\n"
 	$(ASM) $(ASMFLAGS_MBR_BIN) $(MBR_stage2) -o $(MBR_stage2_bin)
+	@printf "$(CLR_GREEN)---- Assembled MBR Stage 2 AOS Bootloader file to \"$@\"$(CLR_RESET)\n"
 
 $(MBR_stage3_o): $(MBR_stage3)
-	@echo "Compiling MBR Stage 3 AOS Bootloader..."
+	@printf "$(CLR_YELLOW)---- Compiling MBR Stage 3 AOS Bootloader file: \"$<\"$(CLR_RESET)\n"
 	$(CC) $(CFLAGS) -c $(MBR_stage3) -o $(MBR_stage3_o)
+	@printf "$(CLR_GREEN)---- Assembled MBR Stage 3 AOS Bootloader file to \"$@\"$(CLR_RESET)\n"
 
 $(UEFI_TARGET): $(UEFI_BOOTLOADER_EFI)
-	@echo "Compiling everything to a FAT32 Image"
-	$(DD) if=/dev/zero of=$(UEFI_TARGET) bs=512 count=2048
-	$(MFORMAT) -i $(UEFI_TARGET) -v "ESP" -C -t 80 -h 2 -s 18 ::
-	mmd -i $(UEFI_TARGET) ::/EFI
-	mmd -i $(UEFI_TARGET) ::/EFI/BOOT
-	$(MCOPY) -i $(UEFI_TARGET) $(UEFI_BOOTLOADER_EFI) ::/EFI/BOOT/BOOTX64.EFI
+	@printf "$(CLR_YELLOW)-- Compiling build to a FAT32 Image...$(CLR_RESET)\n"
+
+	@$(DD) if=/dev/zero of=$(UEFI_TARGET) bs=512 count=2048
+	@$(MFORMAT) -i $(UEFI_TARGET) -v "ESP" -C -t 80 -h 2 -s 18 ::
+	@mmd -i $(UEFI_TARGET) ::/EFI
+	@mmd -i $(UEFI_TARGET) ::/EFI/BOOT
+	@$(MCOPY) -i $(UEFI_TARGET) $(UEFI_BOOTLOADER_EFI) ::/EFI/BOOT/BOOTX64.EFI
+
+	@printf "$(CLR_GREEN)-- Compiled to \"$@\"$(CLR_RESET)\n"
 
 $(UEFI_BOOTLOADER_EFI): $(UEFI_BOOTLOADER_SRC)
-	@echo "Recomping PBFS for PE32..."
-	make -C ../PBFS/PBFS/PEFI clean
-	make -C ../PBFS/PBFS/PEFI CC="$(UEFI_CC)" CFLAGS="$(UEFI_PBFS_CFLAGS) -I includes -c" AR="$(UEFI_AR)"
-	make -C ../PBFS/PBFS/src-fs clean
-	make -C ../PBFS/PBFS/src-fs CC="$(UEFI_CC)" CFLAGS="$(UEFI_PBFS_CFLAGS) -I ../ -I ../../ -I ../headers" AR="$(UEFI_AR)"
-	@echo "Compiling UEFI AOS Bootloader to EFI..."
-	$(UEFI_CC) $(UEFI_CFLAGS) -o $(UEFI_BOOTLOADER_EFI) $(UEFI_BOOTLOADER_SRC) $(LDFLAGS_UEFI) $(LDENDFLAGS_UEFI)
+	@printf "$(CLR_YELLOW)-- Re-Compiling PBFS for PE32...$(CLR_RESET)\n"
+
+	@make -C ../PBFS/PBFS/PEFI clean
+	@make -C ../PBFS/PBFS/PEFI CC="$(UEFI_CC)" CFLAGS="$(UEFI_PBFS_CFLAGS) -I includes -c" AR="$(UEFI_AR)"
+	@make -C ../PBFS/PBFS/src-fs clean
+	@make -C ../PBFS/PBFS/src-fs CC="$(UEFI_CC)" CFLAGS="$(UEFI_PBFS_CFLAGS) -I ../ -I ../../ -I ../headers" AR="$(UEFI_AR)"
+
+	@printf "$(CLR_GREEN)-- Re-Compiled PBFS for PE32$(CLR_RESET)\n"
+	
+	@printf "$(CLR_YELLOW)-- Compiling UEFI AOS Bootloader to EFI...$(CLR_RESET)\n"
+	@$(UEFI_CC) $(UEFI_CFLAGS) -o $(UEFI_BOOTLOADER_EFI) $(UEFI_BOOTLOADER_SRC) $(LDFLAGS_UEFI) $(LDENDFLAGS_UEFI)
+	@printf "$(CLR_GREEN)-- Compiled UEFI AOS Bootloader to EFI at \"$@\"$(CLR_RESET)\n"
 
 uefi: $(UEFI_BUILD_DIR) $(UEFI_BIN_DIR) $(UEFI_TARGET)
 mbr: $(MBR_BUILD_DIR) $(MBR_BIN_DIR) $(MBR_stage1_bin) $(MBR_stage2_bin) $(MBR_stage3_bin)
 
 clean:
-	@echo "Cleaning..."
+	@printf "$(CLR_RED)-- Cleaning...$(CLR_RESET)\n"
 	@rm -rf $(MBR_BUILD_DIR) $(MBR_BIN_DIR)
 	@rm -rf $(UEFI_BUILD_DIR) $(UEFI_BIN_DIR)
+	@printf "$(CLR_GREEN)-- Cleaned$(CLR_RESET)\n"

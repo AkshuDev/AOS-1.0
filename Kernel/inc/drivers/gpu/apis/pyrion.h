@@ -184,7 +184,7 @@ aos_bool pyrion_set_builtins_font_size(struct pyrion_ctx* ctx, float size) __att
 
 aos_bool pyrion_clear(struct pyrion_ctx* ctx, uint32_t color) __attribute__((used));
 aos_bool pyrion_pixel(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t color) __attribute__((used));
-aos_bool pyrion_flush(struct pyrion_ctx* ctx); __attribute__((used));
+aos_bool pyrion_flush(struct pyrion_ctx* ctx) __attribute__((used));
 aos_bool pyrion_viewport(struct pyrion_ctx* ctx, struct pyrion_rect viewport) __attribute__((used));
 aos_bool pyrion_set_cursor(struct pyrion_ctx* ctx, uint32_t x, uint32_t y) __attribute__((used));
 aos_bool pyrion_blit(struct pyrion_ctx *ctx, uint32_t dst_res, uint32_t src_res, uint32_t width, uint32_t height) __attribute__((used));
