@@ -8,6 +8,7 @@
 #include <inc/drivers/io/io.h>
 #include <inc/core/smp.h>
 #include <inc/core/idt.h>
+#include <inc/core/kexceptions.h>
 
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
@@ -319,8 +320,8 @@ void acpi_init(void) {
 
     struct acpi_rsdp_descriptor *rsdp = acpi_find_rsdp();
     if (!rsdp) {
-        serial_print("[ACPI] RSDP Descriptor Not Found, Hanging!\n");
-        for (;;) __asm__ volatile("hlt");
+        aos_system_panic("[ACPI] RSDP Descriptor Not Found!\n");
+		for (;;) {__asm__ volatile("hlt");}
     }
 
     serial_printf("[ACPI] RSDP Descriptor found at %p\n", (uint64_t)rsdp);
@@ -369,7 +370,8 @@ void acpi_reboot(void) {
         acpi_pci_reboot();
         acpi_triple_fault_reboot();
 
-        for (;;) {__asm__ volatile("hlt");}
+        aos_system_panic("[ACPI] Reboot Failed!\n");
+		for (;;) {__asm__ volatile("hlt");}
     }
 
     uint64_t virt = avmf_alloc_virt(1, MALLOC_TYPE_KERNEL);
@@ -378,7 +380,8 @@ void acpi_reboot(void) {
         acpi_pci_reboot();
         acpi_triple_fault_reboot();
 
-        for (;;) {__asm__ volatile("hlt");}
+        aos_system_panic("[ACPI] Reboot Failed!\n");
+		for (;;) {__asm__ volatile("hlt");}
     }
 
     if (fadt_table->reset_reg.address_space == 0) {
@@ -392,7 +395,8 @@ void acpi_reboot(void) {
     acpi_pci_reboot();
     acpi_triple_fault_reboot();
 
-    for (;;) {__asm__ volatile("hlt");}
+    aos_system_panic("[ACPI] Reboot Failed!\n");
+		for (;;) {__asm__ volatile("hlt");}
 }
 
 void acpi_shutdown() {
@@ -400,10 +404,11 @@ void acpi_shutdown() {
 	
 	__asm__ volatile("cli");
 	
-	asm_outb(0x21,0xFF);
-	asm_outb(0xA1,0xFF);
+	asm_outb(0x21, 0xFF);
+	asm_outb(0xA1, 0xFF);
 
 	// AML Comming soon
 
-	for (;;) __asm__ volatile("hlt");
+	aos_system_panic("[ACPI] Shutdown Failed!\n");
+	for (;;) {__asm__ volatile("hlt");}
 }

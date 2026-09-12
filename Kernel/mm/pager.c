@@ -117,7 +117,7 @@ void pager_init(void) {
 	if (!m || !binfo) {
 		if (!m) serial_print("[PAGER] No System Memory Map Found!\n");
 		if (!binfo) serial_print("[PAGER] No Boot Info Found!\n");
-		serial_print("[PAGER] Cannot Proceed, hanging!\n");
+		aos_system_panic("[PAGER] Either System Memory Map or Boot Info was not found!\n");
 		for (;;) __asm__ volatile("hlt"); // Cannot proceed
 	}
     

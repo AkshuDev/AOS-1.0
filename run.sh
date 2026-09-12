@@ -17,9 +17,10 @@ show_help() {
                                         intel | amd | intel-server | amd-server
         -arch=<arch>, --architecture=<arch> Select CPU Architecture -
                                         x86_64 | ia32 | aarch64
-
-    GPU Options:
-        -gpu, --gpu-type=<type>        Select GPU -
+		-smp=<count>, --smp=<count> Select CPU Core Count
+    
+	GPU Options:
+        -gpu=<type>, --gpu-type=<type>        Select GPU -
                                         virtio | nvidia | amd | vmware | bochs
 
         -ega, --enable-gpu-acceleration
@@ -63,6 +64,7 @@ EOF
 
 mode=1
 cpu_type="intel"
+smp=0
 gpu_type="virtio"
 gpu_accel=0
 kbd_type="ps2"
@@ -85,6 +87,7 @@ while [[ $# -gt 0 ]]; do
         --high-end|-he) mode=1 ;;
         --kvm|-kvm) mode=2 ;;
         --cpu-type=*|-cpu=*) cpu_type="${1#*=}" ;;
+		--smp=*|-smp=*) smp="${1#*=}" ;;
         --gpu-type=*|-gpu=*) gpu_type="${1#*=}" ;;
         --enable-gpu-acceleration|-ega) gpu_accel=1 ;;
         --keyboard-type=*|-kbd=*) kbd_type="${1#*=}" ;;
@@ -164,6 +167,16 @@ get_cpu() {
 }
 
 get_smp() {
+	if ! [[ "$smp" =~ ^[1-9][0-9]*$ ]]; then
+		echo "[Error] Invalid SMP count: $smp" >&2
+		exit 1
+	fi
+
+	if [[ "$smp" -gt 0 ]]; then
+        echo "-smp $smp"
+        return
+    fi
+
     case "$cpu_type" in
         intel|amd) echo "-smp 16" ;;
         intel-server|amd-server) echo "-smp 32" ;;
@@ -251,7 +264,6 @@ append_uefi_bios() {
 }
 
 declare -A CONTROLLERS
-declare -A BUS_NAMES
 
 ensure_controller() {
     local type="$1"

@@ -70,6 +70,7 @@ int serial_is_transmit_empty(void) __attribute__((used));
 void serial_printf(const char* fmt, ...) __attribute__((used));
 
 void vmem_init(uniboot_boot_info* sysinfo) __attribute__((used));
+aos_bool is_vmem_initialized(void) __attribute__((used));
 void vmem_set_cursor(uint16_t x, uint16_t y) __attribute__((used));
 void vmem_disable_cursor(void) __attribute__((used));
 void vmem_clear_screen(struct VMemDesign* design) __attribute__((used));

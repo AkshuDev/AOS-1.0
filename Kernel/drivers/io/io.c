@@ -35,6 +35,7 @@ static spinlock_t ps2_lock;
 
 static aos_bool serial_present;
 
+static aos_bool vmem_active;
 uint64_t IO_VMEM_MAX_COLS_true;
 uint64_t IO_VMEM_MAX_ROWS_true;
 uint64_t IO_VMEM_true;
@@ -521,12 +522,6 @@ static uint32_t vmem_convert_color_to_rgba(enum VMemColors color){
 
 void vmem_init(uniboot_boot_info* sysinfo) {
 	if (!sysinfo) {
-		vmem_mode = UNIBOOT_FB_MODE_VGA;
-		IO_VMEM_true = IO_VMEM;
-		IO_VMEM_MAX_COLS_true = IO_VMEM_MAX_COLS;
-		IO_VMEM_MAX_ROWS_true = IO_VMEM_MAX_ROWS;
-		vmem_fbi = (FB_Info_t){0};
-
 		return;
 	}
 
@@ -537,8 +532,8 @@ void vmem_init(uniboot_boot_info* sysinfo) {
 		default: vmem_mode = UNIBOOT_FB_MODE_VGA; break;
 	}
 	IO_VMEM_true = AOS_DIRECT_MAP_BASE + sysinfo->fb_info.phys_addr;
-	IO_VMEM_MAX_COLS_true = sysinfo->fb_info.width;
-	IO_VMEM_MAX_ROWS_true = sysinfo->fb_info.height;
+	IO_VMEM_MAX_COLS_true = sysinfo->fb_info.width / 8;
+	IO_VMEM_MAX_ROWS_true = sysinfo->fb_info.height / 16;
 
 	vmem_fbi.addr = IO_VMEM_true;
 	vmem_fbi.phys_addr = sysinfo->fb_info.phys_addr;
@@ -549,7 +544,8 @@ void vmem_init(uniboot_boot_info* sysinfo) {
 	vmem_fbi.size = sysinfo->fb_info.size;
 	vmem_fbi.cformat = uniboot_convert_color_to_pyrion(sysinfo->fb_info.color_format);
 
-	pager_map_range(IO_VMEM_true, sysinfo->fb_info.phys_addr, sysinfo->fb_info.size > 0 ? sysinfo->fb_info.size : IO_VMEM_MAX_COLS_true * IO_VMEM_MAX_ROWS_true * (sysinfo->fb_info.bpp / 8), PAGE_PRESENT | PAGE_PCD | PAGE_RW);
+	pager_map_range(IO_VMEM_true, sysinfo->fb_info.phys_addr, sysinfo->fb_info.size > 0 ? sysinfo->fb_info.size : sysinfo->fb_info.width * sysinfo->fb_info.height * (sysinfo->fb_info.bpp / 8), PAGE_PRESENT | PAGE_PCD | PAGE_RW);
+	vmem_active = true;
 
 	serial_printf("[IO:VMEM] FB Mode: %u\n", sysinfo->fb_info.mode);
 	serial_printf("[IO:VMEM] FB Addr: 0x%llx\n", sysinfo->fb_info.addr);
@@ -559,7 +555,13 @@ void vmem_init(uniboot_boot_info* sysinfo) {
 	serial_printf("[IO:VMEM] FB Size: %u\n", sysinfo->fb_info.size);
 }
 
+aos_bool is_vmem_initialized(void) {
+	return vmem_active;
+}
+
 void vmem_set_cursor(uint16_t x, uint16_t y) {
+	if (!vmem_active) return;
+
     uint64_t rflags = spin_lock_irqsave(&vmem_cur_lock);
 
 	if (vmem_mode == UNIBOOT_FB_MODE_UEFI_GOP) {
@@ -577,6 +579,7 @@ void vmem_set_cursor(uint16_t x, uint16_t y) {
 }
 
 void vmem_disable_cursor(void) {
+	if (!vmem_active) return;
 	if (vmem_mode != UNIBOOT_FB_MODE_VGA) return;
 
     uint64_t rflags = spin_lock_irqsave(&vmem_cur_lock);
@@ -588,6 +591,7 @@ void vmem_disable_cursor(void) {
 }
 
 void vmem_clear_screen(struct VMemDesign* design) {
+	if (!vmem_active) return;
     uint64_t rflags = spin_lock_irqsave(&vmem_lock);
 
 	if (vmem_mode == UNIBOOT_FB_MODE_UEFI_GOP) {
@@ -626,9 +630,11 @@ void vmem_printc(struct VMemDesign* design, char c) {
 		}
 	}
 
-	if (design->x > IO_VMEM_MAX_COLS_true) design->x = IO_VMEM_MAX_COLS_true;
+	if (!vmem_active) return;
+
+	if (design->x >= vmem_fbi.width) design->x = vmem_fbi.width;
 	else if (design->x < 0) design->x = 0;
-	if (design->y > IO_VMEM_MAX_ROWS_true) design->y = IO_VMEM_MAX_ROWS_true;
+	if (design->y >= vmem_fbi.height) design->y = vmem_fbi.height;
 	else if (design->y < 0) design->y = 0;
 
 	vmem_set_cursor(design->x, design->y);
@@ -903,6 +909,7 @@ void vmem_printf(struct VMemDesign* design, const char* fmt, ...) {
 }
 
 void vmem_scroll_up(struct VMemDesign* design, uint32_t lines, enum VMemColors color) {
+	if (!vmem_active) return;
 	if (vmem_mode == UNIBOOT_FB_MODE_UEFI_GOP) {
 		fb_scroll_up(&vmem_fbi, lines, vmem_convert_color_to_rgba(color));
 		return;

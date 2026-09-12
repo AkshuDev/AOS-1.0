@@ -39,31 +39,108 @@ static const char *exception_names[] = {
 static volatile uint8_t panic_depth[SMP_MAX_CORES];
 static volatile spinlock_t panic_lock;
 
-void aos_system_exception(struct reg_trap_frame *r) {
-	__asm__ volatile("cli");
-
-	uint32_t core_idx = smp_get_current_core();
+static inline void aos_system_panic_chk_n_kill(aos_bool is_bsp, uint32_t core_idx) {
+	uint8_t base_panic_reboot_req = is_bsp ? 5 : 2;
 
 	uint64_t rflags = spin_lock_irqsave(&panic_lock);
 	panic_depth[core_idx]++;
 	uint64_t lpanic = panic_depth[core_idx];
 	spin_unlock_irqrestore(&panic_lock, rflags);
-	if (lpanic == 2) {
+	if (lpanic == base_panic_reboot_req) {
 		serial_print("\nNESTED PANIC - STAGE 1 (Full reboot)\n");
 		acpi_reboot();
         for(;;) __asm__ volatile("hlt");
-	} else if (lpanic == 3) {
+	} else if (lpanic == base_panic_reboot_req+1) {
 		serial_print("\nNESTED PANIC - STAGE 2 (Emergency reboot)\n");
 		acpi_reboot();
         for(;;) __asm__ volatile("hlt");
-	} else if (lpanic == 4) {
+	} else if (lpanic == base_panic_reboot_req+2) {
 		serial_print("\nNESTED PANIC - STAGE 3 (Direct halt)\n");
         for(;;) __asm__ volatile("hlt");
-	} else if (lpanic > 4) {
+	} else if (lpanic >= base_panic_reboot_req+3) {
         for(;;) __asm__ volatile("hlt");
 	}
+}
 
+// Grim Reaper System
+void aos_system_panic(const char* reason) {
 	__asm__ volatile("cli");
+	
+	aos_bool is_bsp = smp_is_bsp_core();
+	uint32_t core_idx = smp_get_current_core();
+	aos_system_panic_chk_n_kill(is_bsp, core_idx);
+
+	struct VMemDesign c = {
+		.bg = VMEM_COLOR_RED,
+		.fg = VMEM_COLOR_WHITE,
+		.serial_out = AOS_TRUE,
+		.auto_scroll = AOS_FALSE,
+		.x = 0,
+		.y = 0
+	};
+	vmem_clear_screen(&c);
+	vmem_disable_cursor();
+
+	const char* grim_reaper_ascii_art = "\n" \
+	"                ...\n" \
+	"              ;::::;\n" \
+	"            ;::::; :;\n" \
+	"          ;:::::'   :;\n" \
+	"         ;:::::;     ;.\n" \
+	"        ,:::::'       ;           OOO\\\n" \
+	"        ::::::;       ;          OOOOO\\\n" \
+	"        ;:::::;       ;         OOOOOOOO\n" \
+	"       ,;::::::;     ;'         / OOOOOOO\n" \
+	"     ;:::::::::`. ,,,;.        /  / DOOOOOO\n" \
+	"   .';:::::::::::::::::;,     /  /     DOOOO\n" \
+	"  ,::::::;::::::;;;;::::;,   /  /        DOOO\n" \
+	" ;`::::::`'::::::;;;::::: ,#/  /          DOOO\n" \
+	" :`:::::::`;::::::;;::: ;::#  /            DOOO\n" \
+	" ::`:::::::`;:::::::: ;::::# /              DOO\n" \
+	" `:`:::::::`;:::::: ;::::::#/               DOO\n" \
+	"  :::`:::::::`;; ;:::::::::##                OO\n" \
+	"  ::::`:::::::`;::::::::;:::#                OO\n" \
+	"  `:::::`::::::::::::;'`:;::#                O\n" \
+	"   `:::::`::::::::;' /  / `:#\n" \
+	"    ::::::`:::::;'  /  /   `#\n\n";
+
+	vmem_print(&c, grim_reaper_ascii_art);
+	
+	for (uint64_t i = 0; i < IO_VMEM_MAX_COLS_true; i++) vmem_printc(&c, '=');
+	
+	// Center all text
+	uint64_t center = (uint64_t)(IO_VMEM_MAX_COLS_true / 2);
+	
+	const char* title = "KERNEL PANIC\n";
+	const char* message = "Please manually reboot system!\n";
+
+	uint64_t title_len = strlen(title);
+	uint64_t message_len = strlen(message);
+
+	uint64_t title_x = center - (title_len / 2);
+	uint64_t message_x = center - (message_len / 2);
+
+	vmem_set_cursor(title_x, c.y);
+	c.x = title_x;
+	vmem_print(&c, title);
+
+	vmem_set_cursor(message_x, c.y);
+	c.x = message_x;
+	vmem_print(&c, message);
+
+	for (uint64_t i = 0; i < IO_VMEM_MAX_COLS_true; i++) vmem_printc(&c, '=');
+
+	vmem_printf(&c, "(Reason) %s\n", reason);
+
+	for (;;) {__asm__ volatile("hlt");}
+}
+
+void aos_system_exception(struct reg_trap_frame *r) {
+	__asm__ volatile("cli");
+
+	aos_bool is_bsp = smp_is_bsp_core();
+	uint32_t core_idx = smp_get_current_core();
+	aos_system_panic_chk_n_kill(is_bsp, core_idx);
 
 	uint64_t cr2 = 0;
 	if (r->int_no == 14)
@@ -127,7 +204,7 @@ void aos_system_exception(struct reg_trap_frame *r) {
         serial_print("Usually caused by a kernel stack overflow or a fault inside the Page Fault handler.\n");
     }
 
-	if (!smp_is_bsp_core()) {
+	if (!is_bsp) {
 		uint32_t core = smp_get_current_core();
 		serial_printf("\nRESETTING CORE %u\n", core);
 		smp_reset_core(core);
@@ -135,8 +212,6 @@ void aos_system_exception(struct reg_trap_frame *r) {
 		return;
 	}
 
-	serial_print("\nREBOOTING SYSTEM\n");
-	
 	// Print on screen - (done later to allow all serial information to pass incase of a nested panic in )
 
 	struct VMemDesign c = {

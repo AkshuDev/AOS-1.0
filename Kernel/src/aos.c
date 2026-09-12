@@ -105,7 +105,7 @@ void kernel_main_true(void) { // Supports only UniBoot
 	serial_printf("Loaded and Parsing Boot Info at %p\n", boot_info);
 
 	if (!kinit_bootinfo(boot_info)) {
-		serial_print("Failed to validate and load Boot Info, Hanging!\n");
+		aos_system_panic("Failed to validate and load Boot Info!\n");
 		for (;;) __asm__ volatile("hlt");
 	}
 
@@ -147,12 +147,12 @@ void kernel_main_true(void) { // Supports only UniBoot
 
 	vmem_print(&vmem_design, "Initializing Modules...\n");
     if (modules_init() == 0) {
-        vmem_print(&vmem_design, "[AOS] Driver/Module Initialization failed! Shutting down!\n");
+        aos_system_panic("[AOS] Driver/Module Initialization failed!\n");
         for (;;) __asm__("hlt");
     }
 	vmem_print(&vmem_design, "Initializing PCIe...\n");
     if (pcie_init() == 0) {
-        vmem_print(&vmem_design, "[AOS] PCIe Initialization failed! Shutting Down!\n");
+        aos_system_panic("[AOS] PCIe Initialization failed!\n");
         for (;;) __asm__("hlt");
     }
 
@@ -216,6 +216,7 @@ void kernel_main_true(void) { // Supports only UniBoot
     vmem_clear_screen(&vmem_design);
     vmem_print(&vmem_design, "Welcome To AOS!\n\n");
     aos_shell_pm();
+
     for (;;) __asm__("hlt");
 }
 
@@ -591,7 +592,8 @@ void aos_vmss_start(void) {
     vmem_clear_screen(&vmem_design);
     vmem_print(&vmem_design, "Welcome To AOS Safety Shell!\n\n");
     aos_shell_pm();
-    for (;;) __asm__("hlt");
+    
+	for (;;) __asm__("hlt");
 }
 
 void aos_pre_halt_system(void) {
