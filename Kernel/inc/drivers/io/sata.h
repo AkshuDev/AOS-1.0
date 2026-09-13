@@ -237,6 +237,9 @@ struct sata_port_state {
     uint64_t fis_virt;
     struct sata_hba_cmd_hdr* cmd_hdrs;
 
+	uint64_t* clt_virts; // clt_virts[slots]
+	uint64_t slots;
+
     aos_bool active;
     struct sata_hba_port* port;
 };

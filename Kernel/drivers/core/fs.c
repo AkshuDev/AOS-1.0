@@ -88,7 +88,7 @@ static aos_bool write_file(struct aos_file* self, uint64_t size, void* buf) {
 		h->file_data_refresh_req = AOS_FALSE;
 	}
 
-	// NOTE: Doesn't Increase File size.
+	//! Doesn't Increase File size.
 	// TODO: Add auto file buf size increase
 	if (self->cur_seek > h->file_data_size || size > h->file_data_size - self->cur_seek) {
 		spin_unlock_irqrestore(&h->handle_lock, rflags);

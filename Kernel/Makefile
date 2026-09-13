@@ -12,7 +12,7 @@ CLR_RESET   = \033[0m
 
 CC := gcc
 
-EXTRA ?= -march=x86-64 -mtune=generic -funroll-loops
+EXTRA ?= -march=x86-64 -mtune=generic -funroll-loops -mcmodel=large
 OPT_LEVEL ?= 3
 CFLAGS := -ffreestanding -m64 -fno-stack-protector -fno-pic \
 		-Wall -nostdlib -fno-pie \

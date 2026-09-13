@@ -631,40 +631,35 @@ struct pbfs_mount* aos_get_mounted_fs(void) {
 
 static int bd_read_blk(struct block_device* dev, uint64_t lba, void* buf) {
     if (current_drive_works) {
-        current_drive.read_blk(current_drive.controller_idx, current_drive.cur_port, lba, 1, buf);
-        return 1;
+        return current_drive.read_blk(current_drive.controller_idx, current_drive.cur_port, lba, 1, buf) ? 1 : 0;
     }
     return 0;
 }
 
 static int bd_write_blk(struct block_device* dev, uint64_t lba, const void* buf) {
     if (current_drive_works) {
-        current_drive.write_blk(current_drive.controller_idx, current_drive.cur_port, lba, 1, (void*)buf);
-        return 1;
+        return current_drive.write_blk(current_drive.controller_idx, current_drive.cur_port, lba, 1, (void*)buf) ? 1 : 0;
     }
     return 0;
 }
 
 static int bd_read(struct block_device* dev, uint64_t lba, uint64_t count, void* buf) {
     if (current_drive_works) {
-        current_drive.read_blk(current_drive.controller_idx, current_drive.cur_port, lba, count, buf);
-        return 1;
+        return current_drive.read_blk(current_drive.controller_idx, current_drive.cur_port, lba, count, buf) ? 1 : 0;
     }
     return 0;
 }
 
 static int bd_write(struct block_device* dev, uint64_t lba, uint64_t count, const void* buf) {
     if (current_drive_works) {
-        current_drive.write_blk(current_drive.controller_idx, current_drive.cur_port, lba, count, (void*)buf);
-        return 1;
+        return current_drive.write_blk(current_drive.controller_idx, current_drive.cur_port, lba, count, (void*)buf) ? 1 : 0;
     }
     return 0;
 }
 
 static int bd_flush(struct block_device* dev) {
     if (current_drive_works) {
-        current_drive.flush(current_drive.controller_idx, current_drive.cur_port);
-        return 1;
+        return current_drive.flush(current_drive.controller_idx, current_drive.cur_port) ? 1 : 0;
     }
     return 0;
 }
