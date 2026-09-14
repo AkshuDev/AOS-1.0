@@ -93,6 +93,4 @@ uint64_t avmf_alloc_virt(uint64_t size, MemoryAllocType type) __attribute__((use
 uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, uint32_t flags, uint64_t* phys_out) __attribute__((used));
 void avmf_free(uint64_t virt) __attribute__((used));
 
-avmf_header_t* avmf_find(uint64_t virt) __attribute__((used));
-
 void avmf_print_info(aos_bool vmem, struct VMemDesign* design) __attribute__((used));

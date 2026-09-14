@@ -33,6 +33,7 @@ static uint64_t irange_cpage_remaining = 0;
 static uint64_t avmf_bitmap[BITMAP_SIZE];
 
 static inline uint64_t align4k(uint64_t value) {
+	if (value > UINT64_MAX - (PAGE_SIZE - 1)) return 0;
     return ALIGN_UP(value, PAGE_SIZE);
 }
 
@@ -154,24 +155,45 @@ static avmf_region_header_t* avmf_find_region(uint64_t min_virt, uint64_t max_vi
 	return best;
 }
 
+//! Assumes spinlock is locked
 static void avmf_unlink_header(avmf_region_header_t* r, avmf_header_t* h) {
 	if (!h || !r) return;
 	if (r->signature != AVMF_SIGNATURE) return;
     if (r->version != AVMF_VERSION) return;
     if (r->limit < 1 || r->limit <= r->base) return;
 
-	uint64_t rflags = spin_lock_irqsave(&r->lock);
-
 	avmf_header_type_t typ = h->type;
+	uint64_t* count = NULL;
+	struct AVMF_Header** list = NULL;
+	struct AVMF_Header** end = NULL;
 
-	aos_bool is_end = AOS_TRUE;
+	switch (typ) {
+		case AVMF_HDR_TYPE_ALLOC: {
+			count = &r->alloc_count;
+			list = &r->alloc_list;
+			end = &r->alloc_list_end;
+			break;
+		}
+
+		case AVMF_HDR_TYPE_CACHE: {
+			count = &r->cache_count;
+			list = &r->cache_list;
+			end = &r->cache_list_end;
+			break;
+		}
+
+		default: return;
+	}
+
+	if (*count == 0) {
+		h->type = AVMF_HDR_TYPE_CORRUPT;
+		return;
+	}
+
 	aos_bool poisoned = AOS_FALSE;
-
 	struct AVMF_Header* n = h->next;
 	struct AVMF_Header* p = h->parent;
 	if (n) {
-		is_end = AOS_FALSE;
-
 		if (n->signature != AVMF_SIGNATURE) poisoned = AOS_TRUE;
 		if (n->version != AVMF_VERSION) poisoned = AOS_TRUE;
 
@@ -198,27 +220,18 @@ static void avmf_unlink_header(avmf_region_header_t* r, avmf_header_t* h) {
 
 	if (poisoned) {
 		h->type = AVMF_HDR_TYPE_CORRUPT;
-		spin_unlock_irqrestore(&r->lock, rflags);
 		return;
 	}
 
-	switch (typ) {
-		case AVMF_HDR_TYPE_ALLOC: {
-			r->alloc_count--;
-			if (is_end) r->alloc_list_end = h->parent;
-			break;
-		}
-		case AVMF_HDR_TYPE_CACHE: {
-			r->cache_count--;
-			if (is_end) r->cache_list_end = h->parent;
-			break;
-		}
-		default: break;
-	}
+	if (*end == h) *end = h->parent;
+	else if (*list == h) *list = h->next;
+	(*count)--;
 
-	spin_unlock_irqrestore(&r->lock, rflags);
+	h->next = NULL;
+	h->parent = NULL;
 }
 
+//! Assumes spinlock is locked
 static aos_bool avmf_link_header(avmf_region_header_t* r, avmf_header_t* h) {
 	if (!r || !h) return AOS_FALSE;
 	if (r->signature != AVMF_SIGNATURE) return AOS_FALSE;
@@ -255,8 +268,6 @@ static aos_bool avmf_link_header(avmf_region_header_t* r, avmf_header_t* h) {
 
 	if (!list || !count || !end || list_type == AVMF_HDR_TYPE_CORRUPT) return AOS_FALSE;
 
-	uint64_t rflags = spin_lock_irqsave(&r->lock);
-
 	if (*count < 1 || !*list) {
 		reset_list: {
 			*list = h;
@@ -269,7 +280,9 @@ static aos_bool avmf_link_header(avmf_region_header_t* r, avmf_header_t* h) {
 				*end = h;
 				struct AVMF_Header* p = NULL;
 				struct AVMF_Header* c = *list;
-				for (uint64_t i = 0; i < *count; i++) {
+
+				uint64_t r_count = *count;
+				for (uint64_t i = 0; i < r_count; i++) {
 					struct AVMF_Header* n = c->next;
 					if (c->signature != AVMF_SIGNATURE || c->version != AVMF_VERSION) {
 						avmf_unlink_header(r, c);
@@ -308,6 +321,8 @@ static aos_bool avmf_link_header(avmf_region_header_t* r, avmf_header_t* h) {
 					if (!n) {
 						c->next = h;
 						h->parent = c;
+
+						(*count)++;
 						break;
 					}
 					p = c;
@@ -324,13 +339,15 @@ static aos_bool avmf_link_header(avmf_region_header_t* r, avmf_header_t* h) {
 			}
 			c->next = h;
 			h->parent = c;
+
+			(*count)++;
 		}
 	}
 
-	spin_unlock_irqrestore(&r->lock, rflags);
 	return AOS_TRUE;
 }
 
+//! Assumes spinlock is locked
 static aos_bool avmf_free_list_append(avmf_region_header_t* r, avmf_range_t* range) {
     if (!r || !range) return AOS_FALSE;
     if (range->size == 0) return AOS_FALSE;
@@ -338,6 +355,7 @@ static aos_bool avmf_free_list_append(avmf_region_header_t* r, avmf_range_t* ran
     if (r->signature != AVMF_SIGNATURE) return AOS_FALSE;
     if (r->version != AVMF_VERSION) return AOS_FALSE;
     if (r->limit < 1 || r->limit <= r->base) return AOS_FALSE;
+	if (range->base > UINT64_MAX - range->size) return AOS_FALSE;
 
     uint64_t range_end = range->base + range->size;
 
@@ -356,6 +374,7 @@ static aos_bool avmf_free_list_append(avmf_region_header_t* r, avmf_range_t* ran
 
     for (uint64_t i = 0; i < r->free_count; i++) {
         if (!cur) return AOS_FALSE;
+		if (cur->base > UINT64_MAX - cur->size) return AOS_FALSE;
         uint64_t cur_end = cur->base + cur->size;
 
         if (range->base < cur_end && cur->base < range_end) return AOS_FALSE;
@@ -410,9 +429,13 @@ static aos_bool avmf_free_list_append(avmf_region_header_t* r, avmf_range_t* ran
 }
 
 static avmf_header_t* avmf_alloc_ihdr(void) {
+	uint64_t rflags = spin_lock_irqsave(&avmf_lock2);
+
 	if (ihdr_cpage_remaining >= sizeof(avmf_header_t) && ihdr_cpage) {
 		avmf_header_t* out = (avmf_header_t*)((uint8_t*)ihdr_cpage + (PAGE_SIZE - ihdr_cpage_remaining));
 		ihdr_cpage_remaining -= sizeof(avmf_header_t);
+
+		spin_unlock_irqrestore(&avmf_lock2, rflags);
 		return out;
 	} else {
 		uint64_t page_ptr = 0;
@@ -420,9 +443,13 @@ static avmf_header_t* avmf_alloc_ihdr(void) {
 			page_ptr = avmf_alloc_phys_page();
 			if (page_ptr) break;
 		}
-		if (!page_ptr) return NULL;
+		if (!page_ptr) {
+			spin_unlock_irqrestore(&avmf_lock2, rflags);
+			return NULL;
+		}
 		if (!pager_map(AOS_DIRECT_MAP_BASE + page_ptr, page_ptr, PAGE_RW | PAGE_PCD | PAGE_PRESENT)) {
 			avmf_free_phys_page(page_ptr);
+			spin_unlock_irqrestore(&avmf_lock2, rflags);
 			return NULL;
 		}
 
@@ -432,20 +459,31 @@ static avmf_header_t* avmf_alloc_ihdr(void) {
 		avmf_header_t* out = (avmf_header_t*)ihdr_cpage;
 		ihdr_cpage_remaining = PAGE_SIZE - sizeof(avmf_header_t);
 		
+		spin_unlock_irqrestore(&avmf_lock2, rflags);
 		return out;
 	}
 }
+//! Frees last object only
 static void avmf_free_ihdr(avmf_header_t* h) {
+	if (!h) return;
+
+	uint64_t rflags = spin_lock_irqsave(&avmf_lock2);
 	uint64_t hptr = (uint64_t)h;
 	if (hptr == (uint64_t)ihdr_cpage && ihdr_cpage_remaining == PAGE_SIZE - sizeof(avmf_header_t)) {
 		ihdr_cpage_remaining = PAGE_SIZE;
 	}
+
+	spin_unlock_irqrestore(&avmf_lock2, rflags);
 }
 
 static avmf_range_t* avmf_alloc_irange(void) {
+	uint64_t rflags = spin_lock_irqsave(&avmf_lock2);
+
 	if (irange_cpage_remaining >= sizeof(avmf_range_t) && irange_cpage) {
 		avmf_range_t* out = (avmf_range_t*)((uint8_t*)irange_cpage + (PAGE_SIZE - irange_cpage_remaining));
 		irange_cpage_remaining -= sizeof(avmf_range_t);
+
+		spin_unlock_irqrestore(&avmf_lock2, rflags);
 		return out;
 	} else {
 		uint64_t page_ptr = 0;
@@ -453,9 +491,13 @@ static avmf_range_t* avmf_alloc_irange(void) {
 			page_ptr = avmf_alloc_phys_page();
 			if (page_ptr) break;
 		}
-		if (!page_ptr) return NULL;
+		if (!page_ptr) {
+			spin_unlock_irqrestore(&avmf_lock2, rflags);
+			return NULL;
+		}
 		if (!pager_map(AOS_DIRECT_MAP_BASE + page_ptr, page_ptr, PAGE_RW | PAGE_PCD | PAGE_PRESENT)) {
 			avmf_free_phys_page(page_ptr);
+			spin_unlock_irqrestore(&avmf_lock2, rflags);
 			return NULL;
 		}
 
@@ -465,14 +507,21 @@ static avmf_range_t* avmf_alloc_irange(void) {
 		avmf_range_t* out = (avmf_range_t*)irange_cpage;
 		irange_cpage_remaining = PAGE_SIZE - sizeof(avmf_range_t);
 		
+		spin_unlock_irqrestore(&avmf_lock2, rflags);
 		return out;
 	}
 }
+//! Frees last object only
 static void avmf_free_irange(avmf_range_t* h) {
+	if (!h) return;
+	uint64_t rflags = spin_lock_irqsave(&avmf_lock2);
+
 	uint64_t hptr = (uint64_t)h;
 	if (hptr == (uint64_t)irange_cpage && irange_cpage_remaining == PAGE_SIZE - sizeof(avmf_range_t)) {
 		irange_cpage_remaining = PAGE_SIZE;
 	}
+
+	spin_unlock_irqrestore(&avmf_lock2, rflags);
 }
 
 static void avmf_region_init(avmf_region_header_t* r, uint64_t base, uint64_t limit) {
@@ -509,9 +558,10 @@ static avmf_header_t* avmf_region_alloc(avmf_region_header_t* r, uint64_t size, 
     if (r->version != AVMF_VERSION) return NULL;
     if (r->limit < 1 || r->limit <= r->base) return NULL;
 	
+	uint64_t rflags = spin_lock_irqsave(&r->lock);
 	if (r->cache_count > 0) {
 		struct AVMF_Header* c = r->cache_list;
-		for (uint64_t i = 0; i < r->cache_count; i++) {
+		for (uint64_t i = 0; i < r->cache_count && c; i++) {
 			struct AVMF_Header* n = c->next;
 			if (c->type == AVMF_HDR_TYPE_CORRUPT) {
 				try_continue_next_after_corrupt: {
@@ -526,39 +576,43 @@ static avmf_header_t* avmf_region_alloc(avmf_region_header_t* r, uint64_t size, 
 						continue;
 					}
 				}
-			}
-			else if (c->type != AVMF_HDR_TYPE_CACHE) {
+			} else if (c->type != AVMF_HDR_TYPE_CACHE) {
 				// Delete Cache Header
 				avmf_unlink_header(r, c);
 				goto try_continue_next_after_corrupt;
 				break;
-			}
-			if (c->signature != AVMF_SIGNATURE || c->version != AVMF_VERSION) {
+			} if (c->signature != AVMF_SIGNATURE || c->version != AVMF_VERSION) {
 				// Delete Cache Header
 				avmf_unlink_header(r, c);
 				goto try_continue_next_after_corrupt;
 				break;
 			}
 
-			if (min_virt > 0 && c->virt_addr < min_virt) continue;
-			if (max_virt > 0 && c->virt_addr + size > max_virt) continue;
+			if (min_virt > 0 && c->virt_addr < min_virt) {
+				continue_next: {
+					c = n;
+					continue;
+				}
+			}
+			if (max_virt > 0 && (c->virt_addr > max_virt || size > max_virt - c->virt_addr)) goto continue_next;
+			if (align == 0) goto continue_next;
 
 			if (c->size == size && (c->virt_addr % align) == 0) {
 				// Perfect Match
 				avmf_unlink_header(r, c);
 
 				c->type = AVMF_HDR_TYPE_ALLOC;
-				if (!avmf_link_header(r, c)) {
-					continue;
-				}
+				if (!avmf_link_header(r, c)) goto continue_next;
 
 				c->used = AOS_TRUE;
+
+				spin_unlock_irqrestore(&r->lock, rflags);
 				return c;
 			} else if (c->size > size) {
 				if ((c->virt_addr % align) == 0) {
 					// Use from start of cache is perfect
 					avmf_header_t* hdr = avmf_alloc_ihdr();
-					if (!hdr) continue;
+					if (!hdr) goto continue_next;
 
 					memset(hdr, 0, sizeof(avmf_header_t));
 					hdr->signature = AVMF_SIGNATURE;
@@ -571,7 +625,7 @@ static avmf_header_t* avmf_region_alloc(avmf_region_header_t* r, uint64_t size, 
 
 					if (!avmf_link_header(r, hdr)) {
 						avmf_free_ihdr(hdr);
-						continue;
+						goto continue_next;
 					}
 
 					c->size -= hdr->size;
@@ -593,6 +647,7 @@ static avmf_header_t* avmf_region_alloc(avmf_region_header_t* r, uint64_t size, 
 						}
 					}
 
+					spin_unlock_irqrestore(&r->lock, rflags);
 					return hdr;
 				}
 			}
@@ -607,6 +662,9 @@ static avmf_header_t* avmf_region_alloc(avmf_region_header_t* r, uint64_t size, 
             uint64_t range_end;
 
             if (cur->size == 0) goto next_free;
+			if (cur->base > UINT64_MAX - cur->size) goto next_free;
+			if (align == 0) goto next_free;
+
             range_end = cur->base + cur->size;
 
             uint64_t alloc_base = cur->base;
@@ -625,7 +683,10 @@ static avmf_header_t* avmf_region_alloc(avmf_region_header_t* r, uint64_t size, 
             if (max_virt && (alloc_base > max_virt || size > max_virt - alloc_base)) goto next_free;
 
             avmf_header_t* hdr = avmf_alloc_ihdr();
-            if (!hdr) return NULL;
+            if (!hdr) {
+				spin_unlock_irqrestore(&r->lock, rflags);
+				return NULL;
+			}
             memset(hdr, 0, sizeof(*hdr));
 
             hdr->signature = AVMF_SIGNATURE;
@@ -656,6 +717,7 @@ static avmf_header_t* avmf_region_alloc(avmf_region_header_t* r, uint64_t size, 
 
                 if (!suffix_range) {
                     avmf_free_ihdr(hdr);
+					spin_unlock_irqrestore(&r->lock, rflags);
                     return NULL;
                 }
 
@@ -681,10 +743,12 @@ static avmf_header_t* avmf_region_alloc(avmf_region_header_t* r, uint64_t size, 
                 }
 
                 avmf_free_ihdr(hdr);
+				spin_unlock_irqrestore(&r->lock, rflags);
                 return NULL;
             }
 
 			r->allocated_bytes += hdr->size;
+			spin_unlock_irqrestore(&r->lock, rflags);
             return hdr;
 		}
 
@@ -694,21 +758,29 @@ static avmf_header_t* avmf_region_alloc(avmf_region_header_t* r, uint64_t size, 
         }
     }
 
+	spin_unlock_irqrestore(&r->lock, rflags);
 	return NULL;
 }
 
 static void avmf_region_free(avmf_region_header_t* r, uint64_t base, uint64_t size) {
+	if (!r) return;
 	if (r->signature != AVMF_SIGNATURE) return;
     if (r->version != AVMF_VERSION) return;
     if (r->limit < 1 || r->limit <= r->base) return;
 	
 	size = align4k(size);
+	if (size == 0) return;
     if (base > UINT64_MAX - size) return;
     if (r->alloc_count == 0 || !r->alloc_list) return;
 
+	uint64_t rflags = spin_lock_irqsave(&r->lock);
+
     avmf_header_t* c = r->alloc_list;
     for (uint64_t i = 0; i < r->alloc_count; i++) {
-        if (!c) return;
+        if (!c) {
+			spin_unlock_irqrestore(&r->lock, rflags);
+			return;
+		}
         avmf_header_t* n = c->next;
         if (c->type == AVMF_HDR_TYPE_CORRUPT) {
 			try_continue_next_after_corrupt: {
@@ -750,12 +822,16 @@ static void avmf_region_free(avmf_region_header_t* r, uint64_t base, uint64_t si
 
             c->type = AVMF_HDR_TYPE_CACHE;
             c->used = AOS_FALSE;
+			spin_unlock_irqrestore(&r->lock, rflags);
             return;
         }
 
 		add_to_free_list: {
 			avmf_range_t* range = avmf_alloc_irange();
-			if (!range) return;
+			if (!range) {
+				spin_unlock_irqrestore(&r->lock, rflags);
+				return;
+			}
 
 			range->base = c->virt_addr;
 			range->size = c->size;
@@ -763,22 +839,28 @@ static void avmf_region_free(avmf_region_header_t* r, uint64_t base, uint64_t si
 
 			if (!avmf_free_list_append(r, range)) {
 				avmf_free_irange(range);
+				spin_unlock_irqrestore(&r->lock, rflags);
 				return;
 			}
 			avmf_unlink_header(r, c);
 			c->used = AOS_FALSE;
 			r->allocated_bytes -= c->size;
 
+			spin_unlock_irqrestore(&r->lock, rflags);
 			return;
 		}
     }
+
+	spin_unlock_irqrestore(&r->lock, rflags);
 }
 
 uint64_t avmf_alloc_phys_contiguous(uint64_t size) {
 	if (size == 0) return 0;
 
+	uint64_t sz = align4k(size);
+	if (sz == 0) return 0;
+
     uint64_t rflags = spin_lock_irqsave(&avmf_lock);
-    uint64_t sz = align4k(size);
     uint64_t pages_needed = sz / PAGE_SIZE;
 
     for (uint64_t i = 0; i < physical_region_count; i++) {
@@ -822,9 +904,10 @@ uint64_t avmf_alloc_phys_contiguous(uint64_t size) {
 
 void avmf_free_phys_contiguous(uint64_t phys, uint64_t size) {
 	if (size == 0) return;
+	uint64_t sz = align4k(size);
+	if (sz == 0) return;
 
     uint64_t rflags = spin_lock_irqsave(&avmf_lock);
-    uint64_t sz = align4k(size);
     uint64_t pages_needed = sz / PAGE_SIZE;
 
 	uint64_t first_page = ALIGN_DOWN(phys, PAGE_SIZE) / PAGE_SIZE;
@@ -917,6 +1000,7 @@ uint64_t avmf_alloc_virt(uint64_t size, MemoryAllocType type) {
 uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, uint32_t flags, uint64_t* phys_out) {
 	if (phys_out != NULL) *phys_out = 0;
 	uint64_t true_size = align4k(size);
+	if (true_size == 0) return 0;
 
 	avmf_region_header_t* r = NULL;
     avmf_header_t* hdr = avmf_alloc_hdr_internal(true_size, type, &r);
@@ -938,6 +1022,7 @@ uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, uint32_t flags, uint64_
 		avmf_region_free(r, hdr->virt_addr, hdr->size);
 		return 0;
 	}
+	hdr->phys_addr = phys;
 
     pager_map_range((uint64_t)hdr->virt_addr, phys, hdr->size, f);
     if (phys_out != NULL) *phys_out = phys;
@@ -953,15 +1038,19 @@ void avmf_free(uint64_t virt) {
     avmf_header_t* hdr = r->alloc_list;
 	aos_bool found = AOS_FALSE;
     while (hdr) {
-		if (hdr->type != AVMF_HDR_TYPE_ALLOC) continue;
-		if (hdr->signature != AVMF_SIGNATURE) continue;
-		if (hdr->version != AVMF_VERSION) continue;
+		if (hdr->type != AVMF_HDR_TYPE_ALLOC) goto continue_next;
+		if (hdr->signature != AVMF_SIGNATURE) goto continue_next;
+		if (hdr->version != AVMF_VERSION) goto continue_next;
 
         if (virt >= hdr->virt_addr && virt < hdr->virt_addr + hdr->size) {
 			found = AOS_TRUE;
             break;
         }
-        hdr = hdr->next;
+
+		continue_next: {
+        	hdr = hdr->next;
+			continue;
+		}
     }
     
 	if (!found) return;
@@ -997,23 +1086,6 @@ void avmf_init(uint64_t* base_phys, uint64_t* limit_phys, uint8_t entries) {
 	region_count = 4;
 
     spin_unlock_irqrestore(&avmf_lock, rflags);
-}
-
-avmf_header_t* avmf_find(uint64_t virt) {
-    avmf_region_header_t* r = avmf_find_region(virt, UINT64_MAX, virt + 1);
-	if (!r) return NULL;
-    avmf_header_t* cur = r->alloc_list;
-    while (cur) {
-		if (cur->type != AVMF_HDR_TYPE_ALLOC) continue;
-		if (cur->signature != AVMF_SIGNATURE) continue;
-		if (cur->version != AVMF_VERSION) continue;
-
-        if (virt >= cur->virt_addr && virt < cur->virt_addr + cur->size) {
-            return cur;
-        }
-        cur = cur->next;
-    }
-    return NULL;
 }
 
 static void avmf_print_info_region(aos_bool vmem, struct VMemDesign* design, avmf_region_header_t* region, const char* name) {
