@@ -1,10 +1,14 @@
 # AOS++
-AOS++ is a fully independent operating system built from scratch with zero external dependencies, powered entirely by the Pheonix Ecosystem.
+![Version](https://img.shields.io/badge/Version-1.0-red?style=for-the-badge)
+![License](https://img.shields.io/badge/License-GNU%20GPL%20v3.0-red?style=for-the-badge)
+![Status](https://img.shields.io/badge/Status-In%20Development-red?style=for-the-badge)
+
+AOS++ is a fully independent operating system built from scratch with zero external runtime dependencies, powered entirely by the Pheonix Ecosystem.
 It includes a custom bootloader, kernel (AOS), filesystem (PBFS), userland foundation, and more.
 
 AOS stands for Aftergreat Operating System, it is the core Kernel of the OS.
 
-When refering AOS: It means the kernel driving this Operating System, however when referring AOS++: It means the Operating System Itself.
+When referring AOS: It means the kernel driving this Operating System, however when referring AOS++: It means the Operating System itself.
 
 # How to begin
 ## Cloning
@@ -63,7 +67,7 @@ To test/run the OS, you can use the [run.sh](run.sh) helper file -
 ./run.sh
 ```
 
-You can add flags for various configurarions of the virtual machine, use *--help* or *-h* for more info -
+You can add flags for various configurations of the virtual machine, use *--help* or *-h* for more info -
 ```bash
 ./run.sh --help
 ```
@@ -82,7 +86,7 @@ AOS has inbuilt GPU Drivers of the following types/vendors -
 Planned support for multiple vendors such as - *AMD*, *Nvidia*, *Intel*, etc
 
 ## Serial
-AOS has inbuilt Serial Drivers for COM1/COM2 Ports via I/O, hence this is mostly accessable via the correct Chipset and device, however it will not cause any issues if the device is not present
+AOS has inbuilt Serial Drivers for COM1/COM2 Ports via I/O, hence this is mostly accessible via the correct Chipset and device, however it will not cause any issues if the device is not present
 
 ## USB (Universal Serial Bus)
 AOS has the following USB Drivers -
@@ -98,7 +102,7 @@ AOS has the following Disk/Drive Drivers -
 *NVMe*, *HDD* support planned for implementation in the future progress of AOS
 
 ## ACPI
-AOS Supports *Legacy ACPI* and *ACPI 2.0*
+AOS supports *Legacy ACPI* and *ACPI 2.0*
 
 ## Graphics Libraries
 AOS has inbuilt support for *Pyrion* (Created by *AkshuDev/Pheonix Studios*)
@@ -117,14 +121,14 @@ AOS has multiple features -
 And more. Please check out the code for extra information!
 
 # AOS Bootloader
-AOS Bootloader is a inbuilt bootloader which allows Multi-OS Loading via PBFS's Kernel Table feature. Hence AOS Bootloader can only run on *PBFS* formatted disks.
+AOS Bootloader is an inbuilt bootloader which allows Multi-OS Loading via PBFS's Kernel Table feature. Hence AOS Bootloader can only run on *PBFS* formatted disks.
 
 ## Supported Firmware Interfaces
 AOS Bootloader supports -
 1. *UEFI*
 2. *MBR* (***BIOS***)
 
-However in the comming future, it will also keep support for *PFI (**Pheonix Firmware Interface**)*
+However in the coming future, it will also keep support for *PFI (**Pheonix Firmware Interface**)*
 
 # Architecture Compatibility
 AOS and AOS Bootloader are compatible with ->
@@ -150,7 +154,7 @@ AOS Bootloader -> AOS -> Core Systems (PBFS/SMP/Drivers/ACPI/PCIe/etc) -> Pheoni
 *PBFS* or *Pheonix Block File System* is a 128-bit addressable file system used by AOS and AOS Bootloader. It is created by - *AkshuDev/Pheonix Studios*. It has various features such as Kernel Tables, Sysinfo, Bootloader Partitions (Allows easy setup of UEFI or MBR bootloaders without a hassle), and more. Link - https://github.com/AkshuDev/Pheonix-Block-File-System
 
 # Site
-Please visit the [AOS++](https://pheonix-studios-git.github.io/Pheonix-Studios/pages/os.html) page on [Pheonix Studios](https://pheonix-studios-git.github.io/Pheonix-Studios) webiste!
+Please visit the [AOS++](https://pheonix-studios-git.github.io/Pheonix-Studios/pages/os.html) page on [Pheonix Studios](https://pheonix-studios-git.github.io/Pheonix-Studios) website!
 
 # License
 This project is under *GNU General Public License V3.0*, see the [License](LICENSE) file for more information.
