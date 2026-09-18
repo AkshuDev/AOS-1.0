@@ -63,9 +63,9 @@ To test/run the OS, you can use the [run.sh](run.sh) helper file -
 ./run.sh
 ```
 
-You can add flags for various configurarions of the virtual machine, use *-help* for more info -
+You can add flags for various configurarions of the virtual machine, use *--help* or *-h* for more info -
 ```bash
-./run.sh -help
+./run.sh --help
 ```
 
 Example Configuration -
