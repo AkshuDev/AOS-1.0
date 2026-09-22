@@ -33,6 +33,7 @@ SECTIONS
     .bss : {
         __bss_start = .;
         *(.bss*)
+		*(.lbss*)
 		__bss_true_end = .;
         
 		. = ALIGN(16);

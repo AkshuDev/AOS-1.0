@@ -20,7 +20,7 @@ extern uint8_t __kstart; // from linker script
 static uintptr_t kstart = (uintptr_t)&__kstart;
 
 extern uint8_t __bss_end; // from linker script
-static uintptr_t bss_end;
+static uintptr_t bss_end = (uintptr_t)&__bss_end;
 
 static uintptr_t first_pagemaps;
 static uintptr_t first_pagemaps_end;
@@ -110,7 +110,6 @@ void pager_map_range(uint64_t virt, uint64_t phys, uint64_t size, uint64_t flags
 
 void pager_init(void) {
     pager_ready = AOS_FALSE; // Ensure
-	bss_end = (uintptr_t)((uintptr_t)kstart + (uintptr_t)&__bss_end);
 
 	uniboot_boot_info* binfo = kget_sysinfo();
     uniboot_smmap* m = kget_sysmap();
@@ -125,17 +124,16 @@ void pager_init(void) {
 	first_pagemaps_end = (uintptr_t)binfo->kernel_space_end;
 	
 	uint64_t max_phys_addr = 0;
-    uint64_t base_phys[256];
-    uint64_t limit_phys[256];
     uint64_t phys_idx = 0;
+	uint64_t base_phys[256];
+    uint64_t limit_phys[256];
 	
 	for (uint64_t i = 0; i < m->count; i++) {
         uniboot_smmap_entry* e = &m->entries[i];
         uint64_t end_addr = e->phys_start + e->size;
         
         if (e->size == 0) continue;
-		if (end_addr > max_phys_addr)
-            max_phys_addr = end_addr;
+		if (end_addr > max_phys_addr) max_phys_addr = end_addr;
 
 		double pretty_size = 0;
 		const char* pretty_unit = kbeautify_memory_size(e->size, &pretty_size);
@@ -143,10 +141,11 @@ void pager_init(void) {
 		serial_printf("SMMAP: %p - %p (%.2lf %s) (Type %s [%d])\n", e->phys_start, end_addr, pretty_size, pretty_unit, uniboot_smmap_get_type_str(e->type), e->type);
         if (e->type == UNIBOOT_SMMAP_TYPE_FREE) {
             uint64_t start = e->phys_start;
-            // Don't use the first <Kernel End>MB!
-            if (start < ALIGN_UP(bss_end, PAGE_SIZE)) {
-                if (e->size <= (ALIGN_UP(bss_end, PAGE_SIZE) - start)) continue; // Too small
-                start = bss_end;
+            // Don't use the first <Kernel End + 16>MB!
+			uint64_t privilaged = ALIGN_UP(bss_end + 0x1000000, PAGE_SIZE);
+            if (start < privilaged) {
+                if (e->size <= (privilaged - start)) continue; // Too small
+                start = privilaged;
             }
             base_phys[phys_idx] = start;
             limit_phys[phys_idx] = end_addr;
@@ -193,8 +192,8 @@ void pager_init(void) {
     pager_map_range(AOS_DIRECT_MAP_BASE, 0x0, max_phys_addr, PAGE_PRESENT | PAGE_RW | PAGE_PCD | PAGE_XD);
 	serial_print("[PAGER] Mapped Direct Map\n");
 
-    pager_map_range(0x0, 0x0, bss_end, PAGE_PRESENT | PAGE_RW); // Identity Map the Kernel (<Kernel End> MB)
-    serial_printf("[PAGER] Mapped Kernel (0x0-0x%llx)\n", bss_end);
+    pager_map_range(kstart, kstart, bss_end - kstart, PAGE_PRESENT | PAGE_RW); // Identity Map the Kernel (<Kernel End> MB)
+    serial_printf("[PAGER] Mapped Kernel (0x%llx-0x%llx)\n", kstart, bss_end);
 
 	pager_map_range(first_pagemaps, first_pagemaps, first_pagemaps_end - first_pagemaps, PAGE_PRESENT | PAGE_RW | PAGE_XD);
     serial_printf("[PAGER] Mapped Kernel Space (0x%llx-0x%llx)\n", first_pagemaps, first_pagemaps_end - first_pagemaps);

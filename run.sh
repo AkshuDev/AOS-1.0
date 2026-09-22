@@ -51,10 +51,12 @@ show_help() {
         -uefi, --uefi                  Enable UEFI (OVMF)
 
     Other:
+		-pstart, --pause-on-start      Pause on startup
+		-edbg, --enable-debug          Starts a GDB Debugging Server on QEMU GDB Debug TCP Port
         -er, --enable-reboot           Allow rebooting
         -h, --help                     Show this help message
         -ser=<out>, --serial=<out>     Redirect Serial Output to either 'file:/path/to/file' or 'stdio'
-        -fout=<file>, --file-out        Redirect all output to a file
+        -fout=<file>, --file-out       Redirect all output to a file
 
     Examples:
     ./run.sh --high-end --cpu=amd --ram=2G --gpu=virtio --web
@@ -79,6 +81,9 @@ serial="stdio"
 file_out="none"
 uefi=0
 boot_device="sata"
+pstart=0
+edbg=0
+dport=1234
 extra_devices=()
 
 while [[ $# -gt 0 ]]; do
@@ -100,6 +105,8 @@ while [[ $# -gt 0 ]]; do
         --architecture=*|-arch=*) arch="${1#*=}" ;;
         --nographics|-nog) nographics=1 ;;
         --internet|-web) internet=1 ;;
+		--pause-on-start|-pstart) pstart=1 ;;
+		--enable-debug|-edbg) edbg=1 ;;
         --enable-reboot|-er) enable_reboot=1 ;;
         --serial=*|-ser=*) serial="${1#*=}" ;;
         --file-out=*|-fout=*) file_out="${1#*=}" ;;
@@ -167,6 +174,22 @@ get_cpu() {
 }
 
 get_smp() {
+	if [[ "$smp" == "0" ]]; then
+        case "$cpu_type" in
+            intel|amd)
+                echo "-smp 16"
+                ;;
+            intel-server|amd-server)
+                echo "-smp 32"
+                ;;
+            *)
+                echo "[Warning] Unsupported cpu passed, using 4 Cores SMP" >&2
+                echo "-smp 4"
+                ;;
+        esac
+        return
+    fi
+
 	if ! [[ "$smp" =~ ^[1-9][0-9]*$ ]]; then
 		echo "[Error] Invalid SMP count: $smp" >&2
 		exit 1
@@ -176,14 +199,6 @@ get_smp() {
         echo "-smp $smp"
         return
     fi
-
-    case "$cpu_type" in
-        intel|amd) echo "-smp 16" ;;
-        intel-server|amd-server) echo "-smp 32" ;;
-        *)
-            echo "[Warning] Unsupported cpu passed, using 4 Cores SMP" >&2
-            echo "-smp 4" ;;
-    esac
 }
 
 get_gpu() {
@@ -237,11 +252,23 @@ get_display() {
 }
 
 get_extra_options() {
+	local opts=""
+
     if [[ $enable_reboot -ne 1 ]]; then
-        echo "-no-shutdown -no-reboot"
+        opts+=" -no-shutdown -no-reboot"
     else
-        echo "-no-shutdown"
+        opts+=" -no-shutdown"
     fi
+
+	if [[ $pstart -ne 0 ]]; then
+        opts+=" -S"
+    fi
+
+	if [[ $edbg -ne 0 ]]; then
+        opts+=" -gdb tcp::${dport}"
+    fi
+
+	echo "$opts"
 }
 
 get_file_options() {

@@ -30,24 +30,30 @@ void* memset(void* s, int c, size_t n) {
 		__asm__ volatile(
 			"cld\n\t"
 			"rep stosq"
-			::
-			"D"(ptr), "c"(size), "a"((uint64_t)pattern)
+			:
+			"+D"(ptr), "+c"(size)
+			:
+			"a"((uint64_t)pattern)
 			:
 			"memory", "cc"
 		);
-		remaining -= size * 8;
-		ptr = (void*)((uint8_t*)ptr + size * 8);
+
+		remaining -= (remaining / 8) * 8;
 	}
-    __asm__ volatile(
-		"cld\n\t"
-        "rep stosb"
-        :
-		"+D"(ptr), "+c"(remaining)
-		:
-		"a"((uint8_t)c)
-        :
-		"memory", "cc"
-    );
+
+	if (remaining > 0 && ptr) {
+		__asm__ volatile(
+			"cld\n\t"
+			"rep stosb"
+			:
+			"+D"(ptr), "+c"(remaining)
+			:
+			"a"((uint8_t)c)
+			:
+			"memory", "cc"
+		);
+	}
+
     return s;
 }
 
@@ -115,7 +121,7 @@ void* memmove(void* dest, const void* src, size_t n) {
 		"rep movsb\n\t"
 		"cld"
 		:
-		"+D"(dest), "+S"(src), "+c"(n)
+		"+D"(d), "+S"(s), "+c"(n)
 		::
 		"memory"
 	);

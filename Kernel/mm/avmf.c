@@ -550,6 +550,8 @@ static void avmf_region_init(avmf_region_header_t* r, uint64_t base, uint64_t li
 	r->cache_list = NULL;
 	r->cache_count = 0;
 	r->cache_list_end = NULL;
+
+	serial_printf("[AVMF] Initialized Region (0x%llX-0x%llX)\n", base, limit);
 }
 
 static avmf_header_t* avmf_region_alloc(avmf_region_header_t* r, uint64_t size, uint64_t align, uint64_t min_virt, uint64_t max_virt) {
@@ -659,14 +661,11 @@ static avmf_header_t* avmf_region_alloc(avmf_region_header_t* r, uint64_t size, 
         avmf_range_t* cur = r->free_list;
 
         for (uint64_t i = 0; i < r->free_count && cur; i++) {
-            uint64_t range_end;
-
             if (cur->size == 0) goto next_free;
 			if (cur->base > UINT64_MAX - cur->size) goto next_free;
 			if (align == 0) goto next_free;
 
-            range_end = cur->base + cur->size;
-
+            uint64_t range_end = cur->base + cur->size;
             uint64_t alloc_base = cur->base;
             if (alloc_base < min_virt) alloc_base = min_virt;
 
@@ -1008,7 +1007,7 @@ uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, uint32_t flags, uint64_
 
 	uint64_t f = avmf_convert_flags_to_pager_flags(flags);
 	if (hdr->phys_addr > 0) {
-    	if (hdr->type != AVMF_HDR_TYPE_CACHE) {
+		if (hdr->type != AVMF_HDR_TYPE_CACHE) {
 			pager_map_range((uint64_t)hdr->virt_addr, hdr->phys_addr, hdr->size, f);
 		}
 		if (phys_out != NULL) *phys_out = hdr->phys_addr;
@@ -1024,8 +1023,9 @@ uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, uint32_t flags, uint64_
 	}
 	hdr->phys_addr = phys;
 
-    pager_map_range((uint64_t)hdr->virt_addr, phys, hdr->size, f);
+	pager_map_range((uint64_t)hdr->virt_addr, phys, hdr->size, f);
     if (phys_out != NULL) *phys_out = phys;
+
     return hdr->virt_addr;
 }
 
@@ -1073,12 +1073,15 @@ void avmf_free(uint64_t virt) {
 void avmf_init(uint64_t* base_phys, uint64_t* limit_phys, uint8_t entries) {
     uint64_t rflags = spin_lock_irqsave(&avmf_lock);
     uint64_t ent = entries <= AVMF_STATIC_SIZE ? entries : AVMF_STATIC_SIZE;
+
+	serial_print("[AVMF] Initializing Physical Regions:\n");
     for (uint64_t i = 0; i < ent; i++) {
 		avmf_region_header_t* r = &physical_regions[i];
 		avmf_region_init(r, base_phys[i], limit_phys[i]);
 		physical_region_count++;
     }
 
+	serial_print("[AVMF] Initializing Virtual Regions:\n");
 	avmf_region_init(&regions[0], AOS_USER_SPACE_BASE, AOS_USER_SPACE_BASE_END);
 	avmf_region_init(&regions[1], AOS_KERNEL_SPACE_BASE, AOS_DRIVER_SPACE_BASE);
 	avmf_region_init(&regions[2], AOS_DRIVER_SPACE_BASE, AOS_SENSITIVE_SPACE_BASE);

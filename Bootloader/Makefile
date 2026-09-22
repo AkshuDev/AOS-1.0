@@ -144,8 +144,8 @@ $(MBR_BUILD_DIR)/%.o: $(MBR_SRC_DIR)/%.c
 
 $(MBR_stage3_elf): $(MBR_stage3_o) $(MBR_DRIVERS_O) $(MBR_BTL_DRIVERS_O)
 	@printf "$(CLR_YELLOW)-- Compiling PBFS...$(CLR_RESET)\n"
-	@make -C ../PBFS/PBFS/src-fs clean
-	@make -C ../PBFS/PBFS/src-fs
+	@make --no-print-directory -C ../PBFS/PBFS/src-fs clean
+	@make --no-print-directory -C ../PBFS/PBFS/src-fs
 	@printf "$(CLR_GREEN)-- Compiled PBFS$(CLR_RESET)\n"
 
 	@printf "$(CLR_YELLOW)-- Linking MBR Stage 3 AOS Bootloader into ELF...$(CLR_RESET)\n"
@@ -176,10 +176,10 @@ $(UEFI_TARGET): $(UEFI_BOOTLOADER_EFI)
 $(UEFI_BOOTLOADER_EFI): $(UEFI_BOOTLOADER_SRC)
 	@printf "$(CLR_YELLOW)-- Re-Compiling PBFS for PE32...$(CLR_RESET)\n"
 
-	@make -C ../PBFS/PBFS/PEFI clean
-	@make -C ../PBFS/PBFS/PEFI CC="$(UEFI_CC)" CFLAGS="$(UEFI_PBFS_CFLAGS) -I includes -c" AR="$(UEFI_AR)"
-	@make -C ../PBFS/PBFS/src-fs clean
-	@make -C ../PBFS/PBFS/src-fs CC="$(UEFI_CC)" CFLAGS="$(UEFI_PBFS_CFLAGS) -I ../ -I ../../ -I ../headers" AR="$(UEFI_AR)"
+	@make --no-print-directory -C ../PBFS/PBFS/PEFI clean
+	@make --no-print-directory -C ../PBFS/PBFS/PEFI CC="$(UEFI_CC)" CFLAGS="$(UEFI_PBFS_CFLAGS) -I includes -c" AR="$(UEFI_AR)"
+	@make --no-print-directory -C ../PBFS/PBFS/src-fs clean
+	@make --no-print-directory -C ../PBFS/PBFS/src-fs CC="$(UEFI_CC)" CFLAGS="$(UEFI_PBFS_CFLAGS) -I ../ -I ../../ -I ../headers" AR="$(UEFI_AR)"
 
 	@printf "$(CLR_GREEN)-- Re-Compiled PBFS for PE32$(CLR_RESET)\n"
 	

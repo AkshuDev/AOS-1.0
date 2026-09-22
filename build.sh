@@ -28,10 +28,10 @@ done
 
 case "$mode" in
 1) #MBR
-    make -C Bootloader && make -C Kernel && make
+    make --no-print-directory -C Bootloader && make --no-print-directory -C Kernel && make
     ;;
 0) # UEFI
-    make -C Bootloader uefi && make -C Kernel && make uefi
+    make --no-print-directory -C Bootloader uefi && make --no-print-directory -C Kernel && make uefi
     ;;
 *)
     echo "Invalid Mode: $mode" >&2
