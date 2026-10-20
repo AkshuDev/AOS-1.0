@@ -8,6 +8,9 @@
 
 #include <inc/drivers/io/io.h>
 
+#define AOS_SYS_BASE_REBOOT_REQ_DEPTH_BSP 5
+#define AOS_SYS_BASE_REBOOT_REQ_DEPTH_AP 2
+
 static const char *exception_names[] = {
     "Divide-by-Zero (#DE)",
     "Debug (#DB)",
@@ -39,13 +42,10 @@ static const char *exception_names[] = {
 static volatile uint8_t panic_depth[SMP_MAX_CORES];
 static volatile spinlock_t panic_lock;
 
-static inline void aos_system_panic_chk_n_kill(aos_bool is_bsp, uint32_t core_idx) {
-	uint8_t base_panic_reboot_req = is_bsp ? 5 : 2;
+static volatile uint8_t gpanic_depth = 0; //? Used globally, to indicate nested panic within exception-hardened functions used by the handler itself
+static volatile spinlock_t gpanic_lock;
 
-	uint64_t rflags = spin_lock_irqsave(&panic_lock);
-	panic_depth[core_idx]++;
-	uint64_t lpanic = panic_depth[core_idx];
-	spin_unlock_irqrestore(&panic_lock, rflags);
+static inline void aos_system_handle_nested_panics(uint8_t lpanic, uint8_t base_panic_reboot_req) {
 	if (lpanic == base_panic_reboot_req) {
 		serial_print("\nNESTED PANIC - STAGE 1 (Full reboot)\n");
 		acpi_reboot();
@@ -60,6 +60,17 @@ static inline void aos_system_panic_chk_n_kill(aos_bool is_bsp, uint32_t core_id
 	} else if (lpanic >= base_panic_reboot_req+3) {
         for(;;) __asm__ volatile("hlt");
 	}
+}
+
+static inline void aos_system_panic_chk_n_kill(aos_bool is_bsp, uint32_t core_idx) {
+	uint8_t base_panic_reboot_req = is_bsp ? AOS_SYS_BASE_REBOOT_REQ_DEPTH_BSP : AOS_SYS_BASE_REBOOT_REQ_DEPTH_AP;
+
+	uint64_t rflags = spin_lock_irqsave(&panic_lock);
+	panic_depth[core_idx]++;
+	uint8_t lpanic = panic_depth[core_idx];
+	spin_unlock_irqrestore(&panic_lock, rflags);
+	
+	aos_system_handle_nested_panics(lpanic, base_panic_reboot_req);
 }
 
 // Grim Reaper System
@@ -138,8 +149,22 @@ void aos_system_panic(const char* reason) {
 void aos_system_exception(struct reg_trap_frame *r) {
 	__asm__ volatile("cli");
 
+	uint64_t rflags = spin_lock_irqsave(&panic_lock);
+	uint8_t latched_gpanic = gpanic_depth;
+	gpanic_depth++;
+	spin_unlock_irqrestore(&panic_lock, rflags);
+
+	if (latched_gpanic > 0) {
+		aos_system_handle_nested_panics(latched_gpanic, AOS_SYS_BASE_REBOOT_REQ_DEPTH_BSP);
+	}
+
 	aos_bool is_bsp = smp_is_bsp_core();
 	uint32_t core_idx = smp_get_current_core();
+
+	rflags = spin_lock_irqsave(&panic_lock);
+	gpanic_depth--; // Lower it again
+	spin_unlock_irqrestore(&panic_lock, rflags);
+
 	aos_system_panic_chk_n_kill(is_bsp, core_idx);
 
 	uint64_t cr2 = 0;

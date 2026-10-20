@@ -1,9 +1,6 @@
 #!/bin/bash
 
-#make init
-
 echo "Cloning Submodules..."
-
 
 git submodule update --init --recursive
 cd PBFS || exit

@@ -22,6 +22,8 @@
 #define SMP_IPI_VECTOR 0x40
 #define SMP_TLB_IPI_VECTOR 0x41
 
+#define IA32_GS_BASE 0xC0000101
+
 extern void thread_context_switch(struct thread_state* old, struct thread_state* new);
 
 static uintptr_t lapic_base_virt = 0;
@@ -134,7 +136,7 @@ static struct thread_state* create_thread(void (*entry)(void*), void* arg) {
 static void ap_init_core_state(struct core_state* state) {
     uint32_t low = (uint32_t)((uintptr_t)state);
     uint32_t high = (uintptr_t)state >> 32;
-    __asm__ volatile("wrmsr" : : "c"(0xC0000101), "a"(low), "d"(high) : "memory");
+    __asm__ volatile("wrmsr" : : "c"(IA32_GS_BASE), "a"(low), "d"(high) : "memory");
 }
 
 static void ap_kernel_entry(void) {
@@ -269,12 +271,29 @@ static void ap_kernel_entry(void) {
     for (;;) { __asm__ volatile("hlt"); }
 }
 
+static aos_bool core_has_valid_core_state(void) {
+	uint32_t lo, hi;
+    __asm__ volatile (
+        "rdmsr"
+        :
+		"=a"(lo), "=d"(hi)
+        :
+		"c"(IA32_GS_BASE)
+    );
+
+    struct core_state* state = (struct core_state*)(((uint64_t)hi << 32) | lo);
+	if (!state) return AOS_FALSE;
+	return AOS_TRUE;
+}
+
 void smp_ipi_handler(void) {
     lapic_write(0xB0, 0);
 }
 
 void smp_tlb_ipi_handler(void) {
 	struct core_state* core;
+
+	if (!core_has_valid_core_state()) return;
     __asm__ volatile("mov %%gs:0, %0" : "=r"(core));
 
 	core->tlb_resp = 0;
@@ -301,6 +320,7 @@ void smp_timer_handler(void) {
 
 void smp_yield(void) {
     struct core_state* core;
+	if (!core_has_valid_core_state()) return;
     __asm__ volatile("mov %%gs:0, %0" : "=r"(core));
 
 	if (core->core_idx == bsp_core_idx) {
@@ -495,6 +515,8 @@ aos_bool smp_get_core_status(uint32_t core_idx, enum core_status *out) {
 
 aos_bool smp_is_bsp_core(void) {
 	struct core_state* core;
+
+	if (!core_has_valid_core_state()) return AOS_TRUE; //! If a core doesn't have this structure, cast it as BSP 
     __asm__ volatile("mov %%gs:0, %0" : "=r"(core));
 
 	return core->lapic_id == bsp_apic_id;
@@ -606,13 +628,19 @@ void smp_init(void) {
         ap_core_state->ready_list = NULL;
         ap_core_state->queue_lock = 0;
         ap_core_state->command_lock = 0;
-        ap_core_state->stack = (void*)((uintptr_t)ap_stack + 16384);
+        ap_core_state->stack = (void*)((uintptr_t)ap_stack + 0x4000);
         ap_core_state->status = CORE_STATUS_READY;
         ap_core_state->command = 0;
+
+		for (uint64_t i = 0; i < ALIGN_UP(trampoline_len, PAGE_SIZE) / PAGE_SIZE; i++) pager_unmap(0x8000 + i);	
+		for (uint64_t i = 0; i < ALIGN_UP(0x100, PAGE_SIZE) / PAGE_SIZE; i++) pager_unmap(0x500 + i);
+
+		pager_map_range(0x8000, 0x8000, trampoline_len, PAGE_PRESENT | PAGE_RW); // Execution enabled
+		pager_map_range(0x500, 0x500, 0x100, PAGE_PRESENT | PAGE_RW | PAGE_XD); // Execution disabled
         
-        memcpy((void*)(AOS_DIRECT_MAP_BASE + 0x8000), &smp_trampoline_start, trampoline_len);
-        *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x500) = current_cr3;
-        *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x510) = (uintptr_t)ap_stack + 16384;
+        memcpy((void*)0x8000, &smp_trampoline_start, trampoline_len);
+        *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x500) = current_cr3; // Use Direct Map base to avoid warnings
+        *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x510) = (uintptr_t)ap_stack + 0x4000;
         *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x518) = (uintptr_t)ap_kernel_entry;
         *(uint64_t*)(AOS_DIRECT_MAP_BASE + 0x520) = (uintptr_t)ap_state;
 
@@ -673,6 +701,7 @@ void smp_init(void) {
 
 uint32_t smp_get_current_core(void) {
 	struct core_state* core;
+	if (!core_has_valid_core_state()) return 0; //! Cast it as BSP
     __asm__ volatile("mov %%gs:0, %0" : "=r"(core));
 
 	return core->core_idx;

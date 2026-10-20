@@ -73,32 +73,40 @@ static int bd_write(struct block_device* dev, uint64_t lba, uint64_t count, cons
 static int bd_flush(struct block_device* dev);
 
 extern uint8_t stack_top__; // From linker script
-static uintptr_t stack_top = (uintptr_t)&stack_top__;
-
 uniboot_boot_info* boot_info;
 
 __attribute__((used, noinline, section(".start"), noreturn, naked))
 void kernel_main(void) {
 	__asm__ volatile(
+		// Set boot info structure
 		"movq %%rax, boot_info(%%rip)\n\t"
+
+		// Set rsp to stack top and zero rbp
+		"movabsq $stack_top__, %%rsp\n\t"
+		"andq $-16, %%rsp\n\t"
+		"xorq %%rbp, %%rbp\n\t"
+		
+		// Clear direction flag
 		"cld\n\t"
-		"jmp kernel_main_true"
+
+		// Zero the GS-Base (Core state)
+		"xorq %%rax, %%rax\n\t"
+        "movl $0xC0000101, %%ecx\n\t"
+        "xorl %%edx, %%edx\n\t"
+        "wrmsr\n\t"
+
+		// Call main kernel
+		"call kernel_main_true\n\t"
+
+		// Halt loop
+		"1: hlt\n\t"
+		"jmp 1b"
 		:::
 		"memory"
 	);
 }
 
 void kernel_main_true(void) { // Supports only UniBoot
-	__asm__ volatile (
-		"cld\n\t"
-        "mov %0, %%rsp\n\t"
-        "mov %%rsp, %%rbp"
-        ::
-        "r"(stack_top)
-        :
-        "memory"
-    );
-	
     serial_init(AOS_TRUE);
     serial_print("AOS++ LOADED!\n");
 
@@ -117,17 +125,6 @@ void kernel_main_true(void) { // Supports only UniBoot
 
     idt_init();
 
-	__asm__ volatile (
-		"cld\n\t"
-        "mov %0, %%rsp\n\t"
-        "mov %%rsp, %%rbp"
-        ::
-        "r"(stack_top)
-        :
-        "memory"
-    );
-
-	// Now safe to use local variables
     struct VMemDesign vmem_design = {
         .x = 0,
         .y = 0,
