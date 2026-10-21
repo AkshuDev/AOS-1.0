@@ -13,30 +13,30 @@ show_help() {
         -kvm, --kvm                    Enable KVM acceleration
 
     CPU Options:
-        -cpu=<type>, --cpu-type=<type> Select CPU type -
-                                        intel | amd | intel-server | amd-server
-        -arch=<arch>, --architecture=<arch> Select CPU Architecture -
-                                        x86_64 | ia32 | aarch64
-		-smp=<count>, --smp=<count> Select CPU Core Count
+        -cpu=<type>, --cpu-type=<type>        Select CPU type -
+                                   				    intel | amd | intel-server | amd-server
+        -arch=<arch>, --architecture=<arch>   Select CPU Architecture -
+                                        			x86_64 | ia32 | aarch64
+		-smp=<count>, --smp=<count>    Select CPU Core Count
     
 	GPU Options:
         -gpu=<type>, --gpu-type=<type>        Select GPU -
-                                        virtio | nvidia | amd | vmware | bochs
+                                       		  		virtio | nvidia | amd | vmware | bochs
 
         -ega, --enable-gpu-acceleration
-                                        Enable VirGL/OpenGL GPU acceleration
+                                       Enable VirGL/OpenGL GPU acceleration
 
     Input Devices:
         -kbd=<type>, --keyboard-type=<type>   Keyboard type: usb | ps2
-        -mouse, --mouse                       Enable USB mouse
+        -mouse, --mouse                Enable USB mouse
 
     Memory:
-        -ram=<size>, --max-ram=<size>           Set RAM (e.g., 512M, 2G)
-		-bdev=<device>, --boot-device=<device>  Specify Boot Storage Device from -
-													sata, nvme, ide, usb
-		-adev=<device>, --add-device=<device>   Specify Extra Device from -
-													sata, nvme, ide, usb, xhci, ehci, uhci, scsi,
-													virtio, floppy, cdrom, sd, mtd, pflash, sas, iscsi
+        -ram=<size>, --max-ram=<size>  Set RAM (e.g., 512M, 2G)
+	Storage:
+		-bdev=<type>                   Boot device type: sata, nvme, usb, ide,	floppy, cdrom, sd, pflash, virtio
+		-bimg=<path>                   Boot image path (default: Bin/disk.pbfs)
+		-adev=<type>[:<path>]     	   Add a device or controller; repeatable. Storage requires an image path. Controllers:
+													xhci, ehci, uhci, scsi, sas
 
     Logging:
         -log=a,b,c, --logs=a,b,c       QEMU debug logs (comma-separated)
@@ -59,8 +59,12 @@ show_help() {
         -fout=<file>, --file-out       Redirect all output to a file
 
     Examples:
-    ./run.sh --high-end --cpu=amd --ram=2G --gpu=virtio --web
-    ./run.sh -kvm --cpu=intel-server --nographics --logs=guest_errors,int
+		./run.sh --high-end --cpu=amd --ram=2G --gpu=virtio --web
+		./run.sh -kvm --cpu=intel-server --nographics --logs=guest_errors,int
+		./run.sh -bimg=Images/boot.img
+		./run.sh -bdev=nvme -bimg=Images/os.img
+		./run.sh -adev=sata:Images/data.img
+		./run.sh -adev=xhci -adev=scsi
 EOF
 }
 
@@ -81,6 +85,7 @@ serial="stdio"
 file_out="none"
 uefi=0
 boot_device="sata"
+boot_image="Bin/disk.pbfs"
 pstart=0
 edbg=0
 dport=1234
@@ -99,6 +104,7 @@ while [[ $# -gt 0 ]]; do
         --mouse|-mouse) mouse_enabled=1 ;;
         --max-ram=*|-ram=*) ram="${1#*=}" ;;
 		--boot-device=*|-bdev=*) boot_device="${1#*=}" ;;
+		--boot-image=*|-bimg=*) boot_image="${1#*=}" ;;
 		--add-device=*|-adev=*) extra_devices+=("${1#*=}") ;;
         --logs=*|-log=*) logs="${1#*=}" ;;
         --use-uefi|-uefi) uefi=1 ;;
@@ -254,6 +260,20 @@ get_display() {
 get_extra_options() {
 	local opts=""
 
+	case "$mode" in
+		2) # KVM
+			opts+=" -M q35,accel=kvm -enable-kvm"
+			;;
+		
+		1) # High-End
+			opts+=" -M q35"
+			;;
+
+		*) # Low-End
+			;;
+	esac
+
+
     if [[ $enable_reboot -ne 1 ]]; then
         opts+=" -no-shutdown -no-reboot"
     else
@@ -290,148 +310,137 @@ append_uefi_bios() {
     fi
 }
 
-declare -A CONTROLLERS
-
 ensure_controller() {
     local type="$1"
 
-    if [[ -z "${CONTROLLERS[$type]}" ]]; then
-        CONTROLLERS[$type]=1
-
-        case "$type" in
-            ahci)
-                CONTROLLER_OPTS+=" -device ahci,id=ahci"
-                ;;
-            xhci)
-                CONTROLLER_OPTS+=" -device qemu-xhci,id=xhci"
-                ;;
-            scsi)
-                CONTROLLER_OPTS+=" -device virtio-scsi-pci,id=scsi"
-                ;;
-            sas)
-                CONTROLLER_OPTS+=" -device megasas,id=sas"
-                ;;
-        esac
+    if [[ -n "${CONTROLLERS[$type]:-}" ]]; then
+        return 0
     fi
-}
 
-get_device() {
-    local devtype="$1"
-    local id="$2"
-    local img="$3"
-
-    case "$devtype" in
-        sata)
-            ensure_controller ahci
-            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
-            STORAGE_OPTS+=" -device ide-hd,bus=ahci.0,drive=drive$id"
+    case "$type" in
+        ahci)
+            CONTROLLER_OPTS+=" -device ich9-ahci,id=ahci"
             ;;
-
-        nvme)
-            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
-            STORAGE_OPTS+=" -device nvme,serial=deadbeef$id,drive=drive$id"
+        xhci)
+            CONTROLLER_OPTS+=" -device qemu-xhci,id=xhci"
             ;;
-
-        usb)
-            ensure_controller xhci
-            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
-            STORAGE_OPTS+=" -device usb-storage,bus=xhci.0,drive=drive$id"
-            ;;
-
-		xhci)
-            ensure_controller xhci
-            ;;
-
         ehci)
-            ensure_controller ehci
+            CONTROLLER_OPTS+=" -device ich9-usb-ehci1,id=ehci"
             ;;
-
         uhci)
-            ensure_controller uhci
+            CONTROLLER_OPTS+=" -device piix3-usb-uhci,id=uhci"
             ;;
-
         scsi)
-            ensure_controller scsi
+            CONTROLLER_OPTS+=" -device virtio-scsi-pci,id=scsi"
             ;;
-
         sas)
-            ensure_controller sas
+            CONTROLLER_OPTS+=" -device megasas,id=sas"
             ;;
-
-        ide)
-            STORAGE_OPTS+=" -drive file=$img,format=raw,index=$id,media=disk"
-            ;;
-
-        floppy)
-            STORAGE_OPTS+=" -drive file=$img,format=raw,if=floppy,index=$id"
-            ;;
-
-        cdrom)
-            STORAGE_OPTS+=" -drive file=$img,media=cdrom,index=$id"
-            ;;
-
-        sd)
-            STORAGE_OPTS+=" -drive file=$img,format=raw,if=sd"
-            ;;
-
-        pflash)
-            STORAGE_OPTS+=" -drive file=$img,format=raw,if=pflash"
-            ;;
-
         *)
-            echo "[Warning] Unsupported device type '$devtype'" >&2
+            echo "[Error] Unsupported controller: $type" >&2
+            return 1
             ;;
     esac
+
+    CONTROLLERS[$type]=1
 }
 
-get_device_storage() {
-    local devtype="$1"
-    local id="$2"
-    local img="$3"
+attach_storage() {
+    local type="$1"
+    local img="$2"
+    local id="$3"
 
-    case "$devtype" in
+    case "$type" in
+        xhci|ehci|uhci|scsi|sas)
+            ensure_controller "$type"
+            return $?
+            ;;
+    esac
+
+    if [[ -z "$img" ]]; then
+        echo "[Error] '$type' requires an image path." >&2
+        echo "Usage: -adev=$type:/path/to/image" >&2
+        return 1
+    fi
+
+    if [[ ! -f "$img" ]]; then
+        echo "[Error] Image does not exist: $img" >&2
+        return 1
+    fi
+
+    case "$type" in
         sata)
-            ensure_controller ahci
-            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
+            ensure_controller ahci || return 1
+            STORAGE_OPTS+=" -drive file='$img',format=raw,if=none,id=drive$id"
             STORAGE_OPTS+=" -device ide-hd,bus=ahci.0,drive=drive$id"
             ;;
-
         nvme)
-            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
-            STORAGE_OPTS+=" -device nvme,serial=deadbeef$id,drive=drive$id"
+            STORAGE_OPTS+=" -drive file='$img',format=raw,if=none,id=drive$id"
+            STORAGE_OPTS+=" -device nvme,serial=NVME$id,drive=drive$id"
             ;;
-
         usb)
-            ensure_controller xhci
-            STORAGE_OPTS+=" -drive file=$img,format=raw,if=none,id=drive$id"
+            ensure_controller xhci || return 1
+            STORAGE_OPTS+=" -drive file='$img',format=raw,if=none,id=drive$id"
             STORAGE_OPTS+=" -device usb-storage,bus=xhci.0,drive=drive$id"
             ;;
-
+        virtio)
+            STORAGE_OPTS+=" -drive file='$img',format=raw,if=none,id=drive$id"
+            STORAGE_OPTS+=" -device virtio-blk-pci,drive=drive$id"
+            ;;
         ide)
-            STORAGE_OPTS+=" -drive file=$img,format=raw,index=$id,media=disk"
+            STORAGE_OPTS+=" -drive file='$img',format=raw,index=$id,media=disk"
             ;;
-
         floppy)
-            STORAGE_OPTS+=" -drive file=$img,format=raw,if=floppy,index=$id"
+            STORAGE_OPTS+=" -drive file='$img',format=raw,if=floppy,index=$id"
             ;;
-
         cdrom)
-            STORAGE_OPTS+=" -drive file=$img,media=cdrom,index=$id"
+            STORAGE_OPTS+=" -drive file='$img',format=raw,if=none,id=drive$id"
+            STORAGE_OPTS+=" -device ide-cd,drive=drive$id"
             ;;
-
         sd)
-            STORAGE_OPTS+=" -drive file=$img,format=raw,if=sd"
+            STORAGE_OPTS+=" -drive file='$img',format=raw,if=sd"
             ;;
-
         pflash)
-            STORAGE_OPTS+=" -drive file=$img,format=raw,if=pflash"
+            STORAGE_OPTS+=" -drive file='$img',format=raw,if=pflash"
             ;;
-
         *)
-            echo "[Warning] Unsupported device type '$devtype'" >&2
+            echo "[Error] Unsupported device type: $type" >&2
+            return 1
             ;;
     esac
 }
+
+configure_devices() {
+	local id=0
+	local spec type img
+
+	attach_storage "$boot_device" "$boot_image" "$id" || return 1
+
+	for spec in "${extra_devices[@]}"; do
+		((id++))
+		type="${spec%%:*}"
+		img=""
+
+		if [[ "$spec" == *:* ]]; then
+			img="${spec#*:}"
+		fi
+
+		attach_storage "$type" "$img" "$id" || return 1
+	done
+}
+
+case "$mode" in
+    2) # KVM
+        ;;
+    1) # High-End (non-KVM)
+        ;;
+    0) # Low-End
+        ;;
+    *)
+        echo "Invalid Mode: $mode" >&2
+        exit 1
+        ;;
+esac
 
 CPU_OPTS="-cpu $(get_cpu)"
 SMP_OPTS="$(get_smp)"
@@ -445,20 +454,17 @@ EXTRA_OPTS="$(get_extra_options)"
 SERIAL_OPTS="-serial $serial"
 FILE_OPTS="$(get_file_options)"
 UEFI_OPTS="$(append_uefi_bios)"
+
 STORAGE_OPTS=""
 CONTROLLER_OPTS=""
+declare -A CONTROLLERS=()
 
-get_device "$boot_device" 0 "Bin/disk.pbfs"
+if ! configure_devices; then
+    exit 1
+fi
 
-devnum=1
-for dev in "${extra_devices[@]}"; do
-    get_device "$dev" "$devnum" "Bin/disk${devnum}.pbfs"
-    ((devnum++))
-done
-
-echo "$QEMU \
+QEMU_CMD_FULL="$QEMU \
     -m $ram \
-    -M q35 \
     $CPU_OPTS \
     $SMP_OPTS \
     $CONTROLLER_OPTS \
@@ -471,68 +477,7 @@ echo "$QEMU \
     $SERIAL_OPTS \
     $LOG_OPTS \
     $EXTRA_OPTS \
-    $UEFI_OPTS"
+    $UEFI_OPTS $FILE_OPTS"
 
-case "$mode" in
-    2) # KVM
-        eval "$QEMU \
-            -m $ram \
-            -M q35,accel=kvm \
-            $CPU_OPTS \
-            $SMP_OPTS \
-            -enable-kvm \
-			$CONTROLLER_OPTS \
-            $STORAGE_OPTS \
-            $GPU_OPTS \
-            $KBD_OPTS \
-            $MOUSE_OPTS \
-            $NET_OPTS \
-            $DISPLAY_OPTS \
-            $SERIAL_OPTS \
-            $LOG_OPTS \
-            $EXTRA_OPTS \
-            $UEFI_OPTS $FILE_OPTS"
-        ;;
-
-    1) # High-End (non-KVM)
-        eval "$QEMU \
-            -m $ram \
-            -M q35 \
-            $CPU_OPTS \
-            $SMP_OPTS \
-			$CONTROLLER_OPTS \
-            $STORAGE_OPTS \
-            $GPU_OPTS \
-            $KBD_OPTS \
-            $MOUSE_OPTS \
-            $NET_OPTS \
-            $DISPLAY_OPTS \
-            $SERIAL_OPTS \
-            $LOG_OPTS \
-            $EXTRA_OPTS \
-            $UEFI_OPTS $FILE_OPTS"
-        ;;
-
-    0) # Low-End
-        eval "$QEMU \
-            -m $ram \
-            $CPU_OPTS \
-            $SMP_OPTS \
-			$CONTROLLER_OPTS \
-           	$STORAGE_OPTS \
-            $GPU_OPTS \
-            $KBD_OPTS \
-            $MOUSE_OPTS \
-            $NET_OPTS \
-            $DISPLAY_OPTS \
-            $SERIAL_OPTS \
-            $LOG_OPTS \
-            $EXTRA_OPTS \
-            $UEFI_OPTS $FILE_OPTS"
-        ;;
-
-    *)
-        echo "Invalid Mode: $mode" >&2
-        exit 1
-        ;;
-esac
+echo "$QEMU_CMD_FULL"
+eval "$QEMU_CMD_FULL"

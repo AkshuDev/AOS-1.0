@@ -64,6 +64,8 @@ typedef enum {
     UNIBOOT_CFORMAT_ARGB,
     UNIBOOT_CFORMAT_RGB,
     UNIBOOT_CFORMAT_BGR,
+
+	UNIBOOT_CFORMAT_VGA = 0x100, // Specific to BIOS VGA
 } uniboot_cformat;
 
 typedef enum {

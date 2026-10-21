@@ -1,4 +1,5 @@
 #include <system.h>
+#include <uniboot.h>
 #include <asm.h>
 
 #include <inc/core/kfuncs.h>
@@ -91,7 +92,6 @@ static void stage3_jump_to_kernel(void (*kernel)(void), uint64_t stack_top){
 	__builtin_unreachable();
 }
 
-
 uint64_t compute_checksum(const uint8_t* data, uint32_t len) {
     uint64_t sum = 0;
     for (uint64_t i = 0; i < len; i++) sum += data[i];
@@ -103,6 +103,33 @@ static aos_bool found_drive = AOS_FALSE;
 
 static uint8_t current_mode = 0; // 1 = Safe, 2 = Panic, 0 = Normal
 static aos_bool rdtscp_supported = AOS_FALSE;
+
+static uniboot_boot_info ubinfo = {
+	.hdr.version = UNIBOOT_CVERSION,
+	.hdr.revision = UNIBOOT_CREVISION,
+	.hdr.vendor = UNIBOOT_VENDOR_PHEONIX_STUDIOS,
+	.hdr.architecture = UNIBOOT_ARCHITECTURE_x64,
+
+	.hdr.root = (uniboot_hdr*)&ubinfo,
+	.hdr.prev = NULL,
+
+	.provided_features.bitmask = UNIBOOT_BITMASK_FEATURES_PAGING | UNIBOOT_BITMASK_FEATURES_64BIT | UNIBOOT_BITMASK_FEATURES_X86F_SSE | UNIBOOT_BITMASK_FEATURES_FRAMEBUFFER_PRESENT,
+	.provided_features.next = NULL,
+	.provided_features.prev = NULL,
+	.provided_features.root = &ubinfo.provided_features,
+
+	.fb_info.mode = UNIBOOT_FB_MODE_VGA,
+	.fb_info.addr = IO_VMEM,
+	.fb_info.phys_addr = IO_VMEM,
+	.fb_info.size = IO_VMEM_MAX_COLS*IO_VMEM_MAX_ROWS,
+	.fb_info.pitch = IO_VMEM_MAX_COLS * 2,
+	.fb_info.width = IO_VMEM_MAX_COLS,
+	.fb_info.height = IO_VMEM_MAX_ROWS,
+	.fb_info.bpp = sizeof(uint16_t) * 8,
+	.fb_info.color_format = UNIBOOT_CFORMAT_VGA,
+
+	.kflag = UNIBOOT_FALSE
+}
 
 // Fake funcs
 void smp_shutdown(void) {return;}
@@ -295,7 +322,7 @@ void display_popup(struct ambrc* ambrc, struct VMemDesign* design, const char* p
     }
 }
 
-uint64_t read_tsc(void) {
+static inline uint64_t timer_read_tsc(void) {
     uint32_t low = 0;
     uint32_t high = 0;
     if (rdtscp_supported) {
@@ -335,6 +362,16 @@ aos_bool ata_flush(int port_id) {
 
 void stage3(void) __attribute__((section(".entry"), used, force_align_arg_pointer));
 void stage3(void) {
+	uint32_t eax, ebx, ecx, edx;
+    eax = 0x80000001;
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
+    if (edx & (1 << 27)) {
+        rdtscp_supported = AOS_TRUE;
+    } else {
+        rdtscp_supported = AOS_FALSE;
+    }
+	uint64_t tsc_start = timer_read_tsc();
+	
 	// Enable SSE
     uint64_t cr;
     __asm__ volatile("mov %%cr0, %0" : "=r"(cr));
@@ -346,31 +383,9 @@ void stage3(void) {
     cr |= (1 << 9); // Set OSFXSR (FXSAVE/FXRSTOR support)
     cr |= (1 << 10); // Set OSXMMEXCPT (Unmasked Exception support)
     __asm__ volatile("mov %0, %%cr4" :: "r"(cr));
-	
-    uint32_t eax, ebx, ecx, edx;
-    eax = 0x80000001;
-    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax));
-    if (edx & (1 << 27)) {
-        rdtscp_supported = AOS_TRUE;
-    } else {
-        rdtscp_supported = AOS_FALSE;
-    }
-    uint64_t tsc_start = read_tsc();
 
 	serial_init();
     enable_a20();
-
-    init_backup_ambrc();
-    struct ambrc* ambrc = get_ambrc();
-
-    struct VMemDesign cursor = {
-        .x = 0,
-        .y = 0,
-        .fg = ambrc->display.fg_color,
-        .bg = ambrc->display.bg_color,
-        .serial_out = AOS_FALSE,
-		.auto_scroll = AOS_FALSE
-    };
 
 	pager_init();
     acpi_init();
@@ -384,15 +399,7 @@ void stage3(void) {
     uint64_t tsc_end = read_tsc();
     uint64_t cycles_per_ms = tsc_end - tsc_start2;
 
-	aos_sysinfo_t fake_info = {
-		.fb_mode = AOS_SYSINFO_FB_MODE_VGA,
-		.fb_info = (FB_Info_t){
-			.addr = IO_VMEM,
-			.height = IO_VMEM_MAX_ROWS,
-			.width = IO_VMEM_MAX_COLS
-		}
-	};
-	vmem_init(&fake_info);
+	vmem_init(&ubinfo);
     vmem_disable_cursor();
 
     vmem_clear_screen(&cursor);
@@ -410,7 +417,6 @@ void stage3(void) {
         .malloc=btl_malloc,
         .free=btl_free
     };
-
     struct pbfs_mount mnt = {0};
 
 	vmem_clear_screen(&cursor);

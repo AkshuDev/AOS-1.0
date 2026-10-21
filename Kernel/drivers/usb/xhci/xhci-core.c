@@ -147,21 +147,26 @@ static aos_bool map_xhci_mmio(xhci_controller* kxc) {
 	pcie_toggle_busmaster(bus, slot, func, AOS_TRUE);
 
     kxc->xhci_mmio = (volatile uint32_t*)(AOS_DIRECT_MAP_BASE + bar_phys);
-    kxc->cap = (volatile struct xhci_cap_regs*)kxc->xhci_mmio;
-    kxc->op_regs = (volatile struct xhci_op_regs*)((uint8_t*)kxc->xhci_mmio + kxc->cap->cap_length);
+    kxc->cap = (volatile struct xhci_cap_regs*)((uint8_t*)kxc->xhci_mmio);
+
+	uint8_t cap_length = (uint8_t)(kxc->cap->cap_length_res_hci_version & 0xFF);
+
+    kxc->op_regs = (volatile struct xhci_op_regs*)((uint8_t*)kxc->xhci_mmio + cap_length);
 	kxc->runtime_regs = (volatile struct xhci_runtime_regs*)((uint8_t*)kxc->xhci_mmio + kxc->cap->rtsoff);
 	kxc->doorbells = (volatile uint32_t*)((uint8_t*)kxc->xhci_mmio + kxc->cap->dboff);
+
+	uint16_t hci_version = (uint16_t)((kxc->cap->cap_length_res_hci_version >> 16) & 0xFFFF);
 
 	kxc->max_slots = kxc->cap->hcs_params1 & 0xFF;
 	kxc->max_ports = (kxc->cap->hcs_params1 >> 24) & 0xFF;
 	kxc->trbs_per_page = PAGE_SIZE / sizeof(struct xhci_trb);
 
-	if (kxc->cap->hc_version == 0) {
+	if (hci_version == 0) {
         serial_print("[xHCI] HCVersion Invalid!\n");
         return AOS_FALSE;
     }
 
-	if (kxc->cap->cap_length > kxc->mapping_size) {
+	if (cap_length > kxc->mapping_size) {
 		serial_print("[xHCI] Device Broken! (CAP Length)\n");
 		return AOS_FALSE;
 	}
@@ -176,7 +181,7 @@ static aos_bool map_xhci_mmio(xhci_controller* kxc) {
 		return AOS_FALSE;
 	}
 
-    serial_printf("[xHCI] Mapped all XHCI (Size: 0x%llx) (Version: %u)\n", kxc->mapping_size, kxc->cap->hc_version);
+    serial_printf("[xHCI] Mapped all XHCI (Size: 0x%llx) (Version: %u)\n", kxc->mapping_size, hci_version);
 	return AOS_TRUE;
 }
 

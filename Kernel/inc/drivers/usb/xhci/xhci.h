@@ -7,13 +7,11 @@
 #define XHCI_PROGRAMMIMG_INTERFACE 0x30 // xHCI
 
 struct xhci_cap_regs {
-    uint8_t cap_length; // offset 0x00
-    uint8_t reserved;
-    uint16_t hc_version; // offset 0x02
+    uint32_t cap_length_res_hci_version; // offset 0x00 (HCI Version, Reserved, Cap Length)
     uint32_t hcs_params1; // offset 0x04
     uint32_t hcs_params2; // offset 0x08
     uint32_t hcs_params3; // offset 0x0C
-    uint32_t hcc_params; // offset 0x10
+    uint32_t hcc_params1; // offset 0x10
     uint32_t dboff; // offset 0x14
     uint32_t rtsoff; // offset 0x18
 	uint32_t hcc_params2; // offset 0x1C
