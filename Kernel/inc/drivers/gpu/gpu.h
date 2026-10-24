@@ -46,7 +46,7 @@ typedef struct gpu_device {
     aos_bool active;
 } gpu_device_t;
 
-void svga_write(uintptr_t mmio_base, uint32_t index, uint32_t value, uint32_t svga_index_port, uint32_t svga_value_port) __attribute__((used));
-uint32_t svga_read(uintptr_t mmio_base, uint32_t index, uint32_t svga_index_port, uint32_t svga_value_port) __attribute__((used));
+void svga_write(uintptr_t mmio_base, uint32_t index, uint32_t value, uint32_t svga_index_port, uint32_t svga_value_port);
+uint32_t svga_read(uintptr_t mmio_base, uint32_t index, uint32_t svga_index_port, uint32_t svga_value_port);
 
-aos_bool gpu_find_gpu(PCIe_FB* fb, struct AOS_Module** out) __attribute__((used));
+aos_bool gpu_find_gpu(PCIe_FB* fb, struct AOS_Module** out);

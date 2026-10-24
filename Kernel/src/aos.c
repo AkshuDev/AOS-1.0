@@ -585,7 +585,7 @@ void aos_vmss_start(void) {
         .serial_out = 1
     };
 
-    vmem_set_cursor(0, 0);
+    vmem_set_cursor(&vmem_design, 0, 0);
     vmem_clear_screen(&vmem_design);
     vmem_print(&vmem_design, "Welcome To AOS Safety Shell!\n\n");
     aos_shell_pm();

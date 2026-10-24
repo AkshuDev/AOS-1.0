@@ -17,8 +17,8 @@
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
 
-void aospp_start() __attribute__((used));
-void aospp() __attribute__((used));
+void aospp_start();
+void aospp();
 
 static struct AOS_Module* gpu_m;
 static PCIe_FB gpu_framebuffer;

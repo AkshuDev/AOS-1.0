@@ -10,4 +10,4 @@ struct reg_trap_frame {
 } __attribute__((packed));
 
 void aos_system_panic(const char* reason) __attribute__((used, noreturn));
-void aos_system_exception(struct reg_trap_frame* r) __attribute__((used));
+void aos_system_exception(struct reg_trap_frame* r);

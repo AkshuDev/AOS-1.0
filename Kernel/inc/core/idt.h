@@ -23,6 +23,6 @@ typedef struct {
 extern idt_entry_t* idt;
 extern idt_ptr_t* idt_ptr;
 
-void idt_init(void) __attribute__((used));
-void idt_load_local(void) __attribute__((used));
-void set_idt_entry(int num, uint64_t offset, uint16_t selector, uint8_t type_attr) __attribute__((used));
+void idt_init(void);
+void idt_load_local(void);
+void set_idt_entry(int num, uint64_t offset, uint16_t selector, uint8_t type_attr);

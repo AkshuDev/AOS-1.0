@@ -980,15 +980,15 @@ char* kdouble_to_str(double v, char* buf, size_t max_size, int precision) {
 
 const char* kbeautify_memory_size(uint64_t size_in_bytes, double* out_size) {
 	static const char* units[] = {
-        "Bytes",
-        "Kilobytes",
-        "Megabytes",
-        "Gigabytes",
-        "Terabytes",
-        "Petabytes",
-        "Exabytes",
-        "Zettabytes",
-        "Yottabytes"
+        "B",
+        "KiB",
+        "MiB",
+        "GiB",
+        "TiB",
+        "PiB",
+        "EiB",
+        "ZiB",
+        "YiB"
     };
 
     unsigned int unit = 0;

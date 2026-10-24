@@ -82,13 +82,13 @@ $(DISK): $(MBR_BOOTLOADER_STAGE1) $(MBR_BOOTLOADER_STAGE2) $(MBR_BOOTLOADER_STAG
 	@printf "$(CLR_GREEN)Disk Created Successfully$(CLR_RESET)\n"
 
 $(MBR_BOOTLOADER_STAGE1) $(MBR_BOOTLOADER_STAGE2) $(MBR_BOOTLOADER_STAGE3):
-	$(MAKE) -C $(BOOTLOADER) mbr
+	$(MAKE) --no-print-directory -C $(BOOTLOADER) mbr
 
 $(UEFI_BOOTLOADER_EFI):
-	$(MAKE) -C $(BOOTLOADER) uefi
+	$(MAKE) --no-print-directory -C $(BOOTLOADER) uefi
 
 $(AOS_KERNEL):
-	$(MAKE) -C $(KERNEL)
+	$(MAKE) --no-print-directory -C $(KERNEL)
 
 uefi: $(BUILD_DIR) $(BIN_DIR) $(UEFI_BOOTLOADER_EFI) $(AOS_KERNEL)
 	@printf "$(CLR_YELLOW)Creating Final UEFI Disk:$(CLR_RESET)\n"

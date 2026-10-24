@@ -84,13 +84,13 @@ typedef enum {
 #define AVMF_ATTR_SHARED (1 << 1)
 #define AVMF_ATTR_LOCKED (1 << 2) // not swappable
 
-uint64_t avmf_alloc_phys_contiguous(uint64_t size) __attribute__((used));
-void avmf_free_phys_contiguous(uint64_t phys, uint64_t size) __attribute__((used));
+uint64_t avmf_alloc_phys_contiguous(uint64_t size);
+void avmf_free_phys_contiguous(uint64_t phys, uint64_t size);
 
-void avmf_init(uint64_t* base_phys, uint64_t* limit_phys, uint8_t entries) __attribute__((used));
+void avmf_init(uint64_t* base_phys, uint64_t* limit_phys, uint8_t entries);
 
-uint64_t avmf_alloc_virt(uint64_t size, MemoryAllocType type) __attribute__((used));
-uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, uint32_t flags, uint64_t* phys_out) __attribute__((used));
-void avmf_free(uint64_t virt) __attribute__((used));
+uint64_t avmf_alloc_virt(uint64_t size, MemoryAllocType type);
+uint64_t avmf_alloc(uint64_t size, MemoryAllocType type, uint32_t flags, uint64_t* phys_out);
+void avmf_free(uint64_t virt);
 
-void avmf_print_info(aos_bool vmem, struct VMemDesign* design) __attribute__((used));
+void avmf_print_info(aos_bool vmem, struct VMemDesign* design);

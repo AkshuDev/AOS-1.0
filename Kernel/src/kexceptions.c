@@ -123,20 +123,18 @@ void aos_system_panic(const char* reason) {
 	uint64_t center = (uint64_t)(IO_VMEM_MAX_COLS_true / 2);
 	
 	const char* title = "KERNEL PANIC\n";
-	const char* message = "Please manually reboot system!\n";
+	const char* message = "Please manually shutdown/reboot system!\n";
 
-	uint64_t title_len = strlen(title);
-	uint64_t message_len = strlen(message);
+	uint16_t title_len = strlen(title);
+	uint16_t message_len = strlen(message);
 
 	uint64_t title_x = center - (title_len / 2);
 	uint64_t message_x = center - (message_len / 2);
 
-	vmem_set_cursor(title_x, c.y);
-	c.x = title_x;
+	vmem_set_cursor_ex(&c, title_x | (1ULL << 63), c.y);
 	vmem_print(&c, title);
 
-	vmem_set_cursor(message_x, c.y);
-	c.x = message_x;
+	vmem_set_cursor_ex(&c, message_x | (1ULL << 63), c.y);
 	vmem_print(&c, message);
 
 	for (uint64_t i = 0; i < IO_VMEM_MAX_COLS_true; i++) vmem_printc(&c, '=');

@@ -609,10 +609,10 @@ enum nvme_cq_sq_flags {
 
 #define NVME_IO_QUEUE_ID 1
 
-aos_bool nvme_init(struct AOS_Module* m) __attribute__((used));
-aos_bool nvme_get_pcie(uint64_t cidx, pcie_device_t* out) __attribute__((used));
-aos_bool nvme_read_blk(uint64_t cidx, uint64_t port_id, uint64_t lba, uint32_t count, void* buffer) __attribute__((used));
-aos_bool nvme_write_blk(uint64_t cidx, uint64_t port_id, uint64_t lba, uint32_t count, void* buffer) __attribute__((used));
-aos_bool nvme_flush(uint64_t cidx, uint64_t port_id) __attribute__((used));
-aos_bool nvme_get_block_device(uint64_t cidx, uint64_t port_id, struct block_device* out) __attribute__((used));
-aos_bool nvme_get_available_ports(uint64_t cidx, uint8_t* out, uint64_t out_size) __attribute__((used));
+aos_bool nvme_init(struct AOS_Module* m);
+aos_bool nvme_get_pcie(uint64_t cidx, pcie_device_t* out);
+aos_bool nvme_read_blk(uint64_t cidx, uint64_t port_id, uint64_t lba, uint32_t count, void* buffer);
+aos_bool nvme_write_blk(uint64_t cidx, uint64_t port_id, uint64_t lba, uint32_t count, void* buffer);
+aos_bool nvme_flush(uint64_t cidx, uint64_t port_id);
+aos_bool nvme_get_block_device(uint64_t cidx, uint64_t port_id, struct block_device* out);
+aos_bool nvme_get_available_ports(uint64_t cidx, uint8_t* out, uint64_t out_size);

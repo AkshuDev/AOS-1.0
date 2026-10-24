@@ -86,25 +86,25 @@ struct core_state {
     void* stack;
 };
 
-void smp_init(void) __attribute__((used));
-void smp_push_task(uint32_t core_idx, void (*entry)(void*), void* arg) __attribute__((used));
-void smp_push_task_bsp(void (*entry)(void*), void* arg) __attribute__((used));
-void smp_yield(void) __attribute__((used));
+void smp_init(void);
+void smp_push_task(uint32_t core_idx, void (*entry)(void*), void* arg);
+void smp_push_task_bsp(void (*entry)(void*), void* arg);
+void smp_yield(void);
 
-aos_bool smp_get_first_free_core(uint32_t* out) __attribute__((used));
-aos_bool smp_get_core_status(uint32_t core_idx, enum core_status* out) __attribute__((used));
-void smp_reserve_core(uint32_t core_idx) __attribute__((used));
-void smp_unreserve_core(uint32_t core_idx) __attribute__((used));
+aos_bool smp_get_first_free_core(uint32_t* out);
+aos_bool smp_get_core_status(uint32_t core_idx, enum core_status* out);
+void smp_reserve_core(uint32_t core_idx);
+void smp_unreserve_core(uint32_t core_idx);
 
-void smp_timer_handler(void) __attribute__((used));
-void smp_ipi_handler(void) __attribute__((used));
+void smp_timer_handler(void);
+void smp_ipi_handler(void);
 
-aos_bool smp_is_bsp_core(void) __attribute__((used));
-uint32_t smp_get_current_core(void) __attribute__((used));
+aos_bool smp_is_bsp_core(void);
+uint32_t smp_get_current_core(void);
 
-void smp_shutdown_core(uint32_t core_idx) __attribute__((used));
-void smp_reset_core(uint32_t core_idx) __attribute__((used));
-void smp_tlb_core(uint32_t core_idx, uint64_t virt, aos_bool full_flush) __attribute__((used));
-void smp_reset(void) __attribute__((used));
-void smp_shutdown(void) __attribute__((used));
-void smp_tlb(uint64_t virt, aos_bool full_flush) __attribute__((used));
+void smp_shutdown_core(uint32_t core_idx);
+void smp_reset_core(uint32_t core_idx);
+void smp_tlb_core(uint32_t core_idx, uint64_t virt, aos_bool full_flush);
+void smp_reset(void);
+void smp_shutdown(void);
+void smp_tlb(uint64_t virt, aos_bool full_flush);

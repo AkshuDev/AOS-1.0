@@ -23,10 +23,10 @@ typedef struct {
 	enum pyrion_color_format cformat;
 } FB_Info_t;
 
-void fb_clear(FB_Info_t* fb, uint32_t color) __attribute__((used));
-void fb_set_cursor(FB_Info_t* fb, FB_Cursor_t* cur, uint32_t x, uint32_t y) __attribute__((used));
-void fb_put_pixel(FB_Info_t* fb, int x, int y, uint32_t color) __attribute__((used));
-void fb_draw_rect(FB_Info_t* fb, int x, int y, int w, int h, uint32_t color) __attribute__((used));
-void fb_printc(FB_Info_t* fb, FB_Cursor_t* cur, char c) __attribute__((used));
-void fb_print(FB_Info_t* fb, FB_Cursor_t* cur, const char* str) __attribute__((used));
-void fb_scroll_up(FB_Info_t* fb, uint32_t lines, uint32_t color) __attribute__((used));
+void fb_clear(FB_Info_t* fb, uint32_t color);
+void fb_set_cursor(FB_Info_t* fb, FB_Cursor_t* cur, uint32_t x, uint32_t y);
+void fb_put_pixel(FB_Info_t* fb, int x, int y, uint32_t color);
+void fb_draw_rect(FB_Info_t* fb, int x, int y, int w, int h, uint32_t color);
+void fb_printc(FB_Info_t* fb, FB_Cursor_t* cur, char c);
+void fb_print(FB_Info_t* fb, FB_Cursor_t* cur, const char* str);
+void fb_scroll_up(FB_Info_t* fb, uint32_t lines, uint32_t color);

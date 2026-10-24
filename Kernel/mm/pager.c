@@ -141,7 +141,7 @@ void pager_init(void) {
 		serial_printf("SMMAP: %p - %p (%.2lf %s) (Type %s [%d])\n", e->phys_start, end_addr, pretty_size, pretty_unit, uniboot_smmap_get_type_str(e->type), e->type);
         if (e->type == UNIBOOT_SMMAP_TYPE_FREE) {
             uint64_t start = e->phys_start;
-            // Don't use the first <Kernel End + 16>MB!
+            // Don't use the first <Kernel End + 16>MiB!
 			uint64_t privilaged = ALIGN_UP(bss_end + 0x1000000, PAGE_SIZE);
             if (start < privilaged) {
                 if (e->size <= (privilaged - start)) continue; // Too small
@@ -192,7 +192,7 @@ void pager_init(void) {
     pager_map_range(AOS_DIRECT_MAP_BASE, 0x0, max_phys_addr, PAGE_PRESENT | PAGE_RW | PAGE_PCD | PAGE_XD);
 	serial_print("[PAGER] Mapped Direct Map\n");
 
-    pager_map_range(kstart, kstart, bss_end - kstart, PAGE_PRESENT | PAGE_RW); // Identity Map the Kernel (<Kernel End> MB)
+    pager_map_range(kstart, kstart, bss_end - kstart, PAGE_PRESENT | PAGE_RW); // Identity Map the Kernel (<Kernel End> MiB)
     serial_printf("[PAGER] Mapped Kernel (0x%llx-0x%llx)\n", kstart, bss_end);
 
 	pager_map_range(first_pagemaps, first_pagemaps, first_pagemaps_end - first_pagemaps, PAGE_PRESENT | PAGE_RW | PAGE_XD);

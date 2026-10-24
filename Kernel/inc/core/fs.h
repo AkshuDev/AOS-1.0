@@ -50,6 +50,6 @@ struct aos_file {
 	aos_bool closed;
 };
 
-void aos_fs_init(struct pbfs_mount* mnt) __attribute__((used));
-struct aos_file* fs_open(const char* path) __attribute__((used));
-void fs_close(struct aos_file* f) __attribute__((used));
+void aos_fs_init(struct pbfs_mount* mnt);
+struct aos_file* fs_open(const char* path);
+void fs_close(struct aos_file* f);

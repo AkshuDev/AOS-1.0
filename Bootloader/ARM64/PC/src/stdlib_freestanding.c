@@ -335,7 +335,7 @@ EFIAPI void vmem_flush(void) {
         }
 
         if (last_x != x || last_y != y) {
-            vmem_set_cursor(x, y);
+            vmem_set_only_cursor(x, y);
             last_x = x;
             last_y = y;
         }
@@ -397,7 +397,7 @@ EFIAPI void vmem_print(struct VMemDesign* design, const char* str) {
 		last_attr = attr;
 	}
 	if (last_x != design->x || last_y != design->y) {
-		vmem_set_cursor(design->x, design->y);
+		vmem_set_only_cursor(design->x, design->y);
 		last_x = design->x;
 		last_y = design->y;
 	}
@@ -432,10 +432,9 @@ EFIAPI void vmem_clear_screen(struct VMemDesign* design) {
 		last_attr = attr;
 	}
 	pefi_state.system_table->ConOut->ClearScreen(pefi_state.system_table->ConOut);
-	design->x = 0;
-	design->y = 0;
+
+	vmem_set_cursor(design, 0, 0);
 	if (last_x != 0 || last_y != 0) {
-		vmem_set_cursor(0, 0);
 		last_x = 0;
 		last_y = 0;
 	}

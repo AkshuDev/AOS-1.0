@@ -33,5 +33,5 @@ typedef struct drive_device {
     aos_bool active;
 } drive_device_t;
 
-aos_bool get_available_drives(struct drive_device* out) __attribute__((used));
-aos_bool get_available_drives_pcie(struct drive_device* out, uniboot_pcie pcie) __attribute__((used));
+aos_bool get_available_drives(struct drive_device* out);
+aos_bool get_available_drives_pcie(struct drive_device* out, uniboot_pcie pcie);

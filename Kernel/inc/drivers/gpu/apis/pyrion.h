@@ -157,37 +157,37 @@ struct pyrion_api {
 
 struct gpu_device;
 
-aos_bool pyrion_init(struct gpu_device* device) __attribute__((used));
-void pyrion_finish(void) __attribute__((used));
-aos_bool pyrion_conf(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t fg, uint32_t bg) __attribute__((used));
+aos_bool pyrion_init(struct gpu_device* device);
+void pyrion_finish(void);
+aos_bool pyrion_conf(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t fg, uint32_t bg);
 
-struct pyrion_ctx* pyrion_create_ctx(struct pyrion_create_ctx_info ctx_info) __attribute__((used));
-void pyrion_destroy_ctx(struct pyrion_ctx* ctx) __attribute__((used));
-void pyrion_unuse_device(struct pyrion_ctx* ctx) __attribute__((used));
+struct pyrion_ctx* pyrion_create_ctx(struct pyrion_create_ctx_info ctx_info);
+void pyrion_destroy_ctx(struct pyrion_ctx* ctx);
+void pyrion_unuse_device(struct pyrion_ctx* ctx);
 
-aos_bool pyrion_enumerate_physical_devices(size_t* count, size_t idx, struct pyrion_physical_device* out) __attribute__((used));
-aos_bool pyrion_use_device(struct pyrion_ctx* ctx, struct pyrion_physical_device* dev) __attribute__((used));
+aos_bool pyrion_enumerate_physical_devices(size_t* count, size_t idx, struct pyrion_physical_device* out);
+aos_bool pyrion_use_device(struct pyrion_ctx* ctx, struct pyrion_physical_device* dev);
 
-aos_bool pyrion_submit_cmd_stream(struct pyrion_ctx* ctx, struct pyrion_cmd_stream* stream) __attribute__((used));
+aos_bool pyrion_submit_cmd_stream(struct pyrion_ctx* ctx, struct pyrion_cmd_stream* stream);
 
-aos_bool pyrion_builtin_printc(struct pyrion_ctx* ctx, char c) __attribute__((used));
-aos_bool pyrion_builtin_print(struct pyrion_ctx* ctx, const char* str) __attribute__((used));
-aos_bool pyrion_builtin_printf(struct pyrion_ctx* ctx, const char* fmt, ...) __attribute__((used));
-aos_bool pyrion_builtin_draw_rect(struct pyrion_ctx* ctx, struct pyrion_rect rect) __attribute__((used));
+aos_bool pyrion_builtin_printc(struct pyrion_ctx* ctx, char c);
+aos_bool pyrion_builtin_print(struct pyrion_ctx* ctx, const char* str);
+aos_bool pyrion_builtin_printf(struct pyrion_ctx* ctx, const char* fmt, ...);
+aos_bool pyrion_builtin_draw_rect(struct pyrion_ctx* ctx, struct pyrion_rect rect);
 
-aos_bool pyrion_set_font_size(struct pyrion_ctx* ctx, struct pyrion_font* font, float size) __attribute__((used));
-aos_bool pyrion_upload_font(struct pyrion_ctx* ctx, struct pyrion_font font, struct pyrion_font* out) __attribute__((used));
-void pyrion_destroy_font(struct pyrion_ctx* ctx, struct pyrion_font* font) __attribute__((used));
-aos_bool pyrion_set_builtins_font(struct pyrion_ctx* ctx, struct pyrion_font* font)  __attribute__((used));
-aos_bool pyrion_set_default_builtins_font(struct pyrion_ctx* ctx)  __attribute__((used));
-aos_bool pyrion_set_builtins_font_size(struct pyrion_ctx* ctx, float size) __attribute__((used));
+aos_bool pyrion_set_font_size(struct pyrion_ctx* ctx, struct pyrion_font* font, float size);
+aos_bool pyrion_upload_font(struct pyrion_ctx* ctx, struct pyrion_font font, struct pyrion_font* out);
+void pyrion_destroy_font(struct pyrion_ctx* ctx, struct pyrion_font* font);
+aos_bool pyrion_set_builtins_font(struct pyrion_ctx* ctx, struct pyrion_font* font) ;
+aos_bool pyrion_set_default_builtins_font(struct pyrion_ctx* ctx) ;
+aos_bool pyrion_set_builtins_font_size(struct pyrion_ctx* ctx, float size);
 
-aos_bool pyrion_clear(struct pyrion_ctx* ctx, uint32_t color) __attribute__((used));
-aos_bool pyrion_pixel(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t color) __attribute__((used));
-aos_bool pyrion_flush(struct pyrion_ctx* ctx) __attribute__((used));
-aos_bool pyrion_viewport(struct pyrion_ctx* ctx, struct pyrion_rect viewport) __attribute__((used));
-aos_bool pyrion_set_cursor(struct pyrion_ctx* ctx, uint32_t x, uint32_t y) __attribute__((used));
-aos_bool pyrion_blit(struct pyrion_ctx *ctx, uint32_t dst_res, uint32_t src_res, uint32_t width, uint32_t height) __attribute__((used));
+aos_bool pyrion_clear(struct pyrion_ctx* ctx, uint32_t color);
+aos_bool pyrion_pixel(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t color);
+aos_bool pyrion_flush(struct pyrion_ctx* ctx);
+aos_bool pyrion_viewport(struct pyrion_ctx* ctx, struct pyrion_rect viewport);
+aos_bool pyrion_set_cursor(struct pyrion_ctx* ctx, uint32_t x, uint32_t y);
+aos_bool pyrion_blit(struct pyrion_ctx *ctx, uint32_t dst_res, uint32_t src_res, uint32_t width, uint32_t height);
 
 // SWITCH OFF THE GPU, NOT APPLICABLE TO USER APPLICATIONS
-aos_bool pyrion_switch_off(void) __attribute__((used));
+aos_bool pyrion_switch_off(void);

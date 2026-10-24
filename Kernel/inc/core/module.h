@@ -56,17 +56,17 @@ struct AOS_Module {
     } Modules;
 };
 
-aos_bool modules_init(void) __attribute__((used));
-aos_bool module_register(struct AOS_Module* module) __attribute__((used));
-aos_bool module_unregister(struct AOS_Module* module) __attribute__((used));
-aos_bool module_unregister_dealloc(struct AOS_Module* module) __attribute__((used));
-aos_bool module_already_initialized(struct AOS_Module* module) __attribute__((used));
-size_t module_get_registered_module_count(void) __attribute__((used));
+aos_bool modules_init(void);
+aos_bool module_register(struct AOS_Module* module);
+aos_bool module_unregister(struct AOS_Module* module);
+aos_bool module_unregister_dealloc(struct AOS_Module* module);
+aos_bool module_already_initialized(struct AOS_Module* module);
+size_t module_get_registered_module_count(void);
 
-struct AOS_Module* module_get_applicable_driver(uint64_t loop_idx, uint8_t class, uint8_t subclass, uint8_t use_subclass, uint8_t progif, uint8_t use_progif, uint8_t revision, uint8_t use_revision, uint16_t vendor, uint8_t use_vendor) __attribute__((used));
-struct AOS_Module* module_get_applicable_registered_driver(uint64_t loop_idx, uint8_t class, uint8_t subclass, uint8_t use_subclass, uint8_t progif, uint8_t use_progif, uint8_t revision, uint8_t use_revision, uint16_t vendor, uint8_t use_vendor) __attribute__((used));
-struct AOS_Module* module_get_applicable_driver_alloced(uint64_t loop_idx, uint8_t class, uint8_t subclass, uint8_t use_subclass, uint8_t progif, uint8_t use_progif, uint8_t revision, uint8_t use_revision, uint16_t vendor, uint8_t use_vendor) __attribute__((used));
-struct AOS_Module* module_get_applicable_registered_driver_alloced(uint64_t loop_idx, uint8_t class, uint8_t subclass, uint8_t use_subclass, uint8_t progif, uint8_t use_progif, uint8_t revision, uint8_t use_revision, uint16_t vendor, uint8_t use_vendor) __attribute__((used));
+struct AOS_Module* module_get_applicable_driver(uint64_t loop_idx, uint8_t class, uint8_t subclass, uint8_t use_subclass, uint8_t progif, uint8_t use_progif, uint8_t revision, uint8_t use_revision, uint16_t vendor, uint8_t use_vendor);
+struct AOS_Module* module_get_applicable_registered_driver(uint64_t loop_idx, uint8_t class, uint8_t subclass, uint8_t use_subclass, uint8_t progif, uint8_t use_progif, uint8_t revision, uint8_t use_revision, uint16_t vendor, uint8_t use_vendor);
+struct AOS_Module* module_get_applicable_driver_alloced(uint64_t loop_idx, uint8_t class, uint8_t subclass, uint8_t use_subclass, uint8_t progif, uint8_t use_progif, uint8_t revision, uint8_t use_revision, uint16_t vendor, uint8_t use_vendor);
+struct AOS_Module* module_get_applicable_registered_driver_alloced(uint64_t loop_idx, uint8_t class, uint8_t subclass, uint8_t use_subclass, uint8_t progif, uint8_t use_progif, uint8_t revision, uint8_t use_revision, uint16_t vendor, uint8_t use_vendor);
 
 #define module_get_first_applicable_driver(class, subclass, use_subclass, progif, use_progif, revision, use_revision, vendor, use_vendor) module_get_applicable_driver(0, class, subclass, use_subclass, progif, use_progif, revision, use_revision, vendor, use_vendor)
 #define module_get_first_applicable_registered_driver(class, subclass, use_subclass, progif, use_progif, revision, use_revision, vendor, use_vendor) module_get_applicable_registered_driver(0, class, subclass, use_subclass, progif, use_progif, revision, use_revision, vendor, use_vendor)

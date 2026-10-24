@@ -809,11 +809,11 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 	flush_f(&cur_drive.block_dev);
 	btl_free(dev.driver_data);
 
-	EFI_PHYSICAL_ADDRESS stack_base = AOS_KERNEL_STACK_TOP - 0x10000; // 64 KB stack
+	EFI_PHYSICAL_ADDRESS stack_base = AOS_KERNEL_STACK_TOP - 0x10000; // 64 KiB stack
 	status = SystemTable->BootServices->AllocatePages(
 		AllocateAddress,
 		EfiLoaderData,
-		16, // 16 pages = 64 KB
+		16, // 16 pages = 64 KiB
 		&stack_base
 	);
 

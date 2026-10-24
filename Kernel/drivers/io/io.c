@@ -559,23 +559,54 @@ aos_bool is_vmem_initialized(void) {
 	return vmem_active;
 }
 
-void vmem_set_cursor(uint16_t x, uint16_t y) {
+void vmem_set_only_cursor(uint64_t x, uint64_t y) {
 	if (!vmem_active) return;
+	if (vmem_mode == UNIBOOT_FB_MODE_UEFI_GOP) return;
 
-    uint64_t rflags = spin_lock_irqsave(&vmem_cur_lock);
+	if (x > 0xFFFF || y > 0xFFFF) return;
+	uint64_t rflags = spin_lock_irqsave(&vmem_cur_lock);
 
-	if (vmem_mode == UNIBOOT_FB_MODE_UEFI_GOP) {
-		spin_unlock_irqrestore(&vmem_cur_lock, rflags);
-		return;
-	}
-
-    uint16_t pos = y * IO_VMEM_MAX_COLS_true + x;
+    uint16_t pos = (uint16_t)y * IO_VMEM_MAX_COLS_true + (uint16_t)x;
     asm_outb(0x3D4, 0x0E);
     asm_outb(0x3D5, (pos >> 8) & 0xFF);
     asm_outb(0x3D4, 0x0F);
     asm_outb(0x3D5, pos & 0xFF);
 
     spin_unlock_irqrestore(&vmem_cur_lock, rflags);
+}
+
+void vmem_set_cursor(struct VMemDesign* design, uint64_t x, uint64_t y) {
+	if (design) {
+		design->x = x;
+		design->y = y;
+	}
+
+    vmem_set_only_cursor(x, y);
+}
+
+void vmem_set_cursor_to_col(struct VMemDesign* design, uint64_t cx, uint64_t cy) {
+	uint64_t x = cx*8;
+	uint64_t y = cy*16;
+
+	if (design) {
+		design->x = x;
+		design->y = y;
+	}
+
+    vmem_set_only_cursor(x, y);
+}
+
+// If Bit 63 of CX/CY is 1, CX/CY is Column based, else CX/CY is explict position
+void vmem_set_cursor_ex(struct VMemDesign* design, uint64_t cx, uint64_t cy) {
+	uint64_t x = ((cx >> 63) & 0x1) ? cx*8 : cx;
+	uint64_t y = ((cy >> 63) & 0x1) ? cy*16 : cy;
+
+	if (design) {
+		design->x = x;
+		design->y = y;
+	}
+
+    vmem_set_only_cursor(x, y);
 }
 
 void vmem_disable_cursor(void) {
@@ -637,7 +668,7 @@ void vmem_printc(struct VMemDesign* design, char c) {
 	if (design->y >= vmem_fbi.height) design->y = vmem_fbi.height;
 	else if (design->y < 0) design->y = 0;
 
-	vmem_set_cursor(design->x, design->y);
+	vmem_set_only_cursor(design->x, design->y);
 
     uint64_t rflags = spin_lock_irqsave(&vmemc_lock);
 
@@ -685,7 +716,7 @@ void vmem_printc(struct VMemDesign* design, char c) {
 				design->y--;
 			}
 
-			vmem_set_cursor(design->x, design->y);
+			vmem_set_only_cursor(design->x, design->y);
 			vmem[design->y * IO_VMEM_MAX_COLS_true + design->x] = ((uint16_t)attr << 8) | ' ';
 
 			spin_unlock_irqrestore(&vmemc_lock, rflags);

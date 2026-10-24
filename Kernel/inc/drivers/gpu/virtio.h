@@ -287,11 +287,11 @@ struct virtio_gpu_cmd_submit_3d {
 	uint32_t padding;
 } __attribute__((packed));
 
-aos_bool virtio_init(struct AOS_Module* m) __attribute__((used));
-aos_bool virtio_init_resources(struct gpu_device* gpu, int resource_id) __attribute__((used));
-aos_bool virtio_flush(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, uint32_t h, int resource_id) __attribute__((used));
-aos_bool virtio_set_mode(struct gpu_device* gpu, uint32_t w, uint32_t h, uint32_t bpp) __attribute__((used));
-aos_bool virtio_switch_off(struct gpu_device* gpu) __attribute__((used));
+aos_bool virtio_init(struct AOS_Module* m);
+aos_bool virtio_init_resources(struct gpu_device* gpu, int resource_id);
+aos_bool virtio_flush(struct gpu_device* gpu, uint32_t x, uint32_t y, uint32_t w, uint32_t h, int resource_id);
+aos_bool virtio_set_mode(struct gpu_device* gpu, uint32_t w, uint32_t h, uint32_t bpp);
+aos_bool virtio_switch_off(struct gpu_device* gpu);
 
 // Virgl
 #define VIRGL_CMD_HEADER(op, obj, len) ((op) | ((obj) << 8) | ((len) << 16))
@@ -1995,20 +1995,20 @@ enum pipe_texture_target {
 // Pyrion
 #include <inc/drivers/gpu/apis/pyrion.h>
 
-aos_bool pyrion_init_virtio(void) __attribute__((used));
-void pyrion_finish_virtio(void) __attribute__((used));
-struct pyrion_ctx* pyrion_create_ctx_virtio(struct pyrion_create_ctx_info ctx_info) __attribute__((used));
-void pyrion_destroy_ctx_virtio(struct pyrion_ctx* ctx) __attribute__((used));
-void pyrion_unuse_device_virtio(struct pyrion_ctx* ctx) __attribute__((used));
-aos_bool pyrion_enumerate_physical_devices_virtio(size_t* count, size_t idx, struct pyrion_physical_device* out) __attribute__((used));
-aos_bool pyrion_use_device_virtio(struct pyrion_ctx* ctx, struct pyrion_physical_device* dev) __attribute__((used));
-aos_bool pyrion_submit_cmd_stream_virtio(struct pyrion_ctx* ctx, struct pyrion_cmd_stream* stream) __attribute__((used));
-aos_bool pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect viewport) __attribute__((used));
-aos_bool pyrion_flush_virtio(struct pyrion_ctx* ctx) __attribute__((used));
-aos_bool pyrion_clear_virtio(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));
-aos_bool pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));
-aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t codepoint, struct pyrion_font* font, struct pyrion_glyph* glyph) __attribute__((used));
-void pyrion_destroy_font_virtio(struct pyrion_ctx* ctx, struct pyrion_font* font) __attribute__((used));
-aos_bool pyrion_upload_font_virtio(struct pyrion_ctx* ctx, struct pyrion_font font, struct pyrion_font* out) __attribute__((used));
-aos_bool pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint8_t r, uint8_t g, uint8_t b, uint8_t a) __attribute__((used));
-aos_bool pyrion_blit_virtio(struct pyrion_ctx *ctx, uint32_t dst_res, uint32_t src_res, uint32_t width, uint32_t height) __attribute__((used));
+aos_bool pyrion_init_virtio(void);
+void pyrion_finish_virtio(void);
+struct pyrion_ctx* pyrion_create_ctx_virtio(struct pyrion_create_ctx_info ctx_info);
+void pyrion_destroy_ctx_virtio(struct pyrion_ctx* ctx);
+void pyrion_unuse_device_virtio(struct pyrion_ctx* ctx);
+aos_bool pyrion_enumerate_physical_devices_virtio(size_t* count, size_t idx, struct pyrion_physical_device* out);
+aos_bool pyrion_use_device_virtio(struct pyrion_ctx* ctx, struct pyrion_physical_device* dev);
+aos_bool pyrion_submit_cmd_stream_virtio(struct pyrion_ctx* ctx, struct pyrion_cmd_stream* stream);
+aos_bool pyrion_viewport_virtio(struct pyrion_ctx* ctx, struct pyrion_rect viewport);
+aos_bool pyrion_flush_virtio(struct pyrion_ctx* ctx);
+aos_bool pyrion_clear_virtio(struct pyrion_ctx* ctx, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+aos_bool pyrion_pixel_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+aos_bool pyrion_draw_char_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t codepoint, struct pyrion_font* font, struct pyrion_glyph* glyph);
+void pyrion_destroy_font_virtio(struct pyrion_ctx* ctx, struct pyrion_font* font);
+aos_bool pyrion_upload_font_virtio(struct pyrion_ctx* ctx, struct pyrion_font font, struct pyrion_font* out);
+aos_bool pyrion_rect_virtio(struct pyrion_ctx* ctx, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+aos_bool pyrion_blit_virtio(struct pyrion_ctx *ctx, uint32_t dst_res, uint32_t src_res, uint32_t width, uint32_t height);

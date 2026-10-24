@@ -15,31 +15,6 @@
 
 #define DOORBELL_BASE 0x20
 
-#define TRB_TRANSFER_EVENT 32
-#define TRB_COMPLETION_EVENT 33
-#define TRB_PORT_STATUS_CHANGE_EVENT 34
-#define TRB_BANDWIDTH_REQ_EVENT 35
-#define TRB_DOORBELL_EVENT 36
-#define TRB_HOST_CONTROLLER_EVENT 37
-#define TRB_DEVICE_NOTIFICATION_EVENT 38
-#define TRB_MFINDEX_WRAP_EVENT 39
-
-#define TRB_CMD_NOOP 23
-#define TRB_CMD_ENABLE_SLOT 9
-#define TRB_CMD_DISABLE_SLOT 10
-#define TRB_CMD_ADDRESS_DEVICE 11
-#define TRB_CMD_CONFIGURE_ENDPOINT 12
-#define TRB_CMD_EVALUATE_CONTEXT 13
-#define TRB_CMD_RESET_ENDPOINT 14
-#define TRB_CMD_STOP_ENDPOINT 15
-#define TRB_CMD_SET_TR_DEQUEUE 16
-#define TRB_CMD_RESET_DEVICE 17
-#define TRB_CMD_FORCE_EVENT 18
-#define TRB_CMD_NEGOTIATE_BW 19
-#define TRB_CMD_SET_LATENCY_TOL 20
-#define TRB_CMD_GET_PORT_BANDWIDTH 21
-#define TRB_CMD_FORCE_HEADER 22
-
 #define KxHCI_ALLOC_STEP 16
 
 typedef struct {
@@ -84,13 +59,33 @@ static uint64_t controller_cap;
 static void destroy_n_unmap_xhci(xhci_controller* kxc) {
 	if (!kxc) return;
 
+	if (kxc->op_regs) {
+		serial_print("[xHCI] Resetting Controller...\n");
+		kxc->op_regs->usbcmd &= ~XHCI_USBCMD_FLAG_RS;
+		__asm__ volatile("mfence" ::: "memory");
+		uint64_t timeout = kget_ms_passed();
+		while (!(kxc->op_regs->usbsts & XHCI_UBSTS_FLAG_HCH)) {
+			if (kget_ms_passed() - timeout >= 10000) {
+				serial_print("[xHCI] Controller Timeout, Skipping device shutdown, proceeding towards driver shutdown...\n");
+				goto unmap_driver;
+			}
+			__asm__ volatile("pause");
+		}
+	}
+
 	if (kxc->cmd_ring) { avmf_free((uint64_t)kxc->cmd_ring); kxc->cmd_ring = NULL; }
 	if (kxc->event_ring) { avmf_free((uint64_t)kxc->event_ring); kxc->event_ring = NULL; }
 	if (kxc->erst) { avmf_free((uint64_t)kxc->erst); kxc->erst = NULL; }
 	if (kxc->dcbaa > 0) { avmf_free(kxc->dcbaa); kxc->dcbaa = 0; }
+
+	serial_print("[xHCI] Device Shutdown Successful\n");
 	
-	if (kxc->idx == controller_count - 1) controller_count--;
-	kxc->valid = AOS_FALSE;
+	unmap_driver: {
+		if (kxc->idx == controller_count - 1) controller_count--;
+		kxc->valid = AOS_FALSE;
+
+		serial_print("[xHCI] Driver Shutdown Successful\n");
+	}
 }
 
 static aos_bool map_xhci_mmio(xhci_controller* kxc) {
@@ -211,7 +206,7 @@ static struct xhci_trb* xhci_wait_cmd(xhci_controller* kxc) {
         struct xhci_trb* event = xhci_next_event(kxc);
         if (event) {
             uint32_t type = (event->control >> 10) & 0x3F;
-            if (type == TRB_COMPLETION_EVENT) return event;
+            if (type == XHCI_EVENT_TRB_ID_COMMAND_COMPLETION) return event;
         }
         if (kget_ms_passed() - timeout >= 5000) return NULL;
     }
@@ -222,13 +217,14 @@ static void xhci_send_cmd(xhci_controller* kxc, uint32_t type, uint64_t param) {
 
 	kxc->cmd_ring[kxc->cmd_index].param = param;
 	kxc->cmd_ring[kxc->cmd_index].status = 0;
-	kxc->cmd_ring[kxc->cmd_index].control = (type << 10) | kxc->cmd_cycle;
+	kxc->cmd_ring[kxc->cmd_index].control = ((type & 0x3F) << 10) | (kxc->cmd_cycle & 0x1);
 
 	kxc->cmd_index++;
 	if (kxc->cmd_index == kxc->trbs_per_page-1){
 		kxc->cmd_index = 0;
 		kxc->cmd_cycle ^= 1;
 	}
+
 	__asm__ volatile("mfence" ::: "memory");
 	kxc->doorbells[0] = 0;
 	__asm__ volatile("mfence" ::: "memory");
@@ -267,10 +263,10 @@ aos_bool xhci_init(struct AOS_Module* module) {
 
 	// Reset
 	serial_print("[xHCI] Resetting Controller...\n");
-	kxc->op_regs->usbcmd &= ~1;
+	kxc->op_regs->usbcmd &= ~XHCI_USBCMD_FLAG_RS;
 	__asm__ volatile("mfence" ::: "memory");
 	uint64_t timeout = kget_ms_passed();
-	while (!(kxc->op_regs->usbsts & (1 << 0))) {
+	while (!(kxc->op_regs->usbsts & XHCI_UBSTS_FLAG_HCH)) {
 		if (kget_ms_passed() - timeout >= 10000) {
 			serial_print("[xHCI] Controller Timeout!\n");
 			destroy_n_unmap_xhci(kxc);
@@ -280,10 +276,10 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	}
 
 	serial_print("[xHCI] Setting HCRST...\n");
-	kxc->op_regs->usbcmd |= (1 << 1); // Set HCRST
+	kxc->op_regs->usbcmd |= XHCI_USBCMD_FLAG_HCRST;
 	__asm__ volatile("mfence" ::: "memory");
 	timeout = kget_ms_passed();
-	while (kxc->op_regs->usbcmd & (1 << 1)) {
+	while (kxc->op_regs->usbcmd & XHCI_USBCMD_FLAG_HCRST) {
 		if (kget_ms_passed() - timeout >= 10000) {
 			serial_print("[xHCI] Controller Timeout!\n");
 			destroy_n_unmap_xhci(kxc);
@@ -292,7 +288,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 		__asm__ volatile("pause");
 	}
 	timeout = kget_ms_passed();
-	while (kxc->op_regs->usbsts & (1 << 11)) {
+	while (kxc->op_regs->usbsts & XHCI_UBSTS_FLAG_CNR) {
 		if (kget_ms_passed() - timeout >= 10000) {
 			serial_print("[xHCI] Controller Timeout!\n");
 			destroy_n_unmap_xhci(kxc);
@@ -348,7 +344,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	kxc->event_index = 0;
 	kxc->event_cycle = 1;
 
-	kxc->op_regs->crcr = kxc->cmd_ring_phys | kxc->cmd_cycle;
+	kxc->op_regs->crcr = kxc->cmd_ring_phys | XHCI_CRCR_FLAG_RCS; // Cmd Ring Pointer's 6 lower bits must always be 0 (as its 64-byte aligned)
 
 	kxc->erst[0].ring_segment_base = kxc->event_ring_phys;
 	kxc->erst[0].ring_segment_size = kxc->trbs_per_page;
@@ -357,13 +353,13 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	kxc->runtime_regs->intr_reg_set[0].erstba = kxc->erst_phys;
 	kxc->runtime_regs->intr_reg_set[0].erdp = kxc->event_ring_phys;
 
-	kxc->op_regs->config = kxc->max_slots;
+	kxc->op_regs->config = kxc->max_slots & 0xFF;
 
-	kxc->op_regs->usbcmd |= 1;
+	kxc->op_regs->usbcmd |= XHCI_USBCMD_FLAG_RS;
 	__asm__ volatile("mfence" ::: "memory");
 
 	timeout = kget_ms_passed();
-	while (kxc->op_regs->usbsts & 1) {
+	while (kxc->op_regs->usbsts & XHCI_USBCMD_FLAG_RS) {
 		if (kget_ms_passed() - timeout >= 10000) {
 			serial_print("[xHCI] Controller Timeout!\n");
 			destroy_n_unmap_xhci(kxc);
@@ -373,10 +369,10 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	}
 
 	kxc->runtime_regs->intr_reg_set[0].iman |= (1 << 1); // Enable interrupts
-	kxc->op_regs->usbcmd |= (1 << 2); // Enable Global interrupts
+	kxc->op_regs->usbcmd |= XHCI_USBCMD_FLAG_INTE;
 	__asm__ volatile("mfence" ::: "memory");
 
-	xhci_send_cmd(kxc, TRB_CMD_ENABLE_SLOT, 0);
+	xhci_send_cmd(kxc, XHCI_CMD_TRB_ID_ENABLE_SLOT, 0);
 	struct xhci_trb* event = xhci_wait_cmd(kxc);
 	if (!event) {
 		serial_print("[xHCI] Enable Slot timeout\n");
@@ -384,8 +380,8 @@ aos_bool xhci_init(struct AOS_Module* module) {
 		return AOS_FALSE;
 	}
 
-	if (((event->status >> 24) & 0xFF) != 1) {
-		serial_printf("[xHCI] Enable Slot Command failed: %u\n", ((event->status >> 24) & 0xFF));
+	if (((event->status >> 24) & 0xFF) != 1) { // Completion code
+		serial_printf("[xHCI] Enable Slot Command failed: %u\n", ((event->status >> 24) & 0xFF)); // Completion code
 		destroy_n_unmap_xhci(kxc);
 		return AOS_FALSE;
 	}
@@ -394,7 +390,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 	for (uint32_t i = 0; i < kxc->max_ports; i++) {
 		uint32_t portsc = kxc->op_regs->ports[i].portsc;
 		if (portsc & 1) {
-			serial_printf("[xHCI] Found Device on Port: %u\n", i + 1);
+			serial_printf("[xHCI] Found Device on Port: %u\n", i);
 			kxc->port = i;
 			break;
 		}
@@ -410,7 +406,7 @@ aos_bool xhci_init(struct AOS_Module* module) {
 
 	uint32_t portsc = kxc->op_regs->ports[kxc->port].portsc;
 	portsc &= ~(0x7F << 17);
-	portsc |= (1 << 4); // PR
+	portsc |= XHCI_PORT_FLAG_PR;
 	kxc->op_regs->ports[kxc->port].portsc = portsc;
 	__asm__ volatile("mfence" ::: "memory");
 

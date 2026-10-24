@@ -123,22 +123,22 @@ EFIAPI static void execute_cmd(struct ambrc* ambrc, struct VMemDesign* design, a
                     const char* size_type = "Bytes";
                     if (tsize_bytes < 1048576 && tsize_bytes > 1024) {
                         tsize = tsize_bytes / 1024;
-                        size_type = "KB";
+                        size_type = "KiB";
                     } else if (tsize_bytes < 1073741824 && tsize_bytes > 1048576) {
                         tsize = tsize_bytes / 1048576;
-                        size_type = "MB";
+                        size_type = "MiB";
                     } else if (tsize_bytes < (1073741824 * 1024) && tsize_bytes > 1073741824) {
                         tsize = tsize_bytes / (1073741824 * 1024);
-                        size_type = "GB";
+                        size_type = "GiB";
                     } else if (tsize_bytes < (1073741824 * 1024 * 1024) && tsize_bytes > (1073741824 * 1024)) {
                         tsize = tsize_bytes / (1073741824 * 1024 * 1024);
-                        size_type = "TB";
+                        size_type = "TiB";
                     } else if (tsize_bytes < (1073741824 * 1024 * 1024 * 1024) && tsize_bytes > (1073741824 * 1024 * 1024)) {
                         tsize = tsize_bytes / (1073741824 * 1024 * 1024 * 1024);
-                        size_type = "PB";
+                        size_type = "PiB";
                     } else {
                         tsize = tsize_bytes / (1073741824 * 1024 * 1024 * 1024 * 1024);
-                        size_type = "EB";
+                        size_type = "EiB";
                     }
                     vmem_printf(design, "\tTotal Size: %lu %s\n", tsize, size_type);
                     vmem_printf(design, "\n\tDevice ID: %u\n", cdrive->pcie_device->device_id);

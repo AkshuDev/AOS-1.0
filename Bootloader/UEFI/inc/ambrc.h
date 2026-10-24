@@ -62,6 +62,6 @@ struct ambrc {
 
 extern struct ambrc backup_ambrc;
 
-void init_backup_ambrc(void) __attribute__((used));
-void start_ambrc(struct drive_device* drive) __attribute__((used));
-struct ambrc* get_ambrc(void) __attribute__((used));
+void init_backup_ambrc(void);
+void start_ambrc(struct drive_device* drive);
+struct ambrc* get_ambrc(void);

@@ -884,7 +884,7 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 		return ENCODE_ERROR(EFI_LOAD_ERROR);
     }
 
-	EFI_PHYSICAL_ADDRESS stack_base = AOS_KERNEL_STACK_TOP - 0x10000; // 64 KB stack
+	EFI_PHYSICAL_ADDRESS stack_base = AOS_KERNEL_STACK_TOP - 0x10000; // 64 KiB stack
 	uint64_t stack_top = AOS_KERNEL_STACK_TOP;
 	uint64_t kentry_point = ambrc->kernel_info[final_kernel_idx].entry_point;
 	if (
