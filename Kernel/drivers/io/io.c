@@ -5,6 +5,7 @@
 
 #include <stdarg.h>
 
+#include <inc/core/aos.h>
 #include <inc/core/kfuncs.h>
 #include <inc/drivers/core/framebuffer.h>
 #include <inc/drivers/gpu/apis/pyrion.h>
@@ -14,10 +15,6 @@
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
 
-#ifdef PBFS_WDRIVERS
-	#undef PBFS_WDRIVERS
-#endif
-#define PBFS_NDRIVERS
 #include <PBFS/headers/pbfs-fs.h>
 
 #define SERIAL_PORT 0x3F8
@@ -155,8 +152,8 @@ void serial_init_klog(const char* path, struct pbfs_mount* mnt) {
 
 	size_t size = 0;
 	klog_present = AOS_FALSE;
-	if (pbfs_find_entry(path, &out, &out_lba, mnt) == PBFS_RES_SUCCESS && out.type & METADATA_FLAG_SYS) {
-		pbfs_read_file(mnt, (char*)path, &data, &size);
+	if (pbfs_find_entry(mnt, path, &out, &out_lba, true) == PBFS_RES_SUCCESS) {
+		pbfs_read_file_dmm(mnt, &out, &data, &size);
 		klog_present = AOS_TRUE;
 	}
 
@@ -176,7 +173,18 @@ void serial_flush_klog(const char* path, struct pbfs_mount* mnt) {
 	}
 	
 	if (klog_present) pbfs_update_file(mnt, (char*)path, (uint8_t*)klog, klog_end);
-	else pbfs_add(mnt, (char*)path, 0, 0, METADATA_FLAG_FILE, PERM_READ | PERM_WRITE | PERM_SYS, (uint8_t*)klog, klog_end);
+	else {
+		PBFS_Metadata md = {
+			.uid = KERNEL_UID,
+			.gid = KERNEL_GID,
+
+			.type = PBFS_METADATA_TYPE_FILE,
+			.permission_flags = PBFS_PERM_READ | PBFS_PERM_WRITE,
+			.group_permission_flags = PBFS_PERM_READ | PBFS_PERM_WRITE,
+			.external_permission_flags = PBFS_PERM_LOCKED | PBFS_PERM_PROTECTED | PBFS_PERM_READ,
+		};
+		pbfs_add(mnt, (char*)path, &md, NULL, (uint8_t*)klog, klog_end);
+	}
 }
 
 void serial_deinit_klog(const char* path, struct pbfs_mount* mnt) {
@@ -191,7 +199,18 @@ void serial_deinit_klog(const char* path, struct pbfs_mount* mnt) {
 	}
 	
 	if (klog_present) pbfs_update_file(mnt, (char*)path, (uint8_t*)klog, klog_end);
-	else pbfs_add(mnt, (char*)path, 0, 0, METADATA_FLAG_SYS, PERM_READ | PERM_WRITE, (uint8_t*)klog, klog_end);
+	else {
+		PBFS_Metadata md = {
+			.uid = KERNEL_UID,
+			.gid = KERNEL_GID,
+
+			.type = PBFS_METADATA_TYPE_FILE,
+			.permission_flags = PBFS_PERM_READ | PBFS_PERM_WRITE,
+			.group_permission_flags = PBFS_PERM_READ | PBFS_PERM_WRITE,
+			.external_permission_flags = PBFS_PERM_LOCKED | PBFS_PERM_PROTECTED | PBFS_PERM_READ,
+		};
+		pbfs_add(mnt, (char*)path, &md, NULL, (uint8_t*)klog, klog_end);
+	}
 	if ((uint64_t)klog != (uint64_t)preklog) avmf_free((uint64_t)klog);
 	klog = NULL;
 	klog_end = 0;

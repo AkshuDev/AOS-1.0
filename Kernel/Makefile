@@ -24,7 +24,7 @@ ASMFLAGS := -f elf64
 
 LD := ld
 LDFLAGS := -m elf_x86_64 -nostdlib --nmagic --omagic -L ../PBFS/PBFS/build-fs -T linker.ld
-LDPBFS := ../PBFS/PBFS/build-fs/libpbfs-ndrivers.a
+LDPBFS := ../PBFS/PBFS/build-fs/libpbfs.a
 
 OBJCOPY := objcopy
 

@@ -13,15 +13,10 @@
 
 #include <stddef.h>
 
-#ifdef PBFS_WDRIVERS
-    #undef PBFS_WDRIVERS
-#endif
-#define PBFS_NDRIVERS
 #include <PBFS/headers/pbfs.h>
 #include <PBFS/headers/pbfs_structs.h>
 #include <PBFS/headers/pbfs_structs_64.h>
 #include <PBFS/headers/pbfs-fs.h>
-#undef PBFS_NDRIVERS
 
 #include <ambrc.h>
 #include <panic_shell.h>

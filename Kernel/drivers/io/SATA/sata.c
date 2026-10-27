@@ -13,13 +13,6 @@
 #include <inc/drivers/io/sata.h>
 #include <inc/drivers/io/io.h>
 
-#ifdef PBFS_WDRIVERS
-    #undef PBFS_WDRIVERS
-#endif
-#define PBFS_NDRIVERS
-#include <PBFS/headers/pbfs-fs.h>
-#undef PBFS_NDRIVERS
-
 #define KSATA_MAX_PORTS 32
 #define KSATA_ALLOC_STEP 16
 #define KSATA_MAX_CONTROLLERS 256
@@ -352,7 +345,6 @@ static aos_bool sata_exec_cmd_internal(struct sata_port_state* state, uint8_t co
 
 	if (prdt_count > 0xFFFF || prdt_count > SATA_MAX_PRDT_STATIC_ENTRIES) return AOS_FALSE;
 
-	serial_print("[AHCI] Executing command...\n");
     struct sata_hba_port* port = state->port;
     if (!sata_busy_wait(port))
         return AOS_FALSE;
@@ -458,7 +450,6 @@ static aos_bool sata_exec_cmd_internal(struct sata_port_state* state, uint8_t co
 	if (has_data && !write && buffer) memcpy(buffer, virt, bytes);
     if (virt) avmf_free((uint64_t)virt);
 
-    serial_print("[AHCI] Command sent successfully!\n");
     return AOS_TRUE;
 }
 

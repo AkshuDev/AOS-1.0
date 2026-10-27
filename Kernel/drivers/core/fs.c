@@ -6,10 +6,6 @@
 
 #include <inc/core/fs.h>
 
-#ifdef PBFS_WDRIVERS
-	#undef PBFS_WDRIVERS
-#endif
-#define PBFS_NDRIVERS
 #include <PBFS/headers/pbfs_structs.h>
 #include <PBFS/headers/pbfs-fs.h>
 
@@ -34,7 +30,7 @@ static aos_bool read_file(struct aos_file* self, uint64_t size, void* buf) {
 		h->file_data = NULL;
 		h->file_data_size = 0;
 
-		int out = pbfs_read_file_dmm(gmnt, h->path, &h->entry, &h->file_data, &h->file_data_size);
+		int out = pbfs_read_file_dmm(gmnt, &h->entry, &h->file_data, &h->file_data_size);
 		if (out != PBFS_RES_SUCCESS) {
 			serial_printf("[FS:Read] PBFS Error: %s\n", pbfs_get_err_str((enum PBFS_Result)out));
 			spin_unlock_irqrestore(&h->handle_lock, rflags);
@@ -77,7 +73,7 @@ static aos_bool write_file(struct aos_file* self, uint64_t size, void* buf) {
 		h->file_data = NULL;
 		h->file_data_size = 0;
 
-		int out = pbfs_read_file_dmm(gmnt, h->path, &h->entry, &h->file_data, &h->file_data_size);
+		int out = pbfs_read_file_dmm(gmnt, &h->entry, &h->file_data, &h->file_data_size);
 		if (out != PBFS_RES_SUCCESS) {
 			serial_printf("[FS:Write] PBFS Error: %s\n", pbfs_get_err_str((enum PBFS_Result)out));
 			spin_unlock_irqrestore(&h->handle_lock, rflags);
@@ -131,7 +127,7 @@ static aos_bool flush_file(struct aos_file* self) {
 
 	if (h->file_data_size == 0) {
 		const char* d = "\0";
-		int out = pbfs_update_file_dmm(gmnt, h->path, &h->entry, (uint8_t*)d, 1);
+		int out = pbfs_update_file_dmm(gmnt, &h->entry, (uint8_t*)d, 1);
 		if (out != PBFS_RES_SUCCESS) {
 			serial_printf("[FS:Flush] PBFS Error: %s\n", pbfs_get_err_str((enum PBFS_Result)out));
 			spin_unlock_irqrestore(&h->handle_lock, rflags);
@@ -139,7 +135,7 @@ static aos_bool flush_file(struct aos_file* self) {
 			return AOS_FALSE;
 		}
 	} else {
-		int out = pbfs_update_file_dmm(gmnt, h->path, &h->entry, h->file_data, h->file_data_size);
+		int out = pbfs_update_file_dmm(gmnt, &h->entry, h->file_data, h->file_data_size);
 		if (out != PBFS_RES_SUCCESS) {
 			serial_printf("[FS:Flush] PBFS Error: %s\n", pbfs_get_err_str((enum PBFS_Result)out));
 			spin_unlock_irqrestore(&h->handle_lock, rflags);
@@ -189,7 +185,7 @@ static aos_bool seek_file(struct aos_file* self, uint64_t seek_to, enum seek_mod
 		h->file_data = NULL;
 		h->file_data_size = 0;
 
-		int out = pbfs_read_file_dmm(gmnt, h->path, &h->entry, &h->file_data, &h->file_data_size);
+		int out = pbfs_read_file_dmm(gmnt, &h->entry, &h->file_data, &h->file_data_size);
 		if (out != PBFS_RES_SUCCESS) {
 			serial_printf("[FS:Seek] PBFS Error: %s\n", pbfs_get_err_str((enum PBFS_Result)out));
 			spin_unlock_irqrestore(&h->handle_lock, rflags);
@@ -258,7 +254,7 @@ struct aos_file* fs_open(const char* path) {
 	PBFS_DMM_Entry e = {0};
 	uint64_t elba = 0;
 	aos_bool file_exists = AOS_TRUE;
-	int out_e = pbfs_find_entry(path, &e, &elba, gmnt);
+	int out_e = pbfs_find_entry(gmnt, path, &e, &elba, true);
 	if (out_e != PBFS_RES_SUCCESS) {
 		//if (out_e != PBFS_ERR_File_Not_Found) return NULL;
 		//file_exists = AOS_FALSE;
@@ -299,7 +295,7 @@ struct aos_file* fs_open(const char* path) {
 	file->handle->path[path_len] = '\0';
 
 	if (file_exists) {
-		int out = pbfs_read_file_dmm(gmnt, (char*)path, &e, &file->handle->file_data, &file->handle->file_data_size);
+		int out = pbfs_read_file_dmm(gmnt, &e, &file->handle->file_data, &file->handle->file_data_size);
 		if (out == PBFS_RES_SUCCESS) {
 			file->handle->file_data_refresh_req = AOS_FALSE;
 		} else {

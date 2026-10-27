@@ -13,13 +13,6 @@
 #include <inc/drivers/io/nvme.h>
 #include <inc/drivers/io/io.h>
 
-#ifdef PBFS_WDRIVERS
-    #undef PBFS_WDRIVERS
-#endif
-#define PBFS_NDRIVERS
-#include <PBFS/headers/pbfs-fs.h>
-#undef PBFS_NDRIVERS
-
 #define KNVME_MAX_NAMESPACES 32
 #define KNVME_ALLOC_STEP 16
 #define KNVME_MAX_CONTROLLERS 256

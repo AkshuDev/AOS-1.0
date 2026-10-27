@@ -97,7 +97,7 @@ typedef struct {
 } blockio_pair_t;
 
 __attribute__((noreturn, naked))
-EFIAPI static void stage3_jump_to_kernel(void (*kernel)(void), uint64_t stack_top, uniboot_boot_info* boot_into_core){
+EFIAPI static void stage3_jump_to_kernel(void (*kernel)(void), uint64_t stack_top, uniboot_boot_info* boot_into_core) {
     __asm__ __volatile__(
         "movq %0, %%rsp\n\t"
         "movq %0, %%rbp\n\t"
@@ -120,7 +120,7 @@ EFIAPI static void stage3_jump_to_kernel(void (*kernel)(void), uint64_t stack_to
 }
 
 EFIAPI static void* btl_malloc(size_t size) {
-    if (pefi_state.initialized != 1) return NULL;
+    if (pefi_state.initialized != 1 || size < 1) return NULL;
 
     void* ptr = NULL;
     int status = pefi_allocate(pefi_state.system_table, size, &ptr);
@@ -128,8 +128,25 @@ EFIAPI static void* btl_malloc(size_t size) {
     return ptr;
 }
 EFIAPI static void btl_free(void* ptr) {
-    if (pefi_state.initialized != 1) return;
+    if (pefi_state.initialized != 1 || !ptr) return;
     pefi_free(pefi_state.system_table, ptr);
+}
+EFIAPI static void* btl_realloc(void* ptr, size_t size) {
+    if (pefi_state.initialized != 1 || !ptr || size < 1) return NULL;
+
+    void* nptr = NULL;
+    int status = pefi_allocate(pefi_state.system_table, size, &nptr);
+    if (EFI_ERROR(status)) return NULL;
+
+	btl_free(ptr);
+    return nptr;
+}
+
+EFIAPI static uint32_t btl_get_uid_gid(void) {
+	return 0;
+}
+EFIAPI static bool btl_allow_rooting(void) {
+	return true;
 }
 
 EFIAPI static int read_blk(struct block_device* dev, uint64_t lba, void* buf) {
@@ -473,7 +490,12 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
     
     struct pbfs_funcs funcs = {
         .malloc=btl_malloc,
-        .free=btl_free
+		.realloc=btl_realloc,
+        .free=btl_free,
+		.get_timestamp=kget_timestamp_seconds,
+		.get_uid=btl_get_uid_gid,
+		.get_gid=btl_get_uid_gid,
+		.rooting_allowed=btl_allow_rooting
     };
 
     struct pbfs_mount mnt = {0};
@@ -533,7 +555,7 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 	pbfs_init(&funcs);
 	int out = pbfs_mount(&cur_drive.block_dev, &mnt);
 	if (out != PBFS_RES_SUCCESS) {
-		vmem_printf(&cursor, "Failed to mount, Error:\n\t%s\n", pbfs_get_err_str(out));
+		vmem_printf(&cursor, "Failed to mount, Error:\n\t%s\n", pbfs_get_err_str((enum PBFS_Result)out));
 		vmem_printf(&cursor, "Used Drive %s\n\tBlock Count: %llu\n\tBlock Size: %llu\n", cur_drive.block_dev.name, cur_drive.block_dev.block_count, cur_drive.block_dev.block_size);
 		return ENCODE_ERROR(EFI_LOAD_ERROR);
 	}

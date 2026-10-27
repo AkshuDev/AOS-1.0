@@ -5,13 +5,8 @@
 
 #include <inc/mm/pager.h>
 
-#ifdef PBFS_WDRIVERS
-    #undef PBFS_WDRIVERS
-#endif
-#define PBFS_NDRIVERS
 #include <PBFS/headers/pbfs-fs.h>
 #include <PBFS/headers/pbfs.h>
-#undef PBFS_NDRIVERS
 
 #include <inc/mm/avmf.h>
 
@@ -196,15 +191,9 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
 			if (!pyrion_builtin_printf(vshell_ctx, "Listing: %s\n", path)) return AOS_FALSE;
 
 			for (size_t i = 0; i < item_count; i++) {
-				char type = (items[i].type & METADATA_FLAG_DIR) ? 'd' : 'f';
-
-				if (!pyrion_builtin_printf(
-					vshell_ctx,
-					"%c %s (lba %llu)\n",
-					type,
-					items[i].name,
-					uint128_to_u64(items[i].lba)
-				)) return AOS_FALSE;
+				PBFS_Metadata md;
+				if (pbfs_get_metadata(pbfs_mnt, &items[i], &md, NULL) != PBFS_RES_SUCCESS) continue;
+				if (!pyrion_builtin_printf(vshell_ctx, "%s (lba %llu)\n", md.name, uint128_to_u64(items[i].lba))) return AOS_FALSE;
 			}
 
 			cmd_ls_end: {}
@@ -221,13 +210,22 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
 			char path[PBFS_MAX_PATH_LEN];
 			aos_create_path(path, cwd, cmd_buf + 6);
 
-			int out = pbfs_find_entry(path, &entry, &lba, pbfs_mnt);
+			int out = pbfs_find_entry(pbfs_mnt, path, &entry, &lba, true);
 			if (out == PBFS_RES_SUCCESS || out == -1) {
 				if (!pyrion_builtin_print(vshell_ctx, "Error: File or Directory already exists!\n")) return AOS_FALSE;
 				goto cmd_mkdir_end;
 			}
 
-			out = pbfs_add_dir(pbfs_mnt, path, 0, 0, (PBFS_Permission_Flags)(PERM_READ | PERM_WRITE));
+			PBFS_Metadata md = {
+				.uid = kget_uid(),
+				.gid = kget_gid(),
+
+				.permission_flags = PBFS_PERM_READ | PBFS_PERM_WRITE,
+				.group_permission_flags = PBFS_PERM_READ | PBFS_PERM_WRITE,
+				.external_permission_flags = PBFS_PERM_READ
+			};
+
+			out = pbfs_add_dir(pbfs_mnt, path, &md, NULL);
 			if (out != PBFS_RES_SUCCESS) {
 				if (!pyrion_builtin_printf(vshell_ctx, "Error: %s\n", pbfs_get_err_str(out))) return AOS_FALSE;
 				goto cmd_mkdir_end;
@@ -247,8 +245,18 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
 			char path[PBFS_MAX_PATH_LEN];
 			aos_create_path(path, cwd, cmd_buf + 3);
 
-			int out = pbfs_find_entry(path, &entry, &lba, pbfs_mnt);
-			if (out != PBFS_RES_SUCCESS || !(entry.type & METADATA_FLAG_DIR)) {
+			int out = pbfs_find_entry(pbfs_mnt, path, &entry, &lba, true);
+			if (out != PBFS_RES_SUCCESS && out != -1) {
+				if (!pyrion_builtin_print(vshell_ctx, "Error: No such directory!\n")) return AOS_FALSE;
+				goto cmd_cd_end;
+			}
+			
+			PBFS_Metadata md;
+			out = pbfs_get_metadata(pbfs_mnt, &entry, &md, NULL);
+			if (out != PBFS_RES_SUCCESS) {
+				if (!pyrion_builtin_printf(vshell_ctx, "Error: %s\n", pbfs_get_err_str(out))) return AOS_FALSE;
+				goto cmd_cd_end;
+			} else if (((md.type != PBFS_METADATA_TYPE_DIR) && out != -1)) {
 				if (!pyrion_builtin_print(vshell_ctx, "Error: No such directory!\n")) return AOS_FALSE;
 				goto cmd_cd_end;
 			}

@@ -6,12 +6,7 @@
 
 #include <inc/core/pcie.h>
 
-#ifdef PBFS_WDRIVERS
-    #undef PBFS_WDRIVERS
-#endif
-#define PBFS_NDRIVERS
 #include <PBFS/headers/pbfs-fs.h>
-#undef PBFS_NDRIVERS
 
 struct AOS_Module;
 

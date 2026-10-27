@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <limits.h>
 
+#include <inc/core/aos.h>
 #include <inc/core/acpi.h>
 #include <inc/core/kfuncs.h>
 
@@ -1033,4 +1034,18 @@ uint64_t kmax(uint64_t a, uint64_t b) {
 
 uint64_t kmin(uint64_t a, uint64_t b) {
 	return a < b ? a : b;
+}
+
+// Users and more
+
+uint32_t kget_uid(void) {
+	return KERNEL_UID;
+}
+
+uint32_t kget_gid(void) {
+	return KERNEL_GID;
+}
+
+aos_bool kpbfs_rooting_allowed(void) {
+	return true; // Kernel
 }

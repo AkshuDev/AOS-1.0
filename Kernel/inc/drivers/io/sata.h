@@ -5,12 +5,7 @@
 #include <inc/core/pcie.h>
 #include <inc/core/module.h>
 
-#ifdef PBFS_WDRIVERS
-    #undef PBFS_WDRIVERS
-#endif
-#define PBFS_NDRIVERS
 #include <PBFS/headers/pbfs-fs.h>
-#undef PBFS_NDRIVERS
 
 #define SATA_PORT_SIGNATURE 0x00000101
 #define ATAPI_PORT_SIGNATURE 0xEB140101

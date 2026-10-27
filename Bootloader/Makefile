@@ -42,13 +42,13 @@ UEFI_CFLAGS := -mabi=ms \
 		-ffreestanding -fshort-wchar \
 		-mno-red-zone -fno-stack-protector \
 		-O$(OPT_LEVEL) $(EXTRA) \
-		-nostdlib -Wall -w \
+		-nostdlib -Wall -Wextra \
 		-I ../PBFS -I ../Headers -I ../Kernel -I ../PBFS/PBFS/PEFI/includes -I UEFI/inc
 
 UEFI_PBFS_CFLAGS := -mabi=ms -DBUILD_LIB \
 		-ffreestanding -fshort-wchar \
 		-mno-red-zone -fno-stack-protector \
-		-O$(OPT_LEVEL) $(EXTRA) -Wall -w
+		-O$(OPT_LEVEL) $(EXTRA) -Wall -Wextra
 
 LDFLAGS_UEFI = -nostdlib \
 		-Wl,--subsystem,10 \
@@ -60,8 +60,8 @@ LDFLAGS_UEFI = -nostdlib \
         -L $(UEFI_BUILD_DIR) -L ../PBFS/PBFS/PEFI/build -L ../PBFS/PBFS/build-fs
 
 LDFLAGS_MBR := -m elf_x86_64 -T linker.ld -L ../PBFS/PBFS/build-fs
-LDENDFLAGS := -lpbfs-ndrivers
-LDENDFLAGS_UEFI := -lpbfs-ndrivers -lpefi
+LDENDFLAGS := -lpbfs
+LDENDFLAGS_UEFI := -lpbfs -lpefi
 
 ASMFLAGS_MBR := -f elf32
 ASMFLAGS_MBR_BIN := -f bin

@@ -98,18 +98,19 @@ uefi: $(BUILD_DIR) $(BIN_DIR) $(UEFI_BOOTLOADER_EFI) $(AOS_KERNEL)
 		-bs 512 -tb $(TOTAL_DISK_BLOCKS) -dn AOS_DISK -rkt -rbp 1024 2048 \
 		-c -f \
 		--gpt -btl $(UEFI_BOOTLOADER_EFI) \
-		--permissions rw \
+		--uid 0 --gid 0 \
+		--permission-mode ug --permissions rwp --permission-mode e --permissions rlp \
 		-k $(AOS_KERNEL) AOS++
 	@printf "$(CLR_YELLOW) -- Adding FS ROOT to AOS Disk...$(CLR_RESET)\n"
 	@find "$(FSROOT_DIR)" -mindepth 1 -type d -print0 | while IFS= read -r -d '' item; do \
 		path="/$${item#$(FSROOT_DIR)/}"; \
 		echo "Adding Folder: $$item to $$path"; \
-		$(PBFS_CLI) $(DISK) -bs 512 -tb $(TOTAL_DISK_BLOCKS) -dn AOS_DISK --type dir --permissions rws -ad "$$path"; \
+		$(PBFS_CLI) $(DISK) -bs 512 -tb $(TOTAL_DISK_BLOCKS) -dn AOS_DISK --type dir --uid 0 --gid 0 --permission-mode ug --permissions rwp --permission-mode e --permissions rlp -ad "$$path"; \
 	done; \
 	find "$(FSROOT_DIR)" -type f -print0 | while IFS= read -r -d '' item; do \
 		path="/$${item#$(FSROOT_DIR)/}"; \
 		echo "Adding File: $$item as $$path"; \
-		$(PBFS_CLI) $(DISK) -bs 512 -tb $(TOTAL_DISK_BLOCKS) -dn AOS_DISK --type file --permissions rs --name "$$path" -a "$$item"; \
+		$(PBFS_CLI) $(DISK) -bs 512 -tb $(TOTAL_DISK_BLOCKS) -dn AOS_DISK --type file --uid 0 --gid 0 --permission-mode ug --permissions rwp --permission-mode e --permissions rlp --name "$$path" -a "$$item"; \
 	done
 
 	@printf "$(CLR_GREEN)Disk Created Successfully$(CLR_RESET)\n"

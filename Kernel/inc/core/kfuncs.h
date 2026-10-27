@@ -69,3 +69,7 @@ float kceil(float x);
 float kround(float x);
 uint64_t kmax(uint64_t a, uint64_t b);
 uint64_t kmin(uint64_t a, uint64_t b);
+
+uint32_t kget_uid(void);
+uint32_t kget_gid(void);
+aos_bool kpbfs_rooting_allowed(void);

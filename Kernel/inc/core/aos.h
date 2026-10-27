@@ -1,11 +1,9 @@
 #pragma once
 
-#ifdef PBFS_WDRIVERS
-    #undef PBFS_WDRIVERS
-#endif
-#define PBFS_NDRIVERS
 #include <PBFS/headers/pbfs-fs.h>
-#undef PBFS_NDRIVERS
+
+#define KERNEL_UID 0
+#define KERNEL_GID 0
 
 struct pbfs_mount* aos_get_mounted_fs(void);
 void aos_vmss_start(void);

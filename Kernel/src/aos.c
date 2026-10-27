@@ -15,14 +15,9 @@
 
 #include <inc/drivers/io/drive.h>
 
-#ifdef PBFS_WDRIVERS
-    #undef PBFS_WDRIVERS
-#endif
-#define PBFS_NDRIVERS
 #include <PBFS/headers/pbfs-fs.h>
 #include <PBFS/headers/pbfs.h>
 #include <PBFS/headers/pbfs_structs.h>
-#undef PBFS_NDRIVERS
 
 #include <inc/mm/avmf.h>
 #include <inc/mm/pager.h>
@@ -54,7 +49,11 @@ static aos_bool current_drive_mounted = AOS_FALSE;
 static struct pbfs_funcs pbfs_init_funcs = {
     .malloc = kmalloc,
     .free = kfree,
-	.realloc = krealloc
+	.realloc = krealloc,
+	.get_timestamp = kget_timestamp_seconds,
+	.get_uid = kget_uid,
+	.get_gid = kget_gid,
+	.rooting_allowed = kpbfs_rooting_allowed
 };
 static char g_pbfs_cwd[PBFS_MAX_PATH_LEN] = {'/', 0};
 static struct pbfs_mount g_pbfs_mnt = {0};
@@ -205,6 +204,16 @@ void kernel_main_true(void) { // Supports only UniBoot
 			serial_flush_klog("/aos/klog.log", &g_pbfs_mnt); // Flush the prelog
 
 			aos_fs_init(&g_pbfs_mnt);
+
+			uint32_t uid = KERNEL_UID;
+			uint32_t gid = KERNEL_GID;
+			out = pbfs_root(&g_pbfs_mnt, true, &uid, &gid);
+
+			if (out != PBFS_RES_SUCCESS)  {
+				vmem_printf(&vmem_design, "Error: Failed to mount\n\tPBFS Error: %s\n", pbfs_get_err_str(out));
+				g_pbfs_cwd[0] = '\0';
+				current_drive_mounted = AOS_FALSE;
+			}
         }
     } else {
         vmem_print(&vmem_design, "Error: Current drive doesn't work!\n");
@@ -341,10 +350,19 @@ void exec_cmd(const char* cmd, struct VMemDesign* vmem_design) {
 
 		PBFS_DMM_Entry entry;
 		uint64_t tmplba = 0;
-		int out = pbfs_find_entry(path, &entry, &tmplba, &g_pbfs_mnt);
-		if ((out != PBFS_RES_SUCCESS && out != -1) || (!(entry.type & METADATA_FLAG_DIR) && out != -1)) {
+		int out = pbfs_find_entry(&g_pbfs_mnt, path, &entry, &tmplba, true);
+		if (out != PBFS_RES_SUCCESS && out != -1) {
 			vmem_print(vmem_design, "Error: No such directory!\n");
-		
+			goto cmd_cd_end;
+		}
+
+		PBFS_Metadata md;
+		out = pbfs_get_metadata(&g_pbfs_mnt, &entry, &md, NULL);
+		if (out != PBFS_RES_SUCCESS) {
+			vmem_printf(vmem_design, "Error: %s\n", pbfs_get_err_str(out));
+			goto cmd_cd_end;
+		} else if (((md.type != PBFS_METADATA_TYPE_DIR) && out != -1)) {
+			vmem_print(vmem_design, "Error: No such directory!\n");
 			goto cmd_cd_end;
 		}
 
@@ -372,13 +390,22 @@ void exec_cmd(const char* cmd, struct VMemDesign* vmem_design) {
 
 		PBFS_DMM_Entry entry;
 		uint64_t tmplba = 0;
-		int out = pbfs_find_entry(path, &entry, &tmplba, &g_pbfs_mnt);
+		int out = pbfs_find_entry(&g_pbfs_mnt, path, &entry, &tmplba, true);
 		if (out == PBFS_RES_SUCCESS || out == -1) {
 			vmem_print(vmem_design, "Error: File or Directory already exists!\n");
 			goto cmd_mkdir_end;
 		}
 
-		out = pbfs_add_dir(&g_pbfs_mnt, path, 0, 0, (PBFS_Permission_Flags)(PERM_READ | PERM_WRITE));
+		PBFS_Metadata md = {
+			.uid = kget_uid(),
+			.gid = kget_gid(),
+
+			.permission_flags = PBFS_PERM_READ | PBFS_PERM_WRITE,
+			.group_permission_flags = PBFS_PERM_READ | PBFS_PERM_WRITE,
+			.external_permission_flags = PBFS_PERM_READ
+		};
+
+		out = pbfs_add_dir(&g_pbfs_mnt, path, &md, NULL);
 		if (out != PBFS_RES_SUCCESS) {
 			vmem_printf(vmem_design, "Error: %s\n", pbfs_get_err_str(out));
 			goto cmd_mkdir_end;
@@ -417,7 +444,10 @@ void exec_cmd(const char* cmd, struct VMemDesign* vmem_design) {
 
 		vmem_printf(vmem_design, "Listing: %s\n", path);
 		for (size_t i = 0; i < item_count; i++) {
-			vmem_printf(vmem_design, "%s (lba %llu)\n", items[i].name, uint128_to_u64(items[i].lba));
+			PBFS_Metadata md;
+			if (pbfs_get_metadata(&g_pbfs_mnt, &items[i], &md, NULL) != PBFS_RES_SUCCESS) continue;
+
+			vmem_printf(vmem_design, "%s (lba %llu)\n", md.name, uint128_to_u64(items[i].lba));
 		}
 
 		cmd_ls_end: {}
