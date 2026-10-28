@@ -8,6 +8,13 @@
 #include <PBFS/headers/pbfs-fs.h>
 
 #define AOS_FS_SIGN 0xA1519F19 // AOS FS
+#define AOS_FS_CHUNK_SIZE 0x1000 // 4 KiB
+
+enum fs_sysfile_types {
+	AOS_FS_SYSFILE_TYPE_NULL = 0x1, // Discards write/permission_change/remove, and return NULL upon reading
+	AOS_FS_SYSFILE_TYPE_ZERO, // Discards write/permission_change/remove, and returns 0 upon reading
+	AOS_FS_SYSFILE_TYPE_CPU, // Discards write/permission_change/remove, and returns cpu info upon reading
+};
 
 enum seek_mode {
 	FS_SEEK_MODE_CUR,
@@ -20,7 +27,10 @@ struct aos_dmm_handler {
 	aos_bool valid;
 
 	char path[PBFS_MAX_PATH_LEN];
+
 	PBFS_DMM_Entry entry;
+	PBFS_Metadata metadata;
+	PBFS_Permission_Table permission_table;
 
 	// Buffers
 	uint8_t* file_data;
@@ -49,3 +59,5 @@ struct aos_file {
 void aos_fs_init(struct pbfs_mount* mnt);
 struct aos_file* fs_open(const char* path);
 void fs_close(struct aos_file* f);
+
+uint8_t* fs_pbfs_sysfile_accessed(size_t* out_data_size, PBFS_Metadata* md, PBFS_Permission_Table* pt, size_t requested_size, PBFS_Permission_Flags usage);

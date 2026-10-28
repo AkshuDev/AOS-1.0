@@ -94,6 +94,15 @@ EFIAPI char* strncpy(char* dest, const char* src, size_t n) {
 	while (n--) *dest++=0;
 }
 
+EFIAPI char* strcpy(char* dest, const char* src) {
+	if (!dest || !src) return NULL;
+    
+	size_t d = strlen(dest);
+	size_t s = strlen(src);
+
+	return strncpy(dest, src, d > s ? s : d);
+}
+
 EFIAPI void ___chkstk_ms(void* size_in) {
 	return; // No NEED TO BE honest
 }

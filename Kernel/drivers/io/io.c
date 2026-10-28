@@ -144,26 +144,35 @@ void serial_init(aos_bool pre_init) {
 void serial_init_klog(const char* path, struct pbfs_mount* mnt) {
 	if (!mnt) return;
 
-	PBFS_DMM_Entry out;
-	uint64_t out_lba = 0;
-
 	uint8_t* data = NULL;
 	aos_bool preklog_present = klog_end > 0;
 
 	size_t size = 0;
 	klog_present = AOS_FALSE;
-	if (pbfs_find_entry(mnt, path, &out, &out_lba, true) == PBFS_RES_SUCCESS) {
-		pbfs_read_file_dmm(mnt, &out, &data, &size);
-		klog_present = AOS_TRUE;
+
+	if (pbfs_get_file_size(mnt, (char*)path, &size) == PBFS_RES_SUCCESS && size > 0) {
+		data = (uint8_t*)avmf_alloc(size, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
+		if (data) {
+			size_t sz = size;
+			if (pbfs_read_file(mnt, (char*)path, data, sz, &size) == PBFS_RES_SUCCESS) {
+				klog_present = AOS_TRUE;
+			}
+		}
 	}
 
 	klog = (char*)avmf_alloc(size + klog_end + 4096, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL); // +4KB
-	if (!klog) return;
+	if (!klog) {
+		if (data) avmf_free((uint64_t)data);
+		return;
+	}
+
 	if (preklog_present) memcpy(klog, preklog, klog_end);
 	if (data && size > 0) memcpy(klog + klog_end, data, size);
 	klog_pos = size + klog_end;
 	klog_cap = size + 4096 + klog_end;
 	klog_end = size + klog_end;
+	
+	if (data) avmf_free((uint64_t)data);
 }
 
 void serial_flush_klog(const char* path, struct pbfs_mount* mnt) {

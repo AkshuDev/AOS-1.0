@@ -1,4 +1,5 @@
 #include <aos_inttypes.h>
+#include <uniboot.h>
 
 #include <inc/core/kfuncs.h>
 #include <inc/drivers/io/io.h>
@@ -13,6 +14,10 @@
 
 static struct pbfs_mount* gmnt;
 
+static enum PBFS_Result pbfs_res_success = PBFS_RES_SUCCESS;
+static enum PBFS_Result pbfs_err_wrong_permissions = PBFS_ERR_Wrong_Permissions;
+static enum PBFS_Result pbfs_err_allocation_failed = PBFS_ERR_Allocation_Failed;
+
 static aos_bool read_file(struct aos_file* self, uint64_t size, void* buf) {
 	if (!gmnt || !self || !buf) return AOS_FALSE;
 	if (size == 0) return AOS_TRUE; // Dont need to do anything
@@ -26,11 +31,18 @@ static aos_bool read_file(struct aos_file* self, uint64_t size, void* buf) {
 
 	uint64_t rflags = spin_lock_irqsave(&h->handle_lock);
 	if (!h->file_data || h->file_data_refresh_req) {
-		if (h->file_data) avmf_free((uint64_t)h->file_data);
-		h->file_data = NULL;
+		if (!h->file_data) h->file_data = (uint8_t*)avmf_alloc(AOS_FS_CHUNK_SIZE, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
+		if (!h->file_data) {
+			serial_print("[FS:Read] Failed to allocate chunk!\n");
+			spin_unlock_irqrestore(&h->handle_lock, rflags);
+			spin_unlock_irqrestore(&self->file_lock, f_rflags);
+			return AOS_FALSE;
+		}
+
 		h->file_data_size = 0;
 
-		int out = pbfs_read_file_dmm(gmnt, &h->entry, &h->file_data, &h->file_data_size);
+		// TODO: Add cursor to PBFS
+		int out = pbfs_read_file_dmm(gmnt, &h->entry, h->file_data, size, &h->file_data_size);
 		if (out != PBFS_RES_SUCCESS) {
 			serial_printf("[FS:Read] PBFS Error: %s\n", pbfs_get_err_str((enum PBFS_Result)out));
 			spin_unlock_irqrestore(&h->handle_lock, rflags);
@@ -69,11 +81,17 @@ static aos_bool write_file(struct aos_file* self, uint64_t size, void* buf) {
 
 	uint64_t rflags = spin_lock_irqsave(&h->handle_lock);
 	if (!h->file_data || h->file_data_refresh_req) {
-		if (h->file_data) avmf_free((uint64_t)h->file_data);
-		h->file_data = NULL;
+		if (!h->file_data) h->file_data = (uint8_t*)avmf_alloc(AOS_FS_CHUNK_SIZE, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
+		if (!h->file_data) {
+			serial_print("[FS:Read] Failed to allocate chunk!\n");
+			spin_unlock_irqrestore(&h->handle_lock, rflags);
+			spin_unlock_irqrestore(&self->file_lock, f_rflags);
+			return AOS_FALSE;
+		}
+
 		h->file_data_size = 0;
 
-		int out = pbfs_read_file_dmm(gmnt, &h->entry, &h->file_data, &h->file_data_size);
+		int out = pbfs_read_file_dmm(gmnt, &h->entry, h->file_data, AOS_FS_CHUNK_SIZE, &h->file_data_size);
 		if (out != PBFS_RES_SUCCESS) {
 			serial_printf("[FS:Write] PBFS Error: %s\n", pbfs_get_err_str((enum PBFS_Result)out));
 			spin_unlock_irqrestore(&h->handle_lock, rflags);
@@ -181,11 +199,17 @@ static aos_bool seek_file(struct aos_file* self, uint64_t seek_to, enum seek_mod
 
 	uint64_t rflags = spin_lock_irqsave(&h->handle_lock);
 	if (!h->file_data || h->file_data_refresh_req) {
-		if (h->file_data) avmf_free((uint64_t)h->file_data);
-		h->file_data = NULL;
+		if (!h->file_data) h->file_data = (uint8_t*)avmf_alloc(AOS_FS_CHUNK_SIZE, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
+		if (!h->file_data) {
+			serial_print("[FS:Read] Failed to allocate chunk!\n");
+			spin_unlock_irqrestore(&h->handle_lock, rflags);
+			spin_unlock_irqrestore(&self->file_lock, f_rflags);
+			return AOS_FALSE;
+		}
+		
 		h->file_data_size = 0;
 
-		int out = pbfs_read_file_dmm(gmnt, &h->entry, &h->file_data, &h->file_data_size);
+		int out = pbfs_read_file_dmm(gmnt, &h->entry, h->file_data, AOS_FS_CHUNK_SIZE, &h->file_data_size);
 		if (out != PBFS_RES_SUCCESS) {
 			serial_printf("[FS:Seek] PBFS Error: %s\n", pbfs_get_err_str((enum PBFS_Result)out));
 			spin_unlock_irqrestore(&h->handle_lock, rflags);
@@ -252,9 +276,12 @@ struct aos_file* fs_open(const char* path) {
 	if (path_len >= PBFS_MAX_PATH_LEN) return NULL; // NULL Terminator requires +1 byte
 
 	PBFS_DMM_Entry e = {0};
+	PBFS_Metadata md = {0};
+	PBFS_Permission_Table pt = {0};
+
 	uint64_t elba = 0;
 	aos_bool file_exists = AOS_TRUE;
-	int out_e = pbfs_find_entry(gmnt, path, &e, &elba, true);
+	int out_e = pbfs_find_entry(gmnt, path, &e, &md, &pt, &elba, true);
 	if (out_e != PBFS_RES_SUCCESS) {
 		//if (out_e != PBFS_ERR_File_Not_Found) return NULL;
 		//file_exists = AOS_FALSE;
@@ -284,9 +311,12 @@ struct aos_file* fs_open(const char* path) {
 	
 	file->handle->sign = AOS_FS_SIGN;
 	file->handle->handle_lock = 0;
-	file->handle->entry = e;
 	
-	file->handle->file_data = NULL;
+	file->handle->entry = e;
+	file->handle->metadata = md;
+	file->handle->permission_table = pt;
+	
+	file->handle->file_data = (uint8_t*)avmf_alloc(AOS_FS_CHUNK_SIZE, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
 	file->handle->file_data_size = 0;
 	file->handle->file_data_refresh_req = AOS_TRUE;
 	file->handle->file_data_flush_required = AOS_FALSE;
@@ -294,15 +324,15 @@ struct aos_file* fs_open(const char* path) {
 	memcpy(file->handle->path, path, path_len);
 	file->handle->path[path_len] = '\0';
 
-	if (file_exists) {
-		int out = pbfs_read_file_dmm(gmnt, &e, &file->handle->file_data, &file->handle->file_data_size);
+	if (file_exists && file->handle->file_data) {
+		int out = pbfs_read_file_dmm(gmnt, &e, file->handle->file_data, AOS_FS_CHUNK_SIZE, &file->handle->file_data_size);
 		if (out == PBFS_RES_SUCCESS) {
 			file->handle->file_data_refresh_req = AOS_FALSE;
 		} else {
 			serial_printf("[FS:Open] PBFS Error: %s\n", pbfs_get_err_str((enum PBFS_Result)out));
 		}
 	} else {
-		file->handle->file_data = NULL;
+		if (file->handle->file_data) { avmf_free((uint64_t)file->handle->file_data); file->handle->file_data = NULL; }
 		file->handle->file_data_size = 0;
 	}
 	
@@ -343,5 +373,43 @@ void fs_close(struct aos_file* f) {
 		spin_unlock_irqrestore(&f->file_lock, f_rflags);
 
 		avmf_free((uint64_t)f);
+	}
+}
+
+uint8_t* fs_pbfs_sysfile_accessed(size_t* out_data_size, PBFS_Metadata* md, PBFS_Permission_Table* pt, size_t requested_size, PBFS_Permission_Flags usage) {
+	if (!md || !out_data_size) return (uint8_t*)&pbfs_err_wrong_permissions;
+	(void)pt;
+
+	*out_data_size = 0;
+	switch (usage) {
+		case PBFS_PERM_READ: {
+			switch (md->flags) {
+				case AOS_FS_SYSFILE_TYPE_ZERO:
+				case AOS_FS_SYSFILE_TYPE_NULL: {
+					uint8_t* out = (uint8_t*)avmf_alloc(requested_size, MALLOC_TYPE_KERNEL, AVMF_FLAG_RW, NULL);
+					if (!out) return (uint8_t*)&pbfs_err_allocation_failed;
+
+					memset(out, 0, requested_size);
+					*out_data_size = requested_size;
+					return out; // will be freed
+				}
+				
+				case AOS_FS_SYSFILE_TYPE_CPU: {
+					uniboot_boot_info* sysinfo = kget_sysinfo();
+					if (!sysinfo) return (uint8_t*)&pbfs_res_success;
+
+					*out_data_size = 32;
+					return (uint8_t*)sysinfo->cpu_info.model;
+				}
+
+				default: goto wrong_permissions;
+			}
+		}
+		
+		default: goto wrong_permissions;
+	}
+
+	wrong_permissions: {
+		return (uint8_t*)&pbfs_err_wrong_permissions;
 	}
 }

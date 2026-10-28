@@ -204,17 +204,8 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
 			}
 			if (!vshell_require_mounted()) goto cmd_mkdir_end;
 
-			PBFS_DMM_Entry entry;
-			uint64_t lba = 0;
-
 			char path[PBFS_MAX_PATH_LEN];
 			aos_create_path(path, cwd, cmd_buf + 6);
-
-			int out = pbfs_find_entry(pbfs_mnt, path, &entry, &lba, true);
-			if (out == PBFS_RES_SUCCESS || out == -1) {
-				if (!pyrion_builtin_print(vshell_ctx, "Error: File or Directory already exists!\n")) return AOS_FALSE;
-				goto cmd_mkdir_end;
-			}
 
 			PBFS_Metadata md = {
 				.uid = kget_uid(),
@@ -225,9 +216,13 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
 				.external_permission_flags = PBFS_PERM_READ
 			};
 
-			out = pbfs_add_dir(pbfs_mnt, path, &md, NULL);
+			int out = pbfs_add_dir(pbfs_mnt, path, &md, NULL);
 			if (out != PBFS_RES_SUCCESS) {
-				if (!pyrion_builtin_printf(vshell_ctx, "Error: %s\n", pbfs_get_err_str(out))) return AOS_FALSE;
+				if (out == PBFS_ERR_File_Already_Exists) {
+					if (!pyrion_builtin_printf(vshell_ctx, "Error: %s\n", pbfs_get_err_str(out))) return AOS_FALSE;
+				} else {
+					if (!pyrion_builtin_print(vshell_ctx, "Error: File or Directory already exists!\n")) return AOS_FALSE;
+				}
 				goto cmd_mkdir_end;
 			}
 
@@ -239,24 +234,15 @@ static aos_bool vshell_handle_shell(char* cmd_buf, int max_cmd_len, int* cmd_len
 			}
 			if (!vshell_require_mounted()) goto cmd_cd_end;
 
-			PBFS_DMM_Entry entry;
+			PBFS_DMM_Entry entry = {0};
+			PBFS_Metadata md = {0};
 			uint64_t lba = 0;
 			
 			char path[PBFS_MAX_PATH_LEN];
 			aos_create_path(path, cwd, cmd_buf + 3);
 
-			int out = pbfs_find_entry(pbfs_mnt, path, &entry, &lba, true);
-			if (out != PBFS_RES_SUCCESS && out != -1) {
-				if (!pyrion_builtin_print(vshell_ctx, "Error: No such directory!\n")) return AOS_FALSE;
-				goto cmd_cd_end;
-			}
-			
-			PBFS_Metadata md;
-			out = pbfs_get_metadata(pbfs_mnt, &entry, &md, NULL);
-			if (out != PBFS_RES_SUCCESS) {
-				if (!pyrion_builtin_printf(vshell_ctx, "Error: %s\n", pbfs_get_err_str(out))) return AOS_FALSE;
-				goto cmd_cd_end;
-			} else if (((md.type != PBFS_METADATA_TYPE_DIR) && out != -1)) {
+			int out = pbfs_find_entry(pbfs_mnt, path, &entry, &md, NULL, &lba, true);
+			if ((out != PBFS_RES_SUCCESS && out != -1) || (md.type != PBFS_METADATA_TYPE_DIR)) {
 				if (!pyrion_builtin_print(vshell_ctx, "Error: No such directory!\n")) return AOS_FALSE;
 				goto cmd_cd_end;
 			}

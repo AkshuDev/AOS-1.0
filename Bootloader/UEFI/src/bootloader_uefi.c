@@ -48,6 +48,8 @@ static aos_bool rdtscp_supported = AOS_FALSE;
 static UINTN uefi_width = 0;
 static UINTN uefi_height = 0;
 
+static enum PBFS_Result sys_file_usage_cancel_res = PBFS_ERR_Wrong_Permissions;
+
 EFIAPI static void cpuid_get_vendor(char *vendor_out) {
     uint32_t eax, ebx, ecx, edx;
     eax = 0;
@@ -145,8 +147,15 @@ EFIAPI static void* btl_realloc(void* ptr, size_t size) {
 EFIAPI static uint32_t btl_get_uid_gid(void) {
 	return 0;
 }
-EFIAPI static bool btl_allow_rooting(void) {
+EFIAPI static unsigned char btl_allow_rooting(void) {
 	return true;
+}
+EFIAPI static uint8_t* btl_sys_file_usage(size_t* out_data_size, PBFS_Metadata* md, PBFS_Permission_Table* pt, size_t requested_size, PBFS_Permission_Flags usage) {
+	(void)md; (void)pt; (void)usage; (void)requested_size;
+	
+	// For safety, cancel the operation!
+	if (out_data_size) *out_data_size = 0;
+	return (uint8_t*)&sys_file_usage_cancel_res;
 }
 
 EFIAPI static int read_blk(struct block_device* dev, uint64_t lba, void* buf) {
@@ -495,7 +504,8 @@ EFIAPI EFI_STATUS btl_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 		.get_timestamp=kget_timestamp_seconds,
 		.get_uid=btl_get_uid_gid,
 		.get_gid=btl_get_uid_gid,
-		.rooting_allowed=btl_allow_rooting
+		.rooting_allowed=btl_allow_rooting,
+		.notify_use_sys_file=btl_sys_file_usage
     };
 
     struct pbfs_mount mnt = {0};
